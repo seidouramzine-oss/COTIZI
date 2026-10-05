@@ -116,6 +116,7 @@ class Api {
       fullName: fullName.trim(),
       phone: _accountPhone,
       role: role,
+      createdAt: DateTime.now(),
     );
     await _db.doc('users/$uid').set({
       'fullName': profile.fullName,
@@ -124,6 +125,103 @@ class Api {
       'createdAt': _now,
     });
     _me = profile;
+  }
+
+  static Future<Profile> updateName(String fullName) async {
+    final name = fullName.trim();
+    await _db.doc('users/$uid').update({'fullName': name});
+    final me = await myProfile();
+    return _me = (me ?? Profile(fullName: name, phone: _accountPhone)).withName(
+      name,
+    );
+  }
+
+  static Future<void> changePassword(String current, String next) async {
+    final user = _auth.currentUser!;
+    try {
+      await user.reauthenticateWithCredential(
+        EmailAuthProvider.credential(email: user.email!, password: current),
+      );
+    } on FirebaseAuthException catch (e) {
+      if (e.code == 'wrong-password' || e.code == 'invalid-credential') {
+        throw const AppException('Mot de passe actuel incorrect');
+      }
+      rethrow;
+    }
+    await user.updatePassword(next);
+  }
+
+  // --------------------------------------------------------------- Accueils
+
+  /// Tableau de bord du tontinier : ses groupes, ses carnets et tous les
+  /// paiements qui attendent sa validation.
+  static Future<OwnerOverview> ownerOverview() async {
+    final results = await Future.wait([
+      _db.collection('tontines').where('ownerId', isEqualTo: uid).count().get(),
+      _db.collection('groups').where('ownerId', isEqualTo: uid).get(),
+      _db.collection('carnets').where('ownerId', isEqualTo: uid).get(),
+    ]);
+    final tontineCount = (results[0] as AggregateQuerySnapshot).count ?? 0;
+    final groups = (results[1] as QuerySnapshot<Json>).docs
+        .map(Group.fromDoc)
+        .toList();
+    final carnets = (results[2] as QuerySnapshot<Json>).docs
+        .map(Carnet.fromDoc)
+        .toList();
+    final pending = await Future.wait([
+      for (final g in groups.where((g) => g.status == GroupStatus.active))
+        _pendingOf('groups/${g.id}/payments').then(
+          (list) => [for (final p in list) PendingReview(payment: p, group: g)],
+        ),
+      for (final c in carnets.where((c) => c.pendingCases > 0))
+        _pendingOf('carnets/${c.id}/payments').then(
+          (list) => [
+            for (final p in list) PendingReview(payment: p, carnet: c),
+          ],
+        ),
+    ]);
+    return OwnerOverview(
+      tontineCount: tontineCount,
+      groups: groups,
+      carnets: carnets,
+      pending: pending.expand((l) => l).toList()
+        ..sort((a, b) => a.payment.declaredAt.compareTo(b.payment.declaredAt)),
+    );
+  }
+
+  static Future<List<Payment>> _pendingOf(String collection) async {
+    final snap = await _db
+        .collection(collection)
+        .where('status', isEqualTo: 'pending')
+        .get();
+    return snap.docs.map(Payment.fromDoc).toList();
+  }
+
+  /// Accueil du participant : ce qu'il doit payer dans chaque groupe et
+  /// l'avancement de ses carnets.
+  static Future<MemberOverview> memberOverview() async {
+    final results = await Future.wait([myGroups(), myCarnets()]);
+    final groups = results[0] as List<Group>;
+    final today = DateTime.now();
+    final statuses = await Future.wait(
+      groups.map((g) async {
+        final detail = await group(g.id);
+        final payments = await groupPayments(detail);
+        final (due, next) = detail.status == GroupStatus.active
+            ? detail.unpaidTours(uid, payments, today)
+            : (const <int>[], null);
+        return MemberGroupStatus(
+          group: detail,
+          payments: payments,
+          dueTours: due,
+          nextTour: next,
+        );
+      }),
+    );
+    return MemberOverview(
+      groups: statuses,
+      carnets: results[1] as List<Carnet>,
+    );
   }
 
   // -------------------------------------------------------------- Tontines

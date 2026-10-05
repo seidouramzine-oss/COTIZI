@@ -12,6 +12,7 @@ import 'invite_link.dart';
 import 'models.dart';
 import 'screens/auth_screens.dart';
 import 'screens/home_screen.dart';
+import 'settings.dart';
 import 'widgets/common.dart';
 
 /// --dart-define=USE_EMULATOR=true : utilise les émulateurs Firebase locaux.
@@ -21,6 +22,7 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   Intl.defaultLocale = 'fr';
   await initializeDateFormatting('fr');
+  await loadSettings();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   if (_useEmulator) {
     await FirebaseAuth.instance.useAuthEmulator('localhost', 9099);
@@ -31,52 +33,28 @@ Future<void> main() async {
   runApp(const CotiziApp());
 }
 
-const brandGreen = Color(0xFF0B7A5A);
-
 class CotiziApp extends StatelessWidget {
   const CotiziApp({super.key});
 
   @override
   Widget build(BuildContext context) {
-    final scheme = ColorScheme.fromSeed(seedColor: brandGreen);
-    return MaterialApp(
-      title: 'COTIZI',
-      debugShowCheckedModeBanner: false,
-      locale: const Locale('fr'),
-      supportedLocales: const [Locale('fr')],
-      localizationsDelegates: const [
-        GlobalMaterialLocalizations.delegate,
-        GlobalWidgetsLocalizations.delegate,
-        GlobalCupertinoLocalizations.delegate,
-      ],
-      theme: ThemeData(
-        colorScheme: scheme,
-        useMaterial3: true,
-        scaffoldBackgroundColor: const Color(0xFFF6F8F7),
-        appBarTheme: const AppBarTheme(centerTitle: false),
-        cardTheme: CardThemeData(
-          elevation: 0,
-          margin: const EdgeInsets.symmetric(vertical: 6),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-            side: BorderSide(color: scheme.outlineVariant),
-          ),
-        ),
-        inputDecorationTheme: InputDecorationTheme(
-          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-          filled: true,
-          fillColor: Colors.white,
-        ),
-        filledButtonTheme: FilledButtonThemeData(
-          style: FilledButton.styleFrom(
-            minimumSize: const Size(64, 48),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-            ),
-          ),
-        ),
+    return ValueListenableBuilder<ThemeMode>(
+      valueListenable: themeMode,
+      builder: (context, mode, _) => MaterialApp(
+        title: 'COTIZI',
+        debugShowCheckedModeBanner: false,
+        locale: const Locale('fr'),
+        supportedLocales: const [Locale('fr')],
+        localizationsDelegates: const [
+          GlobalMaterialLocalizations.delegate,
+          GlobalWidgetsLocalizations.delegate,
+          GlobalCupertinoLocalizations.delegate,
+        ],
+        theme: buildTheme(Brightness.light),
+        darkTheme: buildTheme(Brightness.dark),
+        themeMode: mode,
+        home: const AuthGate(),
       ),
-      home: const AuthGate(),
     );
   }
 }

@@ -60,6 +60,45 @@ void main() {
       );
     });
 
+    test(
+      'tours à payer : passés sans paiement, refus à refaire, puis le prochain',
+      () {
+        final g = _group(
+          members: 5,
+          frequency: Frequency.weekly,
+          start: DateTime(2026, 10, 1),
+        );
+        Payment pay(int tour, PaymentStatus status, [String user = 'u']) =>
+            Payment(
+              id: '${user}_$tour',
+              userId: user,
+              amount: 5000,
+              proofId: 'p',
+              status: status,
+              rejectionReason: null,
+              declaredAt: DateTime(2026, 10, 1),
+              payer: const Profile(fullName: 'U', phone: '+229'),
+              tourNumber: tour,
+            );
+        // Tours : 1/10, 8/10, 15/10, 22/10, 29/10 ; on est le 15/10
+        final (due, next) = g.unpaidTours('u', [
+          pay(1, PaymentStatus.approved),
+          pay(2, PaymentStatus.rejected),
+          pay(3, PaymentStatus.approved, 'autre'),
+        ], DateTime(2026, 10, 15, 18));
+        expect(due, [2, 3]);
+        expect(next, 4);
+
+        final (allPaid, upcoming) = g.unpaidTours('u', [
+          pay(1, PaymentStatus.approved),
+          pay(2, PaymentStatus.pending),
+          pay(3, PaymentStatus.pending),
+        ], DateTime(2026, 10, 15));
+        expect(allPaid, isEmpty);
+        expect(upcoming, 4);
+      },
+    );
+
     test('tours mensuels : le 31 devient le dernier jour du mois', () {
       final g = _group(start: DateTime(2026, 1, 31));
       expect(g.tourDate(1), DateTime(2026, 1, 31));

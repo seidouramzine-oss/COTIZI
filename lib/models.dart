@@ -34,11 +34,13 @@ class Profile {
     required this.fullName,
     required this.phone,
     this.role = Role.tontinier,
+    this.createdAt,
   });
 
   final String fullName;
   final String phone;
   final Role role;
+  final DateTime? createdAt;
 
   bool get isMember => role == Role.membre;
 
@@ -46,7 +48,13 @@ class Profile {
     fullName: json['fullName'] as String? ?? '',
     phone: json['phone'] as String? ?? '',
     role: json['role'] == 'membre' ? Role.membre : Role.tontinier,
+    createdAt: json['createdAt'] is Timestamp
+        ? (json['createdAt'] as Timestamp).toDate()
+        : null,
   );
+
+  Profile withName(String name) =>
+      Profile(fullName: name, phone: phone, role: role, createdAt: createdAt);
 }
 
 class Tontine {
@@ -163,6 +171,34 @@ class Group {
           min(startDate.day, lastDay),
         );
     }
+  }
+
+  /// Tours que [userId] doit encore payer : ceux dont la date est passée
+  /// (ou aujourd'hui) sans paiement validé ni en attente, puis le prochain tour
+  /// à venir. Un paiement refusé est à refaire.
+  (List<int> due, int? next) unpaidTours(
+    String userId,
+    List<Payment> payments,
+    DateTime today,
+  ) {
+    final day = DateTime(today.year, today.month, today.day);
+    final covered = {
+      for (final p in payments)
+        if (p.userId == userId && p.status != PaymentStatus.rejected)
+          p.tourNumber,
+    };
+    final due = <int>[];
+    int? next;
+    for (var tour = 1; tour <= memberCount; tour++) {
+      if (covered.contains(tour)) continue;
+      if (!tourDate(tour).isAfter(day)) {
+        due.add(tour);
+      } else {
+        next = tour;
+        break;
+      }
+    }
+    return (due, next);
   }
 
   GroupMember? beneficiaryOf(int tour) {
@@ -364,4 +400,70 @@ class Carnet {
       approvedCases: _int(json['approvedCases']),
     );
   }
+}
+
+/// Paiement en attente de validation, avec son groupe ou son carnet.
+class PendingReview {
+  const PendingReview({required this.payment, this.group, this.carnet});
+
+  final Payment payment;
+  final Group? group;
+  final Carnet? carnet;
+}
+
+/// Vue d'ensemble du tontinier (accueil).
+class OwnerOverview {
+  const OwnerOverview({
+    required this.tontineCount,
+    required this.groups,
+    required this.carnets,
+    required this.pending,
+  });
+
+  final int tontineCount;
+  final List<Group> groups;
+  final List<Carnet> carnets;
+  final List<PendingReview> pending;
+
+  int get memberCount =>
+      groups.fold(0, (n, g) => n + g.joinedCount) +
+      carnets.where((c) => c.clientId != null).length;
+
+  /// Montant total en attente de validation.
+  int get pendingAmount => pending.fold(0, (n, p) => n + p.payment.amount);
+}
+
+/// Situation d'un membre dans un groupe (accueil du participant).
+class MemberGroupStatus {
+  const MemberGroupStatus({
+    required this.group,
+    required this.payments,
+    required this.dueTours,
+    required this.nextTour,
+  });
+
+  final Group group;
+  final List<Payment> payments;
+  final List<int> dueTours;
+  final int? nextTour;
+
+  int? myPosition(String userId) => group.members
+      .where((m) => m.userId == userId)
+      .map((m) => m.drawPosition)
+      .firstOrNull;
+
+  Payment? latestFor(int tour) =>
+      payments.where((p) => p.tourNumber == tour).firstOrNull;
+}
+
+/// Vue d'ensemble d'un participant (accueil).
+class MemberOverview {
+  const MemberOverview({required this.groups, required this.carnets});
+
+  final List<MemberGroupStatus> groups;
+  final List<Carnet> carnets;
+
+  int get dueCount =>
+      groups.fold(0, (n, g) => n + g.dueTours.length) +
+      carnets.where((c) => c.remainingCases > 0 && !c.isComplete).length;
 }

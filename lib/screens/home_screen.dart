@@ -6,9 +6,25 @@ import '../invite_link.dart';
 import '../models.dart';
 import '../widgets/common.dart';
 import 'carnet_screens.dart';
+import 'dashboard_screens.dart';
 import 'group_screens.dart';
+import 'profile_screens.dart';
 import 'tontine_screens.dart';
 
+/// Page d'un onglet qui sait se recharger quand on y revient.
+mixin Reloadable<T extends StatefulWidget> on State<T> {
+  void reload();
+
+  /// Ouvre un écran puis recharge la page au retour.
+  Future<void> open(Widget screen) async {
+    await Navigator.of(context).push(MaterialPageRoute(builder: (_) => screen));
+    if (mounted) reload();
+  }
+}
+
+/// Coque de l'application : barre de navigation en bas.
+/// Tontinier : Accueil, Mes tontines, Je participe, Profil.
+/// Membre (inscrit par invitation) : Accueil, Mes tontines, Profil.
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key, required this.profile});
 
@@ -18,26 +34,15 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen>
-    with SingleTickerProviderStateMixin {
-  late final TabController _tabs = TabController(length: 2, vsync: this)
-    ..addListener(() => setState(() {}));
-  bool get _isMember => widget.profile.isMember;
-  late Future<List<Tontine>> _managed = _loadManaged();
-  late Future<(List<Group>, List<Carnet>)> _joined = _loadJoined();
+class _HomeScreenState extends State<HomeScreen> {
+  late Profile _profile = widget.profile;
+  int _index = 0;
+  final _keys = List.generate(4, (_) => GlobalKey());
 
-  Future<List<Tontine>> _loadManaged() =>
-      _isMember ? Future.value(const []) : Api.myTontines();
+  bool get _isMember => _profile.isMember;
 
-  static Future<(List<Group>, List<Carnet>)> _loadJoined() async {
-    final results = await Future.wait([Api.myGroups(), Api.myCarnets()]);
-    return (results[0] as List<Group>, results[1] as List<Carnet>);
-  }
-
-  void _reload() => setState(() {
-    _managed = _loadManaged();
-    _joined = _loadJoined();
-  });
+  /// Onglet de la liste des participations.
+  int get _participationsTab => _isMember ? 1 : 2;
 
   @override
   void initState() {
@@ -49,8 +54,13 @@ class _HomeScreenState extends State<HomeScreen>
   @override
   void dispose() {
     pendingInvite.removeListener(_handleInvite);
-    _tabs.dispose();
     super.dispose();
+  }
+
+  void _select(int index) {
+    setState(() => _index = index);
+    final state = _keys[index].currentState;
+    if (state is Reloadable) state.reload();
   }
 
   /// Lien d'invitation reçu : rejoindre puis ouvrir le groupe ou le carnet.
@@ -61,235 +71,295 @@ class _HomeScreenState extends State<HomeScreen>
     try {
       final (kind, id) = await Api.joinWithCode(code);
       if (!mounted) return;
-      _tabs.index = 1;
-      await _open(
-        kind == 'group' ? GroupScreen(groupId: id) : CarnetScreen(carnetId: id),
+      _select(_participationsTab);
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => kind == 'group'
+              ? GroupScreen(groupId: id)
+              : CarnetScreen(carnetId: id),
+        ),
       );
+      if (mounted) _select(_participationsTab);
     } catch (e) {
       if (mounted) showError(context, e);
     }
   }
 
-  Future<void> _open(Widget screen) async {
-    await Navigator.of(context).push(MaterialPageRoute(builder: (_) => screen));
-    if (mounted) _reload();
-  }
-
-  Future<void> _logout() async {
-    if (await confirm(
-      context,
-      title: 'Déconnexion',
-      message: 'Voulez-vous vous déconnecter ?',
-      confirmLabel: 'Se déconnecter',
-    )) {
-      await Api.signOut();
-    }
-  }
-
-  Widget get _title => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      const Text(
-        'COTIZI',
-        style: TextStyle(fontWeight: FontWeight.w800, letterSpacing: 1),
-      ),
-      Text(
-        'Bonjour ${widget.profile.fullName}',
-        style: Theme.of(context).textTheme.bodySmall,
-      ),
-    ],
-  );
-
-  List<Widget> get _actions => [
-    IconButton(
-      tooltip: 'Se déconnecter',
-      icon: const Icon(Icons.logout),
-      onPressed: _logout,
-    ),
-  ];
-
-  Widget get _joinButton => FloatingActionButton.extended(
-    onPressed: () => _open(const JoinScreen()),
-    icon: const Icon(Icons.qr_code_2),
-    label: const Text('Rejoindre'),
-  );
-
   @override
   Widget build(BuildContext context) {
-    // Membre invité par lien : uniquement les tontines auxquelles il participe
-    if (_isMember) {
-      return Scaffold(
-        appBar: AppBar(title: _title, actions: _actions),
-        floatingActionButton: _joinButton,
-        body: _joinedTab(),
-      );
-    }
+    // Clé de chaque page = sa position dans la barre (rechargement au retour)
+    final profilePage = ProfilePage(
+      key: _keys[_isMember ? 2 : 3],
+      profile: _profile,
+      onChanged: (p) => setState(() => _profile = p),
+    );
+    final pages = _isMember
+        ? <Widget>[
+            MemberDashboard(
+              key: _keys[0],
+              profile: _profile,
+              onShowTontines: () => _select(1),
+            ),
+            ParticipationsPage(key: _keys[1], title: 'Mes tontines'),
+            profilePage,
+          ]
+        : <Widget>[
+            OwnerDashboard(
+              key: _keys[0],
+              profile: _profile,
+              onShowTontines: () => _select(1),
+            ),
+            ManagedTontinesPage(key: _keys[1]),
+            ParticipationsPage(key: _keys[2], title: 'Je participe'),
+            profilePage,
+          ];
+    final destinations = _isMember
+        ? const [
+            NavigationDestination(
+              icon: Icon(Icons.home_outlined),
+              selectedIcon: Icon(Icons.home),
+              label: 'Accueil',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.groups_outlined),
+              selectedIcon: Icon(Icons.groups),
+              label: 'Mes tontines',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.person_outline),
+              selectedIcon: Icon(Icons.person),
+              label: 'Profil',
+            ),
+          ]
+        : const [
+            NavigationDestination(
+              icon: Icon(Icons.home_outlined),
+              selectedIcon: Icon(Icons.home),
+              label: 'Accueil',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.savings_outlined),
+              selectedIcon: Icon(Icons.savings),
+              label: 'Mes tontines',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.groups_outlined),
+              selectedIcon: Icon(Icons.groups),
+              label: 'Je participe',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.person_outline),
+              selectedIcon: Icon(Icons.person),
+              label: 'Profil',
+            ),
+          ];
     return Scaffold(
-      appBar: AppBar(
-        title: _title,
-        actions: _actions,
-        bottom: TabBar(
-          controller: _tabs,
-          tabs: const [
-            Tab(icon: Icon(Icons.manage_accounts_outlined), text: 'Je gère'),
-            Tab(icon: Icon(Icons.groups_outlined), text: 'Je participe'),
-          ],
-        ),
-      ),
-      floatingActionButton: _tabs.index == 0
-          ? FloatingActionButton.extended(
-              onPressed: () => _open(const CreateTontineScreen()),
-              icon: const Icon(Icons.add),
-              label: const Text('Nouvelle tontine'),
-            )
-          : _joinButton,
-      body: TabBarView(
-        controller: _tabs,
-        children: [_managedTab(), _joinedTab()],
-      ),
-    );
-  }
-
-  Widget _managedTab() {
-    return RefreshIndicator(
-      onRefresh: () async {
-        _reload();
-        await _managed;
-      },
-      child: FutureView<List<Tontine>>(
-        future: _managed,
-        onRetry: _reload,
-        builder: (context, tontines) => ListView(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 96),
-          children: [
-            if (tontines.isEmpty)
-              const EmptyState(
-                icon: Icons.savings_outlined,
-                title: 'Aucune tontine',
-                message: 'Créez votre première tontine à cagnotte ou à carnet, puis invitez vos membres.',
-              ),
-            for (final t in tontines)
-              Card(
-                child: ListTile(
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 6,
-                  ),
-                  leading: _TypeAvatar(t.type),
-                  title: Text(
-                    t.name,
-                    style: const TextStyle(fontWeight: FontWeight.w600),
-                  ),
-                  subtitle: Text(
-                    t.type == TontineType.cagnotte
-                        ? 'Tontine à cagnotte · ${t.itemCount} groupe${t.itemCount > 1 ? 's' : ''}'
-                        : 'Tontine à carnet · ${t.itemCount} carnet${t.itemCount > 1 ? 's' : ''}',
-                  ),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () => _open(TontineScreen(tontine: t)),
-                ),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _joinedTab() {
-    return RefreshIndicator(
-      onRefresh: () async {
-        _reload();
-        await _joined;
-      },
-      child: FutureView<(List<Group>, List<Carnet>)>(
-        future: _joined,
-        onRetry: _reload,
-        builder: (context, data) {
-          final (groups, carnets) = data;
-          return ListView(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 96),
-            children: [
-              if (groups.isEmpty && carnets.isEmpty)
-                EmptyState(
-                  icon: Icons.group_add_outlined,
-                  title: 'Vous ne participez à aucune tontine',
-                  message: 'Demandez le code d\'invitation à votre tontinier pour rejoindre un groupe ou un carnet.',
-                  action: FilledButton.icon(
-                    onPressed: () => _open(const JoinScreen()),
-                    icon: const Icon(Icons.qr_code_2),
-                    label: const Text('Rejoindre avec un code'),
-                  ),
-                ),
-              if (groups.isNotEmpty)
-                const SectionTitle('Mes groupes (cagnotte)'),
-              for (final g in groups)
-                Card(
-                  child: ListTile(
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 6,
-                    ),
-                    leading: const _TypeAvatar(TontineType.cagnotte),
-                    title: Text(
-                      g.name,
-                      style: const TextStyle(fontWeight: FontWeight.w600),
-                    ),
-                    subtitle: Text(
-                      '${g.tontineName} · ${money(g.contributionAmount)} ${frequencyLabel(g.frequency).toLowerCase()}',
-                    ),
-                    trailing: StatusChip(
-                      groupStatusLabel(g.status),
-                      Theme.of(context).colorScheme.primary,
-                    ),
-                    onTap: () => _open(GroupScreen(groupId: g.id)),
-                  ),
-                ),
-              if (carnets.isNotEmpty) const SectionTitle('Mes carnets'),
-              for (final c in carnets)
-                Card(
-                  child: ListTile(
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 6,
-                    ),
-                    leading: const _TypeAvatar(TontineType.carnet),
-                    title: Text(
-                      c.label,
-                      style: const TextStyle(fontWeight: FontWeight.w600),
-                    ),
-                    subtitle: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          '${c.tontineName} · ${money(c.caseAmount)} par case',
-                        ),
-                        const SizedBox(height: 6),
-                        // Le texte « x / 31 cases payées » suffit aux lecteurs d'écran
-                        ExcludeSemantics(
-                          child: LinearProgressIndicator(
-                            value: c.approvedCases / c.caseCount,
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          '${c.approvedCases} / ${c.caseCount} cases payées',
-                        ),
-                      ],
-                    ),
-                    onTap: () => _open(CarnetScreen(carnetId: c.id)),
-                  ),
-                ),
-            ],
-          );
-        },
+      body: IndexedStack(index: _index, children: pages),
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: _index,
+        onDestinationSelected: _select,
+        destinations: destinations,
       ),
     );
   }
 }
 
-class _TypeAvatar extends StatelessWidget {
-  const _TypeAvatar(this.type);
+/// Tontines gérées par le tontinier.
+class ManagedTontinesPage extends StatefulWidget {
+  const ManagedTontinesPage({super.key});
+
+  @override
+  State<ManagedTontinesPage> createState() => _ManagedTontinesPageState();
+}
+
+class _ManagedTontinesPageState extends State<ManagedTontinesPage>
+    with Reloadable {
+  late Future<List<Tontine>> _tontines = Api.myTontines();
+
+  @override
+  void reload() => setState(() => _tontines = Api.myTontines());
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Mes tontines')),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () => open(const CreateTontineScreen()),
+        icon: const Icon(Icons.add),
+        label: const Text('Nouvelle tontine'),
+      ),
+      body: RefreshIndicator(
+        onRefresh: () async {
+          reload();
+          await _tontines;
+        },
+        child: FutureView<List<Tontine>>(
+          future: _tontines,
+          onRetry: reload,
+          builder: (context, tontines) => ListView(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 96),
+            children: [
+              if (tontines.isEmpty)
+                const EmptyState(
+                  icon: Icons.savings_outlined,
+                  title: 'Aucune tontine',
+                  message: 'Créez votre première tontine à cagnotte ou à carnet, puis invitez vos membres.',
+                ),
+              for (final t in tontines)
+                Card(
+                  child: ListTile(
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 6,
+                    ),
+                    leading: TypeAvatar(t.type),
+                    title: Text(
+                      t.name,
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                    subtitle: Text(
+                      t.type == TontineType.cagnotte
+                          ? 'Tontine à cagnotte · ${t.itemCount} groupe${t.itemCount > 1 ? 's' : ''}'
+                          : 'Tontine à carnet · ${t.itemCount} carnet${t.itemCount > 1 ? 's' : ''}',
+                    ),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => open(TontineScreen(tontine: t)),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Groupes et carnets auxquels l'utilisateur participe.
+class ParticipationsPage extends StatefulWidget {
+  const ParticipationsPage({super.key, required this.title});
+
+  final String title;
+
+  @override
+  State<ParticipationsPage> createState() => _ParticipationsPageState();
+}
+
+class _ParticipationsPageState extends State<ParticipationsPage>
+    with Reloadable {
+  late Future<(List<Group>, List<Carnet>)> _joined = _load();
+
+  static Future<(List<Group>, List<Carnet>)> _load() async {
+    final results = await Future.wait([Api.myGroups(), Api.myCarnets()]);
+    return (results[0] as List<Group>, results[1] as List<Carnet>);
+  }
+
+  @override
+  void reload() => setState(() => _joined = _load());
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text(widget.title)),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () => open(const JoinScreen()),
+        icon: const Icon(Icons.qr_code_2),
+        label: const Text('Rejoindre'),
+      ),
+      body: RefreshIndicator(
+        onRefresh: () async {
+          reload();
+          await _joined;
+        },
+        child: FutureView<(List<Group>, List<Carnet>)>(
+          future: _joined,
+          onRetry: reload,
+          builder: (context, data) {
+            final (groups, carnets) = data;
+            return ListView(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 96),
+              children: [
+                if (groups.isEmpty && carnets.isEmpty)
+                  EmptyState(
+                    icon: Icons.group_add_outlined,
+                    title: 'Vous ne participez à aucune tontine',
+                    message: 'Ouvrez le lien d\'invitation envoyé par votre tontinier, ou saisissez son code.',
+                    action: FilledButton.icon(
+                      onPressed: () => open(const JoinScreen()),
+                      icon: const Icon(Icons.qr_code_2),
+                      label: const Text('Rejoindre avec un code'),
+                    ),
+                  ),
+                if (groups.isNotEmpty)
+                  const SectionTitle('Mes groupes (cagnotte)'),
+                for (final g in groups)
+                  Card(
+                    child: ListTile(
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 6,
+                      ),
+                      leading: const TypeAvatar(TontineType.cagnotte),
+                      title: Text(
+                        g.name,
+                        style: const TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                      subtitle: Text(
+                        '${g.tontineName} · ${money(g.contributionAmount)} ${frequencyLabel(g.frequency).toLowerCase()}',
+                      ),
+                      trailing: StatusChip(
+                        groupStatusLabel(g.status),
+                        Theme.of(context).colorScheme.primary,
+                      ),
+                      onTap: () => open(GroupScreen(groupId: g.id)),
+                    ),
+                  ),
+                if (carnets.isNotEmpty) const SectionTitle('Mes carnets'),
+                for (final c in carnets)
+                  Card(
+                    child: ListTile(
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 6,
+                      ),
+                      leading: const TypeAvatar(TontineType.carnet),
+                      title: Text(
+                        c.label,
+                        style: const TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                      subtitle: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '${c.tontineName} · ${money(c.caseAmount)} par case',
+                          ),
+                          const SizedBox(height: 6),
+                          // Le texte « x / 31 cases payées » suffit aux lecteurs d'écran
+                          ExcludeSemantics(
+                            child: LinearProgressIndicator(
+                              value: c.approvedCases / c.caseCount,
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            '${c.approvedCases} / ${c.caseCount} cases payées',
+                          ),
+                        ],
+                      ),
+                      onTap: () => open(CarnetScreen(carnetId: c.id)),
+                    ),
+                  ),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+class TypeAvatar extends StatelessWidget {
+  const TypeAvatar(this.type, {super.key});
 
   final TontineType type;
 
