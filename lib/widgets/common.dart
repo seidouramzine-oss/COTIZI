@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
@@ -219,7 +220,7 @@ class InviteCodeCard extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 6),
-            SelectableText(
+            Text(
               code,
               style: theme.textTheme.headlineMedium?.copyWith(
                 fontWeight: FontWeight.w800,
@@ -265,9 +266,9 @@ class InviteCodeCard extends StatelessWidget {
 
 /// Capture d'écran de preuve (lien signé temporaire), zoomable.
 class ProofImage extends StatefulWidget {
-  const ProofImage(this.path, {super.key, this.height = 320});
+  const ProofImage(this.proofId, {super.key, this.height = 320});
 
-  final String path;
+  final String proofId;
   final double height;
 
   @override
@@ -275,7 +276,7 @@ class ProofImage extends StatefulWidget {
 }
 
 class _ProofImageState extends State<ProofImage> {
-  late Future<String> _url = Api.proofUrl(widget.path);
+  late Future<Uint8List> _image = Api.proofImage(widget.proofId);
 
   @override
   Widget build(BuildContext context) {
@@ -284,10 +285,11 @@ class _ProofImageState extends State<ProofImage> {
       child: Container(
         height: widget.height,
         color: Theme.of(context).colorScheme.surfaceContainerHighest,
-        child: FutureView<String>(
-          future: _url,
-          onRetry: () => setState(() => _url = Api.proofUrl(widget.path)),
-          builder: (context, url) => GestureDetector(
+        child: FutureView<Uint8List>(
+          future: _image,
+          onRetry: () =>
+              setState(() => _image = Api.proofImage(widget.proofId)),
+          builder: (context, bytes) => GestureDetector(
             onTap: () => Navigator.of(context).push(
               MaterialPageRoute(
                 builder: (_) => Scaffold(
@@ -299,18 +301,15 @@ class _ProofImageState extends State<ProofImage> {
                   ),
                   body: InteractiveViewer(
                     maxScale: 5,
-                    child: Center(child: Image.network(url)),
+                    child: Center(child: Image.memory(bytes)),
                   ),
                 ),
               ),
             ),
-            child: Image.network(
-              url,
+            child: Image.memory(
+              bytes,
               fit: BoxFit.contain,
               width: double.infinity,
-              loadingBuilder: (context, child, progress) => progress == null
-                  ? child
-                  : const Center(child: CircularProgressIndicator()),
               errorBuilder: (context, error, stack) =>
                   const Center(child: Text('Image indisponible')),
             ),

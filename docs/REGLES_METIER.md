@@ -20,9 +20,11 @@ COTIZI gère deux types de tontines. Toute personne inscrite peut être
    - sa **commission** : un pourcentage ou un montant fixe, **retenue sur la cagnotte** du bénéficiaire.
 3. Le groupe reçoit un **code d'invitation** que le tontinier partage (WhatsApp, SMS...).
    Les membres l'entrent dans l'application pour rejoindre le groupe.
-4. Quand le groupe est **complet**, le tontinier **lance le tirage au sort**.
-   Chaque membre **tire lui-même son numéro** (son tour de réception de la cagnotte).
-   Le tontinier peut tirer pour les membres retardataires.
+4. Quand le groupe est **complet**, le tontinier **lance le tirage au sort** :
+   l'application tire alors au hasard l'ordre de passage. Chaque membre
+   **tire ensuite son numéro** pour découvrir son tour de réception de la cagnotte
+   (il ne peut ni le choisir ni le changer). Le tontinier peut révéler les
+   numéros des membres retardataires.
 5. Quand tout le monde a son numéro, le groupe passe **en cours**.
 6. À chaque tour, chaque membre **déclare son paiement** avec une **capture d'écran**
    de l'envoi. Le paiement est **en attente** jusqu'à ce que le tontinier :
@@ -52,5 +54,7 @@ commission 500 FCFA.
   et son tontinier ; il ne voit que ses propres paiements.
 - Le tontinier voit ses tontines, ses membres / clients et tous les paiements
   et preuves de ses groupes et carnets.
-- Les captures d'écran sont stockées de façon privée et ne sont visibles que
-  par leur auteur et le tontinier concerné.
+- Les captures d'écran sont compressées et stockées de façon privée ; elles ne
+  sont visibles que par leur auteur et le tontinier concerné.
+- Ces règles sont appliquées par le serveur (règles de sécurité Firebase),
+  pas seulement par l'application.

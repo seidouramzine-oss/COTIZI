@@ -12,6 +12,9 @@ Group _group({
 }) => Group(
   id: 'g',
   tontineId: 't',
+  tontineName: 'Tontine',
+  ownerId: 'o',
+  ownerName: 'Tontinier',
   name: 'Groupe',
   memberCount: members,
   contributionAmount: contribution,
@@ -21,17 +24,6 @@ Group _group({
   commissionValue: commissionValue,
   inviteCode: 'ABC123',
   status: GroupStatus.active,
-);
-
-Payment _carnetPayment(PaymentStatus status, int cases) => Payment(
-  id: 'p',
-  userId: 'u',
-  amount: cases * 500,
-  proofPath: 'u/p.jpg',
-  status: status,
-  rejectionReason: null,
-  declaredAt: DateTime(2026),
-  caseCount: cases,
 );
 
 void main() {
@@ -79,36 +71,32 @@ void main() {
   });
 
   group('Carnet', () {
-    const carnet = Carnet(
+    Carnet carnet({int used = 0, int approved = 0}) => Carnet(
       id: 'c',
       tontineId: 't',
+      tontineName: 'Carnets',
+      ownerId: 'o',
+      ownerName: 'Tontinier',
       label: 'Carnet n°1',
       caseAmount: 500,
       caseCount: 31,
       clientId: 'u',
+      client: const Profile(fullName: 'Client', phone: '+22901000000'),
       inviteCode: 'XYZ789',
+      usedCases: used,
+      approvedCases: approved,
     );
 
     test('le client reçoit 30 cases, la 31e est la commission', () {
-      expect(carnet.clientPayout, 15000);
+      expect(carnet().clientPayout, 15000);
     });
 
-    test('compte des cases validées et en attente (refus ignorés)', () {
-      final c = carnet.withPayments([
-        _carnetPayment(PaymentStatus.approved, 10),
-        _carnetPayment(PaymentStatus.pending, 3),
-        _carnetPayment(PaymentStatus.rejected, 5),
-      ]);
-      expect(c.approvedCases, 10);
+    test('cases validées, en attente et restantes', () {
+      final c = carnet(used: 13, approved: 10);
       expect(c.pendingCases, 3);
       expect(c.remainingCases, 18);
       expect(c.isComplete, isFalse);
-      expect(
-        carnet.withPayments([
-          _carnetPayment(PaymentStatus.approved, 31),
-        ]).isComplete,
-        isTrue,
-      );
+      expect(carnet(used: 31, approved: 31).isComplete, isTrue);
     });
   });
 

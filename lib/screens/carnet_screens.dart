@@ -20,12 +20,8 @@ class _CarnetScreenState extends State<CarnetScreen> {
   late Future<(Carnet, List<Payment>)> _data = _load();
 
   Future<(Carnet, List<Payment>)> _load() async {
-    final results = await Future.wait([
-      Api.carnet(widget.carnetId),
-      Api.carnetPayments(widget.carnetId),
-    ]);
-    final payments = results[1] as List<Payment>;
-    return ((results[0] as Carnet).withPayments(payments), payments);
+    final carnet = await Api.carnet(widget.carnetId);
+    return (carnet, await Api.carnetPayments(carnet));
   }
 
   void _reload() => setState(() => _data = _load());
@@ -42,7 +38,7 @@ class _CarnetScreenState extends State<CarnetScreen> {
       canReview: isOwner,
       details: [('Carnet', c.label), ('Cases payées', '${p.caseCount}')],
       onReview: (approve, reason) =>
-          Api.reviewCarnetPayment(p.id, approve, reason),
+          Api.reviewCarnetPayment(c.id, p, approve, reason),
     ),
   );
 
@@ -56,10 +52,11 @@ class _CarnetScreenState extends State<CarnetScreen> {
         ('Montant par case', money(c.caseAmount)),
         ('Cases restantes', '${c.remainingCases}'),
       ],
-      onSubmit: (path, cases) => Api.declareCarnetPayment(
-        carnetId: c.id,
+      onSubmit: (proof, mime, cases) => Api.declareCarnetPayment(
+        carnet: c,
         caseCount: cases,
-        proofPath: path,
+        proof: proof,
+        mime: mime,
       ),
     ),
   );
@@ -75,7 +72,7 @@ class _CarnetScreenState extends State<CarnetScreen> {
           onRetry: _reload,
           builder: (context, data) {
             final (c, payments) = data;
-            final isOwner = c.tontine?.ownerId == Api.uid;
+            final isOwner = c.ownerId == Api.uid;
             final pending = payments.where(
               (p) => p.status == PaymentStatus.pending,
             );
@@ -139,13 +136,12 @@ class _CarnetScreenState extends State<CarnetScreen> {
                 fontWeight: FontWeight.w700,
               ),
             ),
-            if (c.tontine != null)
-              Text(
-                isOwner
-                    ? c.tontine!.name
-                    : '${c.tontine!.name} · Tontinier : ${c.tontine!.owner?.fullName ?? ''}',
-                style: theme.textTheme.bodySmall,
-              ),
+            Text(
+              isOwner
+                  ? c.tontineName
+                  : '${c.tontineName} · Tontinier : ${c.ownerName}',
+              style: theme.textTheme.bodySmall,
+            ),
             const Divider(height: 24),
             if (isOwner)
               InfoRow(

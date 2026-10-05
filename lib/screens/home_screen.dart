@@ -21,7 +21,7 @@ class _HomeScreenState extends State<HomeScreen>
     ..addListener(() => setState(() {}));
   late Future<List<Tontine>> _managed = Api.myTontines();
   late Future<(List<Group>, List<Carnet>)> _joined = _loadJoined();
-  late final Future<Profile> _profile = Api.myProfile();
+  late final Future<Profile?> _profile = Api.myProfile();
 
   static Future<(List<Group>, List<Carnet>)> _loadJoined() async {
     final results = await Future.wait([Api.myGroups(), Api.myCarnets()]);
@@ -59,7 +59,7 @@ class _HomeScreenState extends State<HomeScreen>
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: FutureBuilder<Profile>(
+        title: FutureBuilder<Profile?>(
           future: _profile,
           builder: (context, snap) => Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -68,7 +68,7 @@ class _HomeScreenState extends State<HomeScreen>
                 'COTIZI',
                 style: TextStyle(fontWeight: FontWeight.w800, letterSpacing: 1),
               ),
-              if (snap.hasData)
+              if (snap.data != null)
                 Text(
                   'Bonjour ${snap.data!.fullName}',
                   style: Theme.of(context).textTheme.bodySmall,
@@ -194,7 +194,7 @@ class _HomeScreenState extends State<HomeScreen>
                       style: const TextStyle(fontWeight: FontWeight.w600),
                     ),
                     subtitle: Text(
-                      '${g.tontine?.name ?? ''} · ${money(g.contributionAmount)} ${frequencyLabel(g.frequency).toLowerCase()}',
+                      '${g.tontineName} · ${money(g.contributionAmount)} ${frequencyLabel(g.frequency).toLowerCase()}',
                     ),
                     trailing: StatusChip(
                       groupStatusLabel(g.status),
@@ -220,12 +220,15 @@ class _HomeScreenState extends State<HomeScreen>
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          '${c.tontine?.name ?? ''} · ${money(c.caseAmount)} par case',
+                          '${c.tontineName} · ${money(c.caseAmount)} par case',
                         ),
                         const SizedBox(height: 6),
-                        LinearProgressIndicator(
-                          value: c.approvedCases / c.caseCount,
-                          borderRadius: BorderRadius.circular(4),
+                        // Le texte « x / 31 cases payées » suffit aux lecteurs d'écran
+                        ExcludeSemantics(
+                          child: LinearProgressIndicator(
+                            value: c.approvedCases / c.caseCount,
+                            borderRadius: BorderRadius.circular(4),
+                          ),
                         ),
                         const SizedBox(height: 2),
                         Text(

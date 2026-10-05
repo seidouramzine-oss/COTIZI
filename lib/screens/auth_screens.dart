@@ -341,3 +341,76 @@ class _RegisterScreenState extends State<RegisterScreen> {
     );
   }
 }
+
+/// Profil manquant (inscription interrompue) : demander le nom.
+class CompleteProfileScreen extends StatefulWidget {
+  const CompleteProfileScreen({super.key, required this.onDone});
+
+  final VoidCallback onDone;
+
+  @override
+  State<CompleteProfileScreen> createState() => _CompleteProfileScreenState();
+}
+
+class _CompleteProfileScreenState extends State<CompleteProfileScreen> {
+  final _form = GlobalKey<FormState>();
+  final _name = TextEditingController();
+  bool _busy = false;
+
+  @override
+  void dispose() {
+    _name.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    if (!_form.currentState!.validate()) return;
+    setState(() => _busy = true);
+    try {
+      await Api.createProfile(_name.text);
+      widget.onDone();
+    } catch (e) {
+      if (mounted) showError(context, e);
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Votre profil'),
+        actions: [
+          TextButton(
+            onPressed: Api.signOut,
+            child: const Text('Se déconnecter'),
+          ),
+        ],
+      ),
+      body: Form(
+        key: _form,
+        child: ListView(
+          padding: const EdgeInsets.all(24),
+          children: [
+            const Text('Indiquez votre nom pour terminer votre inscription.'),
+            const SizedBox(height: 16),
+            TextFormField(
+              controller: _name,
+              textCapitalization: TextCapitalization.words,
+              decoration: const InputDecoration(labelText: 'Nom et prénom'),
+              validator: (v) {
+                final n = (v ?? '').trim().length;
+                return n < 2 || n > 60 ? 'Indiquez votre nom' : null;
+              },
+            ),
+            const SizedBox(height: 24),
+            FilledButton(
+              onPressed: _busy ? null : _submit,
+              child: const Text('Continuer'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}

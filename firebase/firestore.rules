@@ -1,0 +1,399 @@
+rules_version = '2';
+
+// COTIZI — règles de sécurité Firestore.
+// Sans serveur (offre gratuite), ce sont ces règles qui garantissent que
+// chacun ne lit que ce qui le concerne et ne fait que les actions permises.
+//
+// Collections :
+//   users/{uid}                              profil (nom, téléphone)
+//   tontines/{id}                            tontine (cagnotte ou carnet)
+//   invites/{code}                           code d'invitation -> groupe ou carnet
+//   groups/{id}                              groupe d'une tontine à cagnotte
+//   groups/{id}/members/{uid}                membre du groupe (+ numéro tiré)
+//   groups/{id}/draws/{uid}                  numéro attribué au lancement du tirage
+//   groups/{id}/payments/{uid}_{tour}        paiement d'un membre pour un tour
+//   carnets/{id}                             carnet de 31 cases
+//   carnets/{id}/payments/{id}               paiement de cases
+//   proofs/{id}                              capture d'écran (image compressée)
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ------------------------------------------------------------ Outils
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function uid() {
+      return request.auth.uid;
+    }
+
+    function doc(p) {
+      return path('/databases/' + database + '/documents/' + p);
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function changedOnly(keys) {
+      return incoming().diff(existing()).affectedKeys().hasOnly(keys);
+    }
+
+    function isText(v, min, max) {
+      return v is string && v.trim().size() >= min && v.size() <= max;
+    }
+
+    // Le numéro de téléphone est l'identifiant : l'email technique du compte
+    // est <chiffres>@phone.cotizi.app
+    function phoneOfAccount() {
+      return '+' + request.auth.token.email.split('@')[0];
+    }
+
+    function me() {
+      return get(doc('users/' + uid())).data;
+    }
+
+    function groupData(groupId) {
+      return get(doc('groups/' + groupId)).data;
+    }
+
+    function groupAfter(groupId) {
+      return getAfter(doc('groups/' + groupId)).data;
+    }
+
+    function isGroupOwner(groupId) {
+      return groupData(groupId).ownerId == uid();
+    }
+
+    function isGroupMember(groupId) {
+      return uid() in groupData(groupId).memberIds;
+    }
+
+    // Groupe « en cours » : tout le monde a tiré son numéro
+    function isActive(g) {
+      return g.status == 'drawing' && g.drawnCount == g.memberCount;
+    }
+
+    function carnetData(carnetId) {
+      return get(doc('carnets/' + carnetId)).data;
+    }
+
+    function carnetAfter(carnetId) {
+      return getAfter(doc('carnets/' + carnetId)).data;
+    }
+
+    function ownsProof(proofId) {
+      return getAfter(doc('proofs/' + proofId)).data.ownerId == uid();
+    }
+
+    // Décision du tontinier sur un paiement en attente
+    function validReview() {
+      return existing().status == 'pending'
+        && changedOnly(['status', 'rejectionReason', 'reviewedAt'])
+        && incoming().reviewedAt == request.time
+        && ((incoming().status == 'approved' && incoming().rejectionReason == null)
+          || (incoming().status == 'rejected' && isText(incoming().rejectionReason, 1, 300)));
+    }
+
+    // ----------------------------------------------------------- Profils
+
+    match /users/{userId} {
+      allow read: if signedIn() && userId == uid();
+      allow create: if signedIn() && userId == uid()
+        && incoming().keys().hasOnly(['fullName', 'phone', 'createdAt'])
+        && isText(incoming().fullName, 2, 60)
+        && incoming().phone == phoneOfAccount()
+        && incoming().createdAt == request.time;
+      allow update: if signedIn() && userId == uid()
+        && changedOnly(['fullName'])
+        && isText(incoming().fullName, 2, 60);
+    }
+
+    // ---------------------------------------------------------- Tontines
+
+    match /tontines/{tontineId} {
+      allow read: if signedIn() && existing().ownerId == uid();
+      allow create: if signedIn()
+        && incoming().keys().hasOnly(['ownerId', 'ownerName', 'name', 'type', 'createdAt'])
+        && incoming().ownerId == uid()
+        && incoming().ownerName == me().fullName
+        && isText(incoming().name, 1, 80)
+        && incoming().type in ['cagnotte', 'carnet']
+        && incoming().createdAt == request.time;
+      allow update: if signedIn() && existing().ownerId == uid()
+        && changedOnly(['name'])
+        && isText(incoming().name, 1, 80);
+    }
+
+    // ------------------------------------------------- Codes d'invitation
+
+    match /invites/{code} {
+      // Lecture d'un code précis uniquement (pas de liste de tous les codes)
+      allow get: if signedIn();
+      allow create: if signedIn()
+        && incoming().keys().hasOnly(['kind', 'targetId', 'ownerId'])
+        && incoming().ownerId == uid()
+        && (
+          (incoming().kind == 'group'
+            && groupAfter(incoming().targetId).ownerId == uid()
+            && groupAfter(incoming().targetId).inviteCode == code)
+          || (incoming().kind == 'carnet'
+            && carnetAfter(incoming().targetId).ownerId == uid()
+            && carnetAfter(incoming().targetId).inviteCode == code)
+        );
+    }
+
+    // ------------------------------------------------ Tontine à cagnotte
+
+    match /groups/{groupId} {
+      allow read: if signedIn()
+        && (existing().ownerId == uid() || uid() in existing().memberIds);
+
+      allow create: if signedIn()
+        && incoming().keys().hasOnly(['tontineId', 'tontineName', 'ownerId', 'ownerName',
+            'name', 'memberCount', 'contributionAmount', 'frequency', 'startDate',
+            'commissionType', 'commissionValue', 'inviteCode', 'status',
+            'joinedCount', 'drawnCount', 'memberIds', 'createdAt'])
+        && incoming().ownerId == uid()
+        && get(doc('tontines/' + incoming().tontineId)).data.ownerId == uid()
+        && get(doc('tontines/' + incoming().tontineId)).data.type == 'cagnotte'
+        && incoming().tontineName == get(doc('tontines/' + incoming().tontineId)).data.name
+        && incoming().ownerName == me().fullName
+        && isText(incoming().name, 1, 80)
+        && incoming().memberCount is int
+        && incoming().memberCount >= 2 && incoming().memberCount <= 100
+        && incoming().contributionAmount is int && incoming().contributionAmount > 0
+        && incoming().frequency in ['daily', 'weekly', 'biweekly', 'monthly']
+        && incoming().startDate is string
+        && incoming().startDate.matches('[0-9]{4}-[0-9]{2}-[0-9]{2}')
+        && incoming().commissionValue is number && incoming().commissionValue >= 0
+        && ((incoming().commissionType == 'percent' && incoming().commissionValue <= 100)
+          || (incoming().commissionType == 'fixed'
+            && incoming().commissionValue <= incoming().memberCount * incoming().contributionAmount))
+        && incoming().status == 'recruiting'
+        && incoming().joinedCount == 0
+        && incoming().drawnCount == 0
+        && incoming().memberIds == []
+        && incoming().createdAt == request.time
+        && getAfter(doc('invites/' + incoming().inviteCode)).data.targetId == groupId;
+
+      allow update: if signedIn() && (
+        // Le tontinier lance le tirage (groupe complet) ou le termine
+        (existing().ownerId == uid()
+          && changedOnly(['status', 'drawnCount'])
+          && incoming().drawnCount is int
+          && incoming().drawnCount >= existing().drawnCount
+          && incoming().drawnCount <= existing().memberCount
+          && (incoming().status == existing().status
+            || (existing().status == 'recruiting' && incoming().status == 'drawing'
+              && existing().joinedCount == existing().memberCount))
+          && (incoming().drawnCount == existing().drawnCount || incoming().status == 'drawing'))
+        // Un membre rejoint le groupe avec le code
+        || (existing().ownerId != uid()
+          && changedOnly(['joinedCount', 'memberIds'])
+          && existing().status == 'recruiting'
+          && !(uid() in existing().memberIds)
+          && incoming().memberIds == existing().memberIds.concat([uid()])
+          && incoming().joinedCount == existing().joinedCount + 1
+          && incoming().joinedCount <= existing().memberCount
+          && existsAfter(doc('groups/' + groupId + '/members/' + uid())))
+        // Un membre tire son numéro
+        || (uid() in existing().memberIds
+          && changedOnly(['drawnCount'])
+          && existing().status == 'drawing'
+          && incoming().drawnCount == existing().drawnCount + 1
+          && get(doc('groups/' + groupId + '/members/' + uid())).data.drawPosition == null
+          && getAfter(doc('groups/' + groupId + '/members/' + uid())).data.drawPosition != null)
+      );
+
+      match /members/{memberId} {
+        allow read: if signedIn() && (isGroupOwner(groupId) || isGroupMember(groupId));
+        allow create: if signedIn() && memberId == uid()
+          && incoming().keys().hasOnly(['fullName', 'phone', 'joinedAt', 'drawPosition'])
+          && incoming().fullName == me().fullName
+          && incoming().phone == me().phone
+          && incoming().drawPosition == null
+          && incoming().joinedAt == request.time
+          && uid() in groupAfter(groupId).memberIds;
+        // Révéler son numéro (le membre lui-même ou le tontinier pour les retardataires)
+        allow update: if signedIn()
+          && ((memberId == uid()
+              && groupAfter(groupId).drawnCount == groupData(groupId).drawnCount + 1)
+            || (isGroupOwner(groupId)
+              && groupAfter(groupId).drawnCount == groupData(groupId).memberCount))
+          && changedOnly(['drawPosition'])
+          && existing().drawPosition == null
+          && groupData(groupId).status == 'drawing'
+          && incoming().drawPosition == get(doc('groups/' + groupId + '/draws/' + memberId)).data.position;
+      }
+
+      // Numéros tirés au hasard par l'application du tontinier au lancement
+      match /draws/{memberId} {
+        allow read: if signedIn() && (memberId == uid() || isGroupOwner(groupId));
+        allow create: if signedIn() && isGroupOwner(groupId)
+          && groupData(groupId).status == 'recruiting'
+          && groupAfter(groupId).status == 'drawing'
+          && exists(doc('groups/' + groupId + '/members/' + memberId))
+          && incoming().keys().hasOnly(['position'])
+          && incoming().position is int
+          && incoming().position >= 1
+          && incoming().position <= groupData(groupId).memberCount;
+      }
+
+      match /payments/{paymentId} {
+        allow read: if signedIn()
+          && (existing().userId == uid() || isGroupOwner(groupId));
+
+        allow create: if signedIn()
+          && incoming().keys().hasOnly(['userId', 'payerName', 'payerPhone', 'tourNumber',
+              'amount', 'proofId', 'status', 'rejectionReason', 'declaredAt', 'reviewedAt'])
+          && incoming().userId == uid()
+          && isGroupMember(groupId)
+          && isActive(groupData(groupId))
+          && incoming().tourNumber is int
+          && incoming().tourNumber >= 1
+          && incoming().tourNumber <= groupData(groupId).memberCount
+          && paymentId == uid() + '_' + string(incoming().tourNumber)
+          && incoming().amount == groupData(groupId).contributionAmount
+          && incoming().payerName == me().fullName
+          && incoming().payerPhone == me().phone
+          && incoming().status == 'pending'
+          && incoming().rejectionReason == null
+          && incoming().reviewedAt == null
+          && incoming().declaredAt == request.time
+          && ownsProof(incoming().proofId);
+
+        allow update: if signedIn() && (
+          // Nouvelle déclaration après un refus
+          (existing().userId == uid()
+            && existing().status == 'rejected'
+            && changedOnly(['proofId', 'status', 'rejectionReason', 'declaredAt', 'reviewedAt'])
+            && incoming().status == 'pending'
+            && incoming().rejectionReason == null
+            && incoming().reviewedAt == null
+            && incoming().declaredAt == request.time
+            && ownsProof(incoming().proofId))
+          // Validation ou refus par le tontinier
+          || (isGroupOwner(groupId) && validReview())
+        );
+      }
+    }
+
+    // --------------------------------------------------- Tontine à carnet
+
+    match /carnets/{carnetId} {
+      allow read: if signedIn()
+        && (existing().ownerId == uid() || existing().clientId == uid());
+
+      allow create: if signedIn()
+        && incoming().keys().hasOnly(['tontineId', 'tontineName', 'ownerId', 'ownerName',
+            'label', 'caseAmount', 'caseCount', 'clientId', 'clientName', 'clientPhone',
+            'inviteCode', 'usedCases', 'approvedCases', 'lastPaymentId', 'createdAt'])
+        && incoming().ownerId == uid()
+        && get(doc('tontines/' + incoming().tontineId)).data.ownerId == uid()
+        && get(doc('tontines/' + incoming().tontineId)).data.type == 'carnet'
+        && incoming().tontineName == get(doc('tontines/' + incoming().tontineId)).data.name
+        && incoming().ownerName == me().fullName
+        && isText(incoming().label, 1, 80)
+        && incoming().caseAmount is int && incoming().caseAmount > 0
+        && incoming().caseCount == 31
+        && incoming().clientId == null
+        && incoming().clientName == null
+        && incoming().clientPhone == null
+        && incoming().usedCases == 0
+        && incoming().approvedCases == 0
+        && incoming().lastPaymentId == null
+        && incoming().createdAt == request.time
+        && getAfter(doc('invites/' + incoming().inviteCode)).data.targetId == carnetId;
+
+      allow update: if signedIn() && (
+        // Le client rejoint le carnet avec le code
+        (existing().clientId == null
+          && existing().ownerId != uid()
+          && changedOnly(['clientId', 'clientName', 'clientPhone'])
+          && incoming().clientId == uid()
+          && incoming().clientName == me().fullName
+          && incoming().clientPhone == me().phone)
+        // Le client déclare des cases (paiement créé dans le même envoi)
+        || (existing().clientId == uid()
+          && changedOnly(['usedCases', 'lastPaymentId'])
+          && incoming().usedCases > existing().usedCases
+          && incoming().usedCases <= existing().caseCount
+          && !exists(doc('carnets/' + carnetId + '/payments/' + incoming().lastPaymentId))
+          && getAfter(doc('carnets/' + carnetId + '/payments/' + incoming().lastPaymentId)).data.caseCount
+            == incoming().usedCases - existing().usedCases)
+        // Le tontinier met à jour les compteurs en validant / refusant
+        || (existing().ownerId == uid()
+          && changedOnly(['usedCases', 'approvedCases'])
+          && incoming().approvedCases >= 0
+          && incoming().approvedCases <= incoming().usedCases
+          && incoming().usedCases <= existing().caseCount)
+      );
+
+      match /payments/{paymentId} {
+        allow read: if signedIn()
+          && (existing().userId == uid() || carnetData(carnetId).ownerId == uid());
+
+        allow create: if signedIn()
+          && incoming().keys().hasOnly(['userId', 'payerName', 'payerPhone', 'caseCount',
+              'amount', 'proofId', 'status', 'rejectionReason', 'declaredAt', 'reviewedAt'])
+          && incoming().userId == uid()
+          && carnetData(carnetId).clientId == uid()
+          && incoming().caseCount is int
+          && incoming().caseCount >= 1
+          && incoming().amount == incoming().caseCount * carnetData(carnetId).caseAmount
+          && incoming().payerName == me().fullName
+          && incoming().payerPhone == me().phone
+          && incoming().status == 'pending'
+          && incoming().rejectionReason == null
+          && incoming().reviewedAt == null
+          && incoming().declaredAt == request.time
+          && carnetAfter(carnetId).lastPaymentId == paymentId
+          && carnetAfter(carnetId).usedCases
+            == carnetData(carnetId).usedCases + incoming().caseCount
+          && ownsProof(incoming().proofId);
+
+        // Le tontinier valide (cases payées) ou refuse (cases libérées)
+        allow update: if signedIn()
+          && carnetData(carnetId).ownerId == uid()
+          && validReview()
+          && ((incoming().status == 'approved'
+              && carnetAfter(carnetId).approvedCases
+                == carnetData(carnetId).approvedCases + existing().caseCount
+              && carnetAfter(carnetId).usedCases == carnetData(carnetId).usedCases)
+            || (incoming().status == 'rejected'
+              && carnetAfter(carnetId).usedCases
+                == carnetData(carnetId).usedCases - existing().caseCount
+              && carnetAfter(carnetId).approvedCases == carnetData(carnetId).approvedCases));
+      }
+    }
+
+    // ------------------------------------------------ Preuves de paiement
+
+    match /proofs/{proofId} {
+      allow read: if signedIn()
+        && (existing().ownerId == uid() || existing().reviewerId == uid());
+      allow create: if signedIn()
+        && incoming().keys().hasOnly(['ownerId', 'reviewerId', 'kind', 'targetId',
+            'data', 'mime', 'createdAt'])
+        && incoming().ownerId == uid()
+        && incoming().data is string
+        && incoming().data.size() <= 900000
+        && incoming().mime in ['image/jpeg', 'image/png', 'image/webp']
+        && incoming().createdAt == request.time
+        && (
+          (incoming().kind == 'group'
+            && uid() in groupData(incoming().targetId).memberIds
+            && groupData(incoming().targetId).ownerId == incoming().reviewerId)
+          || (incoming().kind == 'carnet'
+            && carnetData(incoming().targetId).clientId == uid()
+            && carnetData(incoming().targetId).ownerId == incoming().reviewerId)
+        );
+    }
+  }
+}

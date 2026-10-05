@@ -186,15 +186,15 @@ class _TontineScreenState extends State<TontineScreen> {
   }
 
   Future<void> _createCarnet(int existing) async {
-    final carnet = await showDialog<Carnet>(
+    final carnetId = await showDialog<String>(
       context: context,
       builder: (_) => _CreateCarnetDialog(
-        tontineId: widget.tontine.id,
+        tontine: widget.tontine,
         defaultLabel: 'Carnet n°${existing + 1}',
       ),
     );
-    if (carnet != null && mounted) {
-      await _open(CarnetScreen(carnetId: carnet.id));
+    if (carnetId != null && mounted) {
+      await _open(CarnetScreen(carnetId: carnetId));
     }
   }
 
@@ -216,7 +216,7 @@ class _TontineScreenState extends State<TontineScreen> {
       floatingActionButton: _isCagnotte
           ? FloatingActionButton.extended(
               onPressed: () =>
-                  _open(CreateGroupScreen(tontineId: widget.tontine.id)),
+                  _open(CreateGroupScreen(tontine: widget.tontine)),
               icon: const Icon(Icons.group_add),
               label: const Text('Nouveau groupe'),
             )
@@ -323,9 +323,12 @@ class _TontineScreenState extends State<TontineScreen> {
                           : 'Sans client · code ${c.inviteCode}',
                     ),
                     const SizedBox(height: 6),
-                    LinearProgressIndicator(
-                      value: c.approvedCases / c.caseCount,
-                      borderRadius: BorderRadius.circular(4),
+                    // Le texte « x / 31 cases payées » suffit aux lecteurs d'écran
+                    ExcludeSemantics(
+                      child: LinearProgressIndicator(
+                        value: c.approvedCases / c.caseCount,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
                     ),
                     const SizedBox(height: 2),
                     Text('${c.approvedCases} / ${c.caseCount} cases payées'),
@@ -348,11 +351,11 @@ class _TontineScreenState extends State<TontineScreen> {
 
 class _CreateCarnetDialog extends StatefulWidget {
   const _CreateCarnetDialog({
-    required this.tontineId,
+    required this.tontine,
     required this.defaultLabel,
   });
 
-  final String tontineId;
+  final Tontine tontine;
   final String defaultLabel;
 
   @override
@@ -376,12 +379,12 @@ class _CreateCarnetDialogState extends State<_CreateCarnetDialog> {
     if (!_form.currentState!.validate()) return;
     setState(() => _busy = true);
     try {
-      final carnet = await Api.createCarnet(
-        tontineId: widget.tontineId,
+      final carnetId = await Api.createCarnet(
+        tontine: widget.tontine,
         label: _label.text,
         caseAmount: parseAmount(_amount.text)!,
       );
-      if (mounted) Navigator.pop(context, carnet);
+      if (mounted) Navigator.pop(context, carnetId);
     } catch (e) {
       if (mounted) showError(context, e);
       if (mounted) setState(() => _busy = false);

@@ -8,9 +8,9 @@ import '../widgets/common.dart';
 import 'payment_screens.dart';
 
 class CreateGroupScreen extends StatefulWidget {
-  const CreateGroupScreen({super.key, required this.tontineId});
+  const CreateGroupScreen({super.key, required this.tontine});
 
-  final String tontineId;
+  final Tontine tontine;
 
   @override
   State<CreateGroupScreen> createState() => _CreateGroupScreenState();
@@ -46,7 +46,10 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
 
   Group get _preview => Group(
     id: '',
-    tontineId: widget.tontineId,
+    tontineId: widget.tontine.id,
+    tontineName: widget.tontine.name,
+    ownerId: '',
+    ownerName: '',
     name: _name.text,
     memberCount: _memberCount,
     contributionAmount: _contribution,
@@ -73,7 +76,7 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
     setState(() => _busy = true);
     try {
       await Api.createGroup(
-        tontineId: widget.tontineId,
+        tontine: widget.tontine,
         name: _name.text,
         memberCount: _memberCount,
         contributionAmount: _contribution,
@@ -255,11 +258,8 @@ class _GroupScreenState extends State<GroupScreen> {
   bool _busy = false;
 
   Future<(Group, List<Payment>)> _load() async {
-    final results = await Future.wait([
-      Api.group(widget.groupId),
-      Api.groupPayments(widget.groupId),
-    ]);
-    return (results[0] as Group, results[1] as List<Payment>);
+    final group = await Api.group(widget.groupId);
+    return (group, await Api.groupPayments(group));
   }
 
   void _reload() => setState(() => _data = _load());
@@ -314,11 +314,12 @@ class _GroupScreenState extends State<GroupScreen> {
         ('Groupe', g.name),
         ('Tour', '${p.tourNumber} · ${dateShort(g.tourDate(p.tourNumber))}'),
       ],
-      onReview: (approve, reason) => Api.reviewPayment(p.id, approve, reason),
+      onReview: (approve, reason) =>
+          Api.reviewPayment(g.id, p.id, approve, reason),
     ),
   );
 
-  void _declare(Group g, int tour) => _push(
+  void _declare(Group g, int tour, {required bool afterRejection}) => _push(
     DeclarePaymentScreen(
       title: 'Déclarer un paiement',
       fixedAmount: g.contributionAmount,
@@ -327,8 +328,13 @@ class _GroupScreenState extends State<GroupScreen> {
         ('Tour', '$tour · ${dateLong(g.tourDate(tour))}'),
         ('Bénéficiaire', g.beneficiaryOf(tour)?.name ?? '—'),
       ],
-      onSubmit: (path, _) =>
-          Api.declarePayment(groupId: g.id, tourNumber: tour, proofPath: path),
+      onSubmit: (proof, mime, _) => Api.declarePayment(
+        group: g,
+        tourNumber: tour,
+        proof: proof,
+        mime: mime,
+        afterRejection: afterRejection,
+      ),
     ),
   );
 
@@ -343,7 +349,7 @@ class _GroupScreenState extends State<GroupScreen> {
           onRetry: _reload,
           builder: (context, data) {
             final (g, payments) = data;
-            final isOwner = g.tontine?.ownerId == Api.uid;
+            final isOwner = g.ownerId == Api.uid;
             return ListView(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
               children: [
@@ -385,11 +391,10 @@ class _GroupScreenState extends State<GroupScreen> {
                 ),
               ],
             ),
-            if (g.tontine != null)
-              Text(
-                '${g.tontine!.name} · Tontinier : ${g.tontine!.owner?.fullName ?? ''}',
-                style: theme.textTheme.bodySmall,
-              ),
+            Text(
+              '${g.tontineName} · Tontinier : ${g.ownerName}',
+              style: theme.textTheme.bodySmall,
+            ),
             const Divider(height: 24),
             InfoRow(
               'Cotisation',
@@ -435,7 +440,7 @@ class _GroupScreenState extends State<GroupScreen> {
                             'Chaque membre tirera son numéro de passage.',
                         confirmLabel: 'Lancer',
                       )) {
-                        await _run(() => Api.startDraw(g.id));
+                        await _run(() => Api.startDraw(g));
                       }
                     },
               icon: const Icon(Icons.casino_outlined),
@@ -450,8 +455,10 @@ class _GroupScreenState extends State<GroupScreen> {
         return [
           _infoBanner(
             Icons.hourglass_top,
-            'En attente des autres membres ($joined / ${g.memberCount}). '
-            'Le tontinier lancera ensuite le tirage au sort.',
+            joined < g.memberCount
+                ? 'En attente des autres membres ($joined / ${g.memberCount}). '
+                      'Le tontinier lancera ensuite le tirage au sort.'
+                : 'Le groupe est complet. Le tontinier va lancer le tirage au sort.',
           ),
         ];
       case GroupStatus.drawing:
@@ -472,7 +479,7 @@ class _GroupScreenState extends State<GroupScreen> {
                         message: 'Les membres qui n\'ont pas encore tiré recevront un numéro au hasard.',
                         confirmLabel: 'Tirer pour eux',
                       )) {
-                        await _run(() => Api.finishDraw(g.id));
+                        await _run(() => Api.finishDraw(g));
                       }
                     },
               icon: const Icon(Icons.shuffle),
@@ -539,7 +546,7 @@ class _GroupScreenState extends State<GroupScreen> {
         Card(
           child: ListTile(
             leading: const Icon(Icons.receipt_long),
-            title: Text(p.profile?.fullName ?? 'Membre'),
+            title: Text(p.payer.fullName),
             subtitle: Text(
               'Tour ${p.tourNumber} · ${money(p.amount)} · ${dateTime(p.declaredAt)}',
             ),
@@ -583,9 +590,13 @@ class _GroupScreenState extends State<GroupScreen> {
         shape: const Border(),
         leading: _tourLeading(tour),
         title: Text('Tour $tour'),
-        subtitle: Text(_tourSubtitle(g, tour)),
+        subtitle: Text(
+          pending > 0
+              ? '${_tourSubtitle(g, tour)}\n$pending paiement(s) à valider'
+              : _tourSubtitle(g, tour),
+        ),
         trailing: StatusChip(
-          '$approved / ${g.memberCount}${pending > 0 ? ' · $pending ⏳' : ''}',
+          '$approved / ${g.memberCount} payé${approved > 1 ? 's' : ''}',
           approved == g.memberCount
               ? paymentStatusColor(PaymentStatus.approved)
               : Theme.of(context).colorScheme.primary,
@@ -654,7 +665,8 @@ class _GroupScreenState extends State<GroupScreen> {
                 child: Align(
                   alignment: Alignment.centerRight,
                   child: FilledButton.tonalIcon(
-                    onPressed: () => _declare(g, tour),
+                    onPressed: () =>
+                        _declare(g, tour, afterRejection: mine != null),
                     icon: const Icon(Icons.upload),
                     label: Text(
                       mine == null
@@ -685,7 +697,7 @@ class _GroupScreenState extends State<GroupScreen> {
               child: Text(m.name.isEmpty ? '?' : m.name[0].toUpperCase()),
             ),
             title: Text(m.userId == Api.uid ? '${m.name} (vous)' : m.name),
-            subtitle: Text(m.profile?.phone ?? ''),
+            subtitle: Text(m.profile.phone),
             trailing: m.drawPosition == null
                 ? null
                 : StatusChip(

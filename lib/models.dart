@@ -1,5 +1,7 @@
 import 'dart:math';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
+
 enum TontineType { cagnotte, carnet }
 
 enum Frequency { daily, weekly, biweekly, monthly }
@@ -10,10 +12,18 @@ enum GroupStatus { recruiting, drawing, active }
 
 enum PaymentStatus { pending, approved, rejected }
 
+typedef Json = Map<String, dynamic>;
+
 T _enum<T extends Enum>(List<T> values, Object? name) =>
     values.firstWhere((v) => v.name == name);
 
-int _int(Object? v) => (v as num).toInt();
+int _int(Object? v) => (v as num?)?.toInt() ?? 0;
+
+/// Horodatage serveur ; encore nul juste après une écriture locale.
+DateTime _time(Object? v) => v is Timestamp ? v.toDate() : DateTime.now();
+
+String dateKey(DateTime d) =>
+    '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
 
 class Profile {
   const Profile({required this.fullName, required this.phone});
@@ -21,13 +31,10 @@ class Profile {
   final String fullName;
   final String phone;
 
-  static Profile? maybe(Object? json) {
-    if (json is! Map<String, dynamic>) return null;
-    return Profile(
-      fullName: json['full_name'] as String? ?? '',
-      phone: json['phone'] as String? ?? '',
-    );
-  }
+  factory Profile.fromJson(Json json) => Profile(
+    fullName: json['fullName'] as String? ?? '',
+    phone: json['phone'] as String? ?? '',
+  );
 }
 
 class Tontine {
@@ -36,7 +43,6 @@ class Tontine {
     required this.ownerId,
     required this.name,
     required this.type,
-    this.owner,
     this.itemCount = 0,
   });
 
@@ -44,23 +50,25 @@ class Tontine {
   final String ownerId;
   final String name;
   final TontineType type;
-  final Profile? owner;
 
   /// Nombre de groupes (cagnotte) ou de carnets (carnet).
   final int itemCount;
 
-  factory Tontine.fromJson(Map<String, dynamic> json) {
-    final type = _enum(TontineType.values, json['type']);
-    final counts = json[type == TontineType.cagnotte ? 'groups' : 'carnets'];
+  Tontine withCount(int count) => Tontine(
+    id: id,
+    ownerId: ownerId,
+    name: name,
+    type: type,
+    itemCount: count,
+  );
+
+  factory Tontine.fromDoc(DocumentSnapshot<Json> doc) {
+    final json = doc.data()!;
     return Tontine(
-      id: json['id'] as String,
-      ownerId: json['owner_id'] as String? ?? '',
+      id: doc.id,
+      ownerId: json['ownerId'] as String,
       name: json['name'] as String,
-      type: type,
-      owner: Profile.maybe(json['owner']),
-      itemCount: counts is List && counts.isNotEmpty
-          ? _int(counts.first['count'])
-          : 0,
+      type: _enum(TontineType.values, json['type']),
     );
   }
 }
@@ -69,6 +77,9 @@ class Group {
   const Group({
     required this.id,
     required this.tontineId,
+    required this.tontineName,
+    required this.ownerId,
+    required this.ownerName,
     required this.name,
     required this.memberCount,
     required this.contributionAmount,
@@ -78,14 +89,18 @@ class Group {
     required this.commissionValue,
     required this.inviteCode,
     required this.status,
-    this.tontine,
-    this.members = const [],
     this.joinedCount = 0,
+    this.drawnCount = 0,
+    this.memberIds = const [],
+    this.members = const [],
     this.pendingCount = 0,
   });
 
   final String id;
   final String tontineId;
+  final String tontineName;
+  final String ownerId;
+  final String ownerName;
   final String name;
   final int memberCount;
   final int contributionAmount;
@@ -95,9 +110,10 @@ class Group {
   final double commissionValue;
   final String inviteCode;
   final GroupStatus status;
-  final Tontine? tontine;
-  final List<GroupMember> members;
   final int joinedCount;
+  final int drawnCount;
+  final List<String> memberIds;
+  final List<GroupMember> members;
   final int pendingCount;
 
   /// Total collecté à chaque tour.
@@ -114,11 +130,15 @@ class Group {
     final n = tour - 1;
     switch (frequency) {
       case Frequency.daily:
-        return startDate.add(Duration(days: n));
+        return DateTime(startDate.year, startDate.month, startDate.day + n);
       case Frequency.weekly:
-        return startDate.add(Duration(days: 7 * n));
+        return DateTime(startDate.year, startDate.month, startDate.day + 7 * n);
       case Frequency.biweekly:
-        return startDate.add(Duration(days: 14 * n));
+        return DateTime(
+          startDate.year,
+          startDate.month,
+          startDate.day + 14 * n,
+        );
       case Frequency.monthly:
         final lastDay = DateTime(
           startDate.year,
@@ -140,70 +160,82 @@ class Group {
     return null;
   }
 
-  factory Group.fromJson(Map<String, dynamic> json) {
-    final membersJson = json['members'];
-    final countJson = json['group_members'];
-    final pendingJson = json['payments'];
+  Group copyWith({List<GroupMember>? members, int? pendingCount}) => Group(
+    id: id,
+    tontineId: tontineId,
+    tontineName: tontineName,
+    ownerId: ownerId,
+    ownerName: ownerName,
+    name: name,
+    memberCount: memberCount,
+    contributionAmount: contributionAmount,
+    frequency: frequency,
+    startDate: startDate,
+    commissionType: commissionType,
+    commissionValue: commissionValue,
+    inviteCode: inviteCode,
+    status: status,
+    joinedCount: joinedCount,
+    drawnCount: drawnCount,
+    memberIds: memberIds,
+    members: members ?? this.members,
+    pendingCount: pendingCount ?? this.pendingCount,
+  );
+
+  factory Group.fromDoc(DocumentSnapshot<Json> doc) {
+    final json = doc.data()!;
+    final memberCount = _int(json['memberCount']);
+    final drawnCount = _int(json['drawnCount']);
+    final status = json['status'] == 'recruiting'
+        ? GroupStatus.recruiting
+        : drawnCount >= memberCount
+        ? GroupStatus.active
+        : GroupStatus.drawing;
     return Group(
-      id: json['id'] as String,
-      tontineId: json['tontine_id'] as String,
+      id: doc.id,
+      tontineId: json['tontineId'] as String,
+      tontineName: json['tontineName'] as String? ?? '',
+      ownerId: json['ownerId'] as String,
+      ownerName: json['ownerName'] as String? ?? '',
       name: json['name'] as String,
-      memberCount: _int(json['member_count']),
-      contributionAmount: _int(json['contribution_amount']),
+      memberCount: memberCount,
+      contributionAmount: _int(json['contributionAmount']),
       frequency: _enum(Frequency.values, json['frequency']),
-      startDate: DateTime.parse(json['start_date'] as String),
-      commissionType: _enum(CommissionType.values, json['commission_type']),
-      commissionValue: (json['commission_value'] as num).toDouble(),
-      inviteCode: json['invite_code'] as String,
-      status: _enum(GroupStatus.values, json['status']),
-      tontine: json['tontine'] is Map<String, dynamic>
-          ? Tontine.fromJson({
-              'type': 'cagnotte',
-              ...json['tontine'] as Map<String, dynamic>,
-            })
-          : null,
-      members: membersJson is List
-          ? (membersJson.map((m) => GroupMember.fromJson(m)).toList()..sort(
-              (a, b) => (a.drawPosition ?? 1 << 30).compareTo(
-                b.drawPosition ?? 1 << 30,
-              ),
-            ))
-          : const [],
-      joinedCount: membersJson is List
-          ? membersJson.length
-          : countJson is List && countJson.isNotEmpty
-          ? _int(countJson.first['count'])
-          : 0,
-      pendingCount: pendingJson is List && pendingJson.isNotEmpty
-          ? _int(pendingJson.first['count'])
-          : 0,
+      startDate: DateTime.parse(json['startDate'] as String),
+      commissionType: _enum(CommissionType.values, json['commissionType']),
+      commissionValue: (json['commissionValue'] as num).toDouble(),
+      inviteCode: json['inviteCode'] as String,
+      status: status,
+      joinedCount: _int(json['joinedCount']),
+      drawnCount: drawnCount,
+      memberIds: List<String>.from(json['memberIds'] as List? ?? const []),
     );
   }
 }
 
 class GroupMember {
   const GroupMember({
-    required this.id,
     required this.userId,
     required this.drawPosition,
     required this.profile,
   });
 
-  final String id;
   final String userId;
   final int? drawPosition;
-  final Profile? profile;
+  final Profile profile;
 
-  String get name => profile?.fullName ?? 'Membre';
+  String get name => profile.fullName;
 
-  factory GroupMember.fromJson(Map<String, dynamic> json) => GroupMember(
-    id: json['id'] as String,
-    userId: json['user_id'] as String,
-    drawPosition: json['draw_position'] == null
-        ? null
-        : _int(json['draw_position']),
-    profile: Profile.maybe(json['profile']),
-  );
+  factory GroupMember.fromDoc(DocumentSnapshot<Json> doc) {
+    final json = doc.data()!;
+    return GroupMember(
+      userId: doc.id,
+      drawPosition: json['drawPosition'] == null
+          ? null
+          : _int(json['drawPosition']),
+      profile: Profile.fromJson(json),
+    );
+  }
 }
 
 class Payment {
@@ -211,129 +243,113 @@ class Payment {
     required this.id,
     required this.userId,
     required this.amount,
-    required this.proofPath,
+    required this.proofId,
     required this.status,
     required this.rejectionReason,
     required this.declaredAt,
+    required this.payer,
     this.tourNumber = 0,
     this.caseCount = 0,
-    this.profile,
   });
 
   final String id;
   final String userId;
   final int amount;
-  final String proofPath;
+  final String proofId;
   final PaymentStatus status;
   final String? rejectionReason;
   final DateTime declaredAt;
+  final Profile payer;
 
   /// Paiement de groupe (cagnotte) : tour concerné.
   final int tourNumber;
 
   /// Paiement de carnet : nombre de cases payées.
   final int caseCount;
-  final Profile? profile;
 
-  factory Payment.fromJson(Map<String, dynamic> json) => Payment(
-    id: json['id'] as String,
-    userId: json['user_id'] as String,
-    amount: _int(json['amount']),
-    proofPath: json['proof_path'] as String,
-    status: _enum(PaymentStatus.values, json['status']),
-    rejectionReason: json['rejection_reason'] as String?,
-    declaredAt: DateTime.parse(json['declared_at'] as String).toLocal(),
-    tourNumber: json['tour_number'] == null ? 0 : _int(json['tour_number']),
-    caseCount: json['case_count'] == null ? 0 : _int(json['case_count']),
-    profile: Profile.maybe(json['profile']),
-  );
+  factory Payment.fromDoc(DocumentSnapshot<Json> doc) {
+    final json = doc.data()!;
+    return Payment(
+      id: doc.id,
+      userId: json['userId'] as String,
+      amount: _int(json['amount']),
+      proofId: json['proofId'] as String,
+      status: _enum(PaymentStatus.values, json['status']),
+      rejectionReason: json['rejectionReason'] as String?,
+      declaredAt: _time(json['declaredAt']),
+      payer: Profile(
+        fullName: json['payerName'] as String? ?? '',
+        phone: json['payerPhone'] as String? ?? '',
+      ),
+      tourNumber: _int(json['tourNumber']),
+      caseCount: _int(json['caseCount']),
+    );
+  }
 }
 
 class Carnet {
   const Carnet({
     required this.id,
     required this.tontineId,
+    required this.tontineName,
+    required this.ownerId,
+    required this.ownerName,
     required this.label,
     required this.caseAmount,
     required this.caseCount,
     required this.clientId,
+    required this.client,
     required this.inviteCode,
-    this.client,
-    this.tontine,
-    this.approvedCases = 0,
-    this.pendingCases = 0,
+    required this.usedCases,
+    required this.approvedCases,
   });
 
   final String id;
   final String tontineId;
+  final String tontineName;
+  final String ownerId;
+  final String ownerName;
   final String label;
   final int caseAmount;
   final int caseCount;
   final String? clientId;
-  final String inviteCode;
   final Profile? client;
-  final Tontine? tontine;
-  final int approvedCases;
-  final int pendingCases;
+  final String inviteCode;
 
-  int get remainingCases => caseCount - approvedCases - pendingCases;
+  /// Cases déclarées (en attente + validées).
+  final int usedCases;
+  final int approvedCases;
+
+  int get pendingCases => usedCases - approvedCases;
+
+  int get remainingCases => caseCount - usedCases;
 
   /// Le client récupère toutes les cases sauf la dernière (commission).
   int get clientPayout => (caseCount - 1) * caseAmount;
 
   bool get isComplete => approvedCases >= caseCount;
 
-  Carnet withPayments(List<Payment> payments) =>
-      _withCounts(payments.map((p) => (p.status, p.caseCount)));
-
-  Carnet _withCounts(Iterable<(PaymentStatus, int)> payments) {
-    var approved = 0;
-    var pending = 0;
-    for (final (status, cases) in payments) {
-      if (status == PaymentStatus.approved) approved += cases;
-      if (status == PaymentStatus.pending) pending += cases;
-    }
+  factory Carnet.fromDoc(DocumentSnapshot<Json> doc) {
+    final json = doc.data()!;
     return Carnet(
-      id: id,
-      tontineId: tontineId,
-      label: label,
-      caseAmount: caseAmount,
-      caseCount: caseCount,
-      clientId: clientId,
-      inviteCode: inviteCode,
-      client: client,
-      tontine: tontine,
-      approvedCases: approved,
-      pendingCases: pending,
-    );
-  }
-
-  factory Carnet.fromJson(Map<String, dynamic> json) {
-    final carnet = Carnet(
-      id: json['id'] as String,
-      tontineId: json['tontine_id'] as String,
+      id: doc.id,
+      tontineId: json['tontineId'] as String,
+      tontineName: json['tontineName'] as String? ?? '',
+      ownerId: json['ownerId'] as String,
+      ownerName: json['ownerName'] as String? ?? '',
       label: json['label'] as String,
-      caseAmount: _int(json['case_amount']),
-      caseCount: _int(json['case_count']),
-      clientId: json['client_id'] as String?,
-      inviteCode: json['invite_code'] as String,
-      client: Profile.maybe(json['client']),
-      tontine: json['tontine'] is Map<String, dynamic>
-          ? Tontine.fromJson({
-              'type': 'carnet',
-              ...json['tontine'] as Map<String, dynamic>,
-            })
-          : null,
+      caseAmount: _int(json['caseAmount']),
+      caseCount: _int(json['caseCount']),
+      clientId: json['clientId'] as String?,
+      client: json['clientId'] == null
+          ? null
+          : Profile(
+              fullName: json['clientName'] as String? ?? '',
+              phone: json['clientPhone'] as String? ?? '',
+            ),
+      inviteCode: json['inviteCode'] as String,
+      usedCases: _int(json['usedCases']),
+      approvedCases: _int(json['approvedCases']),
     );
-    final payments = json['carnet_payments'];
-    if (payments is List) {
-      return carnet._withCounts(
-        payments.map(
-          (p) =>
-              (_enum(PaymentStatus.values, p['status']), _int(p['case_count'])),
-        ),
-      );
-    }
-    return carnet;
   }
 }

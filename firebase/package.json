@@ -1,0 +1,13 @@
+{
+  "name": "cotizi-firebase",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "firebase emulators:exec --only firestore --project cotizi-test \"node --test tests/rules.test.mjs\""
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^5.0.0",
+    "firebase": "^12.0.0",
+    "firebase-tools": "^15.0.0"
+  }
+}

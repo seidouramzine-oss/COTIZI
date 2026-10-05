@@ -26,15 +26,15 @@ class DeclarePaymentScreen extends StatefulWidget {
   final int? fixedAmount;
   final int? caseAmount;
   final int? maxCases;
-  final Future<void> Function(String proofPath, int cases) onSubmit;
+  final Future<void> Function(Uint8List proof, String mime, int cases) onSubmit;
 
   @override
   State<DeclarePaymentScreen> createState() => _DeclarePaymentScreenState();
 }
 
 class _DeclarePaymentScreenState extends State<DeclarePaymentScreen> {
-  XFile? _file;
   Uint8List? _preview;
+  String _mime = 'image/jpeg';
   int _cases = 1;
   bool _busy = false;
 
@@ -45,16 +45,18 @@ class _DeclarePaymentScreenState extends State<DeclarePaymentScreen> {
 
   Future<void> _pick() async {
     try {
+      // Capture réduite et compressée : elle est stockée dans la base.
       final file = await ImagePicker().pickImage(
         source: ImageSource.gallery,
-        maxWidth: 1600,
-        imageQuality: 80,
+        maxWidth: 1080,
+        maxHeight: 1920,
+        imageQuality: 60,
       );
       if (file == null) return;
-      final bytes = await file.readAsBytes();
+      final (bytes, mime) = await Api.readProof(file);
       setState(() {
-        _file = file;
         _preview = bytes;
+        _mime = mime;
       });
     } catch (e) {
       if (mounted) showError(context, e);
@@ -62,14 +64,13 @@ class _DeclarePaymentScreenState extends State<DeclarePaymentScreen> {
   }
 
   Future<void> _submit() async {
-    if (_file == null) {
+    if (_preview == null) {
       showInfo(context, 'Ajoutez la capture d\'écran de votre paiement');
       return;
     }
     setState(() => _busy = true);
     try {
-      final path = await Api.uploadProof(_file!);
-      await widget.onSubmit(path, _cases);
+      await widget.onSubmit(_preview!, _mime, _cases);
       if (!mounted) return;
       showInfo(
         context,
@@ -151,7 +152,7 @@ class _DeclarePaymentScreenState extends State<DeclarePaymentScreen> {
             onPressed: _busy ? null : _pick,
             icon: const Icon(Icons.image_outlined),
             label: Text(
-              _file == null
+              _preview == null
                   ? 'Choisir la capture d\'écran'
                   : 'Changer la capture',
             ),
@@ -231,6 +232,44 @@ class _ReviewPaymentScreenState extends State<ReviewPaymentScreen> {
     final pending = p.status == PaymentStatus.pending;
     return Scaffold(
       appBar: AppBar(title: const Text('Paiement déclaré')),
+      // Boutons de décision toujours visibles en bas de l'écran
+      bottomNavigationBar: pending && widget.canReview
+          ? SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: paymentStatusColor(
+                            PaymentStatus.rejected,
+                          ),
+                          minimumSize: const Size(64, 48),
+                        ),
+                        onPressed: _busy ? null : () => _review(false),
+                        icon: const Icon(Icons.close),
+                        label: const Text('Refuser'),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: FilledButton.icon(
+                        style: FilledButton.styleFrom(
+                          backgroundColor: paymentStatusColor(
+                            PaymentStatus.approved,
+                          ),
+                        ),
+                        onPressed: _busy ? null : () => _review(true),
+                        icon: const Icon(Icons.check),
+                        label: const Text('Valider'),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            )
+          : null,
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
@@ -244,7 +283,7 @@ class _ReviewPaymentScreenState extends State<ReviewPaymentScreen> {
                     children: [
                       Expanded(
                         child: Text(
-                          p.profile?.fullName ?? 'Membre',
+                          p.payer.fullName,
                           style: Theme.of(context).textTheme.titleMedium
                               ?.copyWith(fontWeight: FontWeight.w700),
                         ),
@@ -252,7 +291,7 @@ class _ReviewPaymentScreenState extends State<ReviewPaymentScreen> {
                       StatusChip.payment(p.status),
                     ],
                   ),
-                  if (p.profile != null) Text(p.profile!.phone),
+                  Text(p.payer.phone),
                   const Divider(height: 24),
                   for (final (label, value) in widget.details)
                     InfoRow(label, value),
@@ -265,46 +304,13 @@ class _ReviewPaymentScreenState extends State<ReviewPaymentScreen> {
             ),
           ),
           const SectionTitle('Preuve de paiement'),
-          ProofImage(p.proofPath, height: 420),
+          ProofImage(p.proofId, height: 420),
           const SizedBox(height: 4),
           Text(
             'Touchez l\'image pour l\'agrandir',
             textAlign: TextAlign.center,
             style: Theme.of(context).textTheme.bodySmall,
           ),
-          if (pending && widget.canReview) ...[
-            const SizedBox(height: 24),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: paymentStatusColor(
-                        PaymentStatus.rejected,
-                      ),
-                      minimumSize: const Size(64, 48),
-                    ),
-                    onPressed: _busy ? null : () => _review(false),
-                    icon: const Icon(Icons.close),
-                    label: const Text('Refuser'),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: FilledButton.icon(
-                    style: FilledButton.styleFrom(
-                      backgroundColor: paymentStatusColor(
-                        PaymentStatus.approved,
-                      ),
-                    ),
-                    onPressed: _busy ? null : () => _review(true),
-                    icon: const Icon(Icons.check),
-                    label: const Text('Valider'),
-                  ),
-                ),
-              ],
-            ),
-          ],
         ],
       ),
     );

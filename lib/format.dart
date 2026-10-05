@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
+import 'api.dart';
 import 'models.dart';
 
 final _money = NumberFormat.decimalPattern('fr');
@@ -83,27 +84,30 @@ int? parseAmount(String input) {
 
 /// Message d'erreur lisible pour l'utilisateur.
 String errorMessage(Object e) {
-  if (e is PostgrestException) return e.message;
-  if (e is AuthException) {
-    final m = e.message.toLowerCase();
-    if (m.contains('invalid login credentials')) {
-      return 'Numéro ou mot de passe incorrect';
-    }
-    return e.message;
+  if (e is AppException) return e.message;
+  if (e is FirebaseAuthException) {
+    return switch (e.code) {
+      'invalid-credential' ||
+      'wrong-password' ||
+      'user-not-found' ||
+      'invalid-email' => 'Numéro ou mot de passe incorrect',
+      'email-already-in-use' => 'Ce numéro est déjà inscrit. Connectez-vous.',
+      'weak-password' => 'Mot de passe trop faible (6 caractères minimum)',
+      'too-many-requests' =>
+        'Trop de tentatives. Réessayez dans quelques minutes.',
+      'network-request-failed' => 'Pas de connexion internet',
+      'operation-not-allowed' =>
+        'La connexion par mot de passe n\'est pas activée sur le serveur',
+      _ => 'Connexion impossible (${e.code})',
+    };
   }
-  if (e is FunctionException) {
-    final details = e.details;
-    if (details is Map && details['error'] is String) {
-      return details['error'] as String;
-    }
-    return 'Le service est indisponible pour le moment';
-  }
-  if (e is StorageException) {
-    return 'Impossible d\'envoyer la preuve : ${e.message}';
-  }
-  final text = e.toString();
-  if (text.contains('SocketException') || text.contains('ClientException')) {
-    return 'Pas de connexion internet';
+  if (e is FirebaseException) {
+    return switch (e.code) {
+      'permission-denied' => 'Action non autorisée',
+      'unavailable' || 'deadline-exceeded' => 'Pas de connexion internet',
+      'not-found' => 'Élément introuvable',
+      _ => 'Une erreur est survenue (${e.code})',
+    };
   }
   return 'Une erreur est survenue';
 }
