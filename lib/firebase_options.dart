@@ -14,7 +14,7 @@ class DefaultFirebaseOptions {
 
   // Projet Firebase « cotizi » (application Android com.cotizi.app)
   static const android = FirebaseOptions(
-    apiKey: 'A-COMPLETER',
+    apiKey: 'AIzaSyCp0pdbylXUx9C5-3VWrvTDp-fOrHaqaVA',
     appId: '1:357292235465:android:518da13a256af7fa118b18',
     messagingSenderId: '357292235465',
     projectId: 'cotizi',
