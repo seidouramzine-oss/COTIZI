@@ -1,3 +1,3 @@
-# Politique de confidentialité de Jangolo
+# COTIZI
 
-Ce dépôt contient la politique de confidentialité de l'application **Jangolo**.
+Application de gestion de tontine.
