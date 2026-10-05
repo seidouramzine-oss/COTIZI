@@ -8,7 +8,7 @@
 <meta property="og:title" content="Invitation à rejoindre une tontine sur COTIZI">
 <meta property="og:description" content="Appuyez pour ouvrir l'invitation dans l'application COTIZI.">
 <meta name="theme-color" content="#0b7a5a">
-<link rel="stylesheet" href="../style.css">
+<link rel="stylesheet" href="style.css">
 </head>
 <body>
 <main class="page">
@@ -31,7 +31,7 @@
 
   <section class="card">
     <h2>Vous n'avez pas encore l'application ?</h2>
-    <a class="button secondary" id="download" href="../">Télécharger COTIZI</a>
+    <a class="button secondary" id="download" href="./">Télécharger COTIZI</a>
     <p class="muted small">Après l'installation, revenez sur cette page et appuyez sur
       « Ouvrir l'invitation dans COTIZI ».</p>
   </section>
@@ -39,10 +39,10 @@
   <p class="muted small" id="not-android" hidden>COTIZI est disponible sur les téléphones Android.</p>
 </main>
 <script>
-  // Code d'invitation lu dans le lien : /j/?c=PAJ8R3
+  // Code d'invitation lu dans le lien : /j?c=PAJ8R3
   const code = (new URLSearchParams(location.search).get('c') || '')
     .toUpperCase().replace(/[^A-Z0-9]/g, '');
-  const base = new URL('../', location.href).href;
+  const base = new URL('./', location.href).href;
   const downloadUrl = base + (code ? '?c=' + code : '');
   document.getElementById('download').href = downloadUrl;
 
