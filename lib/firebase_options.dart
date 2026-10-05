@@ -12,11 +12,12 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 class DefaultFirebaseOptions {
   static FirebaseOptions get currentPlatform => kIsWeb ? web : android;
 
+  // Projet Firebase « cotizi » (application Android com.cotizi.app)
   static const android = FirebaseOptions(
-    apiKey: 'demo-api-key',
-    appId: '1:000000000000:android:0000000000000000000000',
-    messagingSenderId: '000000000000',
-    projectId: 'demo-cotizi',
+    apiKey: 'A-COMPLETER',
+    appId: '1:357292235465:android:518da13a256af7fa118b18',
+    messagingSenderId: '357292235465',
+    projectId: 'cotizi',
   );
 
   static const web = FirebaseOptions(
