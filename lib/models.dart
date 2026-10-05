@@ -25,15 +25,27 @@ DateTime _time(Object? v) => v is Timestamp ? v.toDate() : DateTime.now();
 String dateKey(DateTime d) =>
     '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
 
+/// Rôle du compte : le tontinier gère des tontines ; le membre, inscrit
+/// par un lien d'invitation, ne voit que les tontines auxquelles il participe.
+enum Role { tontinier, membre }
+
 class Profile {
-  const Profile({required this.fullName, required this.phone});
+  const Profile({
+    required this.fullName,
+    required this.phone,
+    this.role = Role.tontinier,
+  });
 
   final String fullName;
   final String phone;
+  final Role role;
+
+  bool get isMember => role == Role.membre;
 
   factory Profile.fromJson(Json json) => Profile(
     fullName: json['fullName'] as String? ?? '',
     phone: json['phone'] as String? ?? '',
+    role: json['role'] == 'membre' ? Role.membre : Role.tontinier,
   );
 }
 

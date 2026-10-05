@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../api.dart';
 import '../format.dart';
+import '../invite_link.dart';
 import '../models.dart';
 import '../widgets/common.dart';
 import 'payment_screens.dart';
@@ -84,10 +85,12 @@ class _CarnetScreenState extends State<CarnetScreen> {
                   const SizedBox(height: 8),
                   InviteCodeCard(
                     code: c.inviteCode,
-                    hint: 'Partagez ce code avec votre client pour qu\'il rejoigne ce carnet.',
-                    shareText:
-                        'Rejoins ton carnet « ${c.label} » (${money(c.caseAmount)} par case) '
-                        'sur COTIZI. Code d\'invitation : ${c.inviteCode}',
+                    hint: 'Appuyez sur Partager : votre client recevra un lien pour rejoindre ce carnet.',
+                    shareText: inviteMessage(
+                      'Rejoins ton carnet « ${c.label} » '
+                      '(${money(c.caseAmount)} par case) sur COTIZI.',
+                      c.inviteCode,
+                    ),
                   ),
                 ],
                 if (c.isComplete) _completeBanner(c, isOwner),

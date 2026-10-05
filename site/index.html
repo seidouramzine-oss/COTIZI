@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>COTIZI</title>
+<meta name="description" content="COTIZI : gestion des tontines à cagnotte et à carnet. Téléchargez l'application Android.">
+<meta property="og:title" content="COTIZI — vos tontines, simplement">
+<meta property="og:description" content="Tontines à cagnotte et à carnet : cotisations, tirage au sort, preuves de paiement.">
+<meta name="theme-color" content="#0b7a5a">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main class="page">
+  <header class="brand">
+    <div class="logo" aria-hidden="true">C</div>
+    <div>
+      <p class="name">COTIZI</p>
+      <p class="tagline">Vos tontines, simplement</p>
+    </div>
+  </header>
+
+  <section class="card" id="invite" hidden>
+    <h2>Votre invitation vous attend</h2>
+    <p class="muted">Code d'invitation : <b id="code"></b></p>
+    <p class="small">1. Téléchargez et installez COTIZI ci-dessous.<br>
+      2. Revenez ici et appuyez sur le bouton :</p>
+    <a class="button" id="open" href="#">Ouvrir mon invitation dans COTIZI</a>
+  </section>
+
+  <section class="card" id="telecharger">
+    <h1>Télécharger l'application</h1>
+    <p class="muted">Tontines à cagnotte et à carnet : cotisations, tirage au sort,
+      paiements avec preuve validés par le tontinier.</p>
+    <a class="button" href="cotizi.apk" download>Télécharger COTIZI pour Android</a>
+    <p class="muted small">Version <span id="version">1.1</span> · environ 21 Mo</p>
+  </section>
+
+  <section class="card">
+    <h2>Installer l'application</h2>
+    <ol class="small">
+      <li>Une fois le téléchargement terminé, appuyez sur <b>Ouvrir</b>
+        (ou ouvrez <b>COTIZI.apk</b> dans le dossier <b>Téléchargements</b>).</li>
+      <li>Si Android bloque l'installation : <b>Paramètres</b> → activez
+        <b>Autoriser à partir de cette source</b>, puis revenez en arrière.</li>
+      <li>Appuyez sur <b>Installer</b>. Si Play Protect affiche un avertissement :
+        <b>Plus de détails</b> → <b>Installer quand même</b>.</li>
+    </ol>
+    <p class="muted small">L'installation échoue (« Application non installée ») ?
+      Votre téléphone a peut-être besoin de la
+      <a class="link" href="cotizi-32bit.apk" download>version pour anciens téléphones</a>.</p>
+  </section>
+</main>
+<script>
+  // Arrivée depuis un lien d'invitation : /?c=CODE
+  const code = (new URLSearchParams(location.search).get('c') || '')
+    .toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (code) {
+    document.getElementById('invite').hidden = false;
+    document.getElementById('code').textContent = code;
+    document.getElementById('open').href = /Android/i.test(navigator.userAgent)
+      ? 'intent://join?c=' + code + '#Intent;scheme=cotizi;package=com.cotizi.app;end'
+      : 'cotizi://join?c=' + code;
+  }
+</script>
+</body>
+</html>

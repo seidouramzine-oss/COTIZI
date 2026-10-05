@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../api.dart';
 import '../format.dart';
+import '../invite_link.dart';
 import '../models.dart';
 import '../widgets/common.dart';
 import 'payment_screens.dart';
@@ -421,11 +422,12 @@ class _GroupScreenState extends State<GroupScreen> {
             const SizedBox(height: 8),
             InviteCodeCard(
               code: g.inviteCode,
-              hint: 'Partagez ce code avec vos membres pour qu\'ils rejoignent le groupe.',
-              shareText:
-                  'Rejoins le groupe « ${g.name} » de ma tontine sur COTIZI. '
-                  'Cotisation : ${money(g.contributionAmount)} ${frequencyLabel(g.frequency).toLowerCase()}. '
-                  'Code d\'invitation : ${g.inviteCode}',
+              hint: 'Appuyez sur Partager : vos membres recevront un lien pour rejoindre le groupe.',
+              shareText: inviteMessage(
+                'Rejoins le groupe « ${g.name} » de ma tontine sur COTIZI. '
+                'Cotisation : ${money(g.contributionAmount)} ${frequencyLabel(g.frequency).toLowerCase()}.',
+                g.inviteCode,
+              ),
             ),
             const SizedBox(height: 8),
             FilledButton.icon(

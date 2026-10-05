@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../api.dart';
 import '../format.dart';
+import '../invite_link.dart';
 import '../models.dart';
 import '../widgets/common.dart';
 import 'carnet_screens.dart';
@@ -9,7 +10,9 @@ import 'group_screens.dart';
 import 'tontine_screens.dart';
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key});
+  const HomeScreen({super.key, required this.profile});
+
+  final Profile profile;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -19,9 +22,12 @@ class _HomeScreenState extends State<HomeScreen>
     with SingleTickerProviderStateMixin {
   late final TabController _tabs = TabController(length: 2, vsync: this)
     ..addListener(() => setState(() {}));
-  late Future<List<Tontine>> _managed = Api.myTontines();
+  bool get _isMember => widget.profile.isMember;
+  late Future<List<Tontine>> _managed = _loadManaged();
   late Future<(List<Group>, List<Carnet>)> _joined = _loadJoined();
-  late final Future<Profile?> _profile = Api.myProfile();
+
+  Future<List<Tontine>> _loadManaged() =>
+      _isMember ? Future.value(const []) : Api.myTontines();
 
   static Future<(List<Group>, List<Carnet>)> _loadJoined() async {
     final results = await Future.wait([Api.myGroups(), Api.myCarnets()]);
@@ -29,14 +35,39 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   void _reload() => setState(() {
-    _managed = Api.myTontines();
+    _managed = _loadManaged();
     _joined = _loadJoined();
   });
 
   @override
+  void initState() {
+    super.initState();
+    pendingInvite.addListener(_handleInvite);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _handleInvite());
+  }
+
+  @override
   void dispose() {
+    pendingInvite.removeListener(_handleInvite);
     _tabs.dispose();
     super.dispose();
+  }
+
+  /// Lien d'invitation reçu : rejoindre puis ouvrir le groupe ou le carnet.
+  Future<void> _handleInvite() async {
+    final code = pendingInvite.value;
+    if (code == null || !mounted) return;
+    pendingInvite.value = null;
+    try {
+      final (kind, id) = await Api.joinWithCode(code);
+      if (!mounted) return;
+      _tabs.index = 1;
+      await _open(
+        kind == 'group' ? GroupScreen(groupId: id) : CarnetScreen(carnetId: id),
+      );
+    } catch (e) {
+      if (mounted) showError(context, e);
+    }
   }
 
   Future<void> _open(Widget screen) async {
@@ -55,34 +86,48 @@ class _HomeScreenState extends State<HomeScreen>
     }
   }
 
+  Widget get _title => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      const Text(
+        'COTIZI',
+        style: TextStyle(fontWeight: FontWeight.w800, letterSpacing: 1),
+      ),
+      Text(
+        'Bonjour ${widget.profile.fullName}',
+        style: Theme.of(context).textTheme.bodySmall,
+      ),
+    ],
+  );
+
+  List<Widget> get _actions => [
+    IconButton(
+      tooltip: 'Se déconnecter',
+      icon: const Icon(Icons.logout),
+      onPressed: _logout,
+    ),
+  ];
+
+  Widget get _joinButton => FloatingActionButton.extended(
+    onPressed: () => _open(const JoinScreen()),
+    icon: const Icon(Icons.qr_code_2),
+    label: const Text('Rejoindre'),
+  );
+
   @override
   Widget build(BuildContext context) {
+    // Membre invité par lien : uniquement les tontines auxquelles il participe
+    if (_isMember) {
+      return Scaffold(
+        appBar: AppBar(title: _title, actions: _actions),
+        floatingActionButton: _joinButton,
+        body: _joinedTab(),
+      );
+    }
     return Scaffold(
       appBar: AppBar(
-        title: FutureBuilder<Profile?>(
-          future: _profile,
-          builder: (context, snap) => Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'COTIZI',
-                style: TextStyle(fontWeight: FontWeight.w800, letterSpacing: 1),
-              ),
-              if (snap.data != null)
-                Text(
-                  'Bonjour ${snap.data!.fullName}',
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-            ],
-          ),
-        ),
-        actions: [
-          IconButton(
-            tooltip: 'Se déconnecter',
-            icon: const Icon(Icons.logout),
-            onPressed: _logout,
-          ),
-        ],
+        title: _title,
+        actions: _actions,
         bottom: TabBar(
           controller: _tabs,
           tabs: const [
@@ -97,11 +142,7 @@ class _HomeScreenState extends State<HomeScreen>
               icon: const Icon(Icons.add),
               label: const Text('Nouvelle tontine'),
             )
-          : FloatingActionButton.extended(
-              onPressed: () => _open(const JoinScreen()),
-              icon: const Icon(Icons.qr_code_2),
-              label: const Text('Rejoindre'),
-            ),
+          : _joinButton,
       body: TabBarView(
         controller: _tabs,
         children: [_managedTab(), _joinedTab()],

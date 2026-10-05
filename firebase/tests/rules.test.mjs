@@ -162,7 +162,8 @@ async function declarePayment(id, groupId, tour, { update = false } = {}) {
 test('scénario complet', async (t) => {
   for (const id of Object.keys(people)) {
     await assertSucceeds(db(id).doc(`users/${id}`).set({
-      fullName: people[id].name, phone: people[id].phone, createdAt: now(),
+      fullName: people[id].name, phone: people[id].phone,
+      role: id === 't' ? 'tontinier' : 'membre', createdAt: now(),
     }));
   }
 
@@ -173,6 +174,23 @@ test('scénario complet', async (t) => {
 
   await t.test('profil d\'un autre : illisible', () =>
     assertFails(db('a').doc('users/b').get()));
+
+  await t.test('rôle inconnu à l\'inscription : refusé', async () => {
+    const env2 = env.authenticatedContext('x', { email: '22999000000@phone.cotizi.app' }).firestore();
+    await assertFails(env2.doc('users/x').set({
+      fullName: 'Xavier', phone: '+22999000000', role: 'admin', createdAt: now(),
+    }));
+  });
+  await t.test('un membre (inscrit par invitation) ne crée pas de tontine', async () => {
+    const m = env.authenticatedContext('m', { email: '22999000001@phone.cotizi.app' }).firestore();
+    await assertSucceeds(m.doc('users/m').set({
+      fullName: 'Membre', phone: '+22999000001', role: 'membre', createdAt: now(),
+    }));
+    await assertFails(m.collection('tontines').doc().set({
+      ownerId: 'm', ownerName: 'Membre', name: 'X', type: 'cagnotte', createdAt: now(),
+    }));
+    await assertFails(m.doc('users/m').update({ role: 'tontinier' }));
+  });
 
   const T = db('t');
   const tontine = T.collection('tontines').doc();

@@ -104,8 +104,11 @@ service cloud.firestore {
 
     match /users/{userId} {
       allow read: if signedIn() && userId == uid();
+      // role : « tontinier » (inscription normale) ou « membre » (inscription
+      // par un lien d'invitation). Il ne peut plus être modifié ensuite.
       allow create: if signedIn() && userId == uid()
-        && incoming().keys().hasOnly(['fullName', 'phone', 'createdAt'])
+        && incoming().keys().hasOnly(['fullName', 'phone', 'role', 'createdAt'])
+        && incoming().get('role', 'tontinier') in ['tontinier', 'membre']
         && isText(incoming().fullName, 2, 60)
         && incoming().phone == phoneOfAccount()
         && incoming().createdAt == request.time;
@@ -118,8 +121,10 @@ service cloud.firestore {
 
     match /tontines/{tontineId} {
       allow read: if signedIn() && existing().ownerId == uid();
+      // Un membre (inscrit par invitation) ne crée pas de tontine
       allow create: if signedIn()
         && incoming().keys().hasOnly(['ownerId', 'ownerName', 'name', 'type', 'createdAt'])
+        && me().get('role', 'tontinier') == 'tontinier'
         && incoming().ownerId == uid()
         && incoming().ownerName == me().fullName
         && isText(incoming().name, 1, 80)

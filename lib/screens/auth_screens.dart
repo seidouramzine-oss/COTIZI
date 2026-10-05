@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 
 import '../api.dart';
 import '../format.dart';
+import '../invite_link.dart';
+import '../models.dart';
 
 class _Logo extends StatelessWidget {
   const _Logo();
@@ -104,6 +106,48 @@ class PhoneField extends StatelessWidget {
   }
 }
 
+/// Invitation reçue par lien, avant d'avoir un compte.
+class _InviteBanner extends StatelessWidget {
+  const _InviteBanner({required this.code, required this.onRegister});
+
+  final String code;
+  final VoidCallback? onRegister;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Card(
+      color: scheme.primaryContainer,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              'Vous êtes invité à rejoindre une tontine',
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w700,
+                color: scheme.onPrimaryContainer,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Code d\'invitation : $code. Créez votre compte : vous rejoindrez '
+              'la tontine automatiquement. Déjà inscrit ? Connectez-vous plus bas.',
+              style: TextStyle(color: scheme.onPrimaryContainer),
+            ),
+            const SizedBox(height: 12),
+            FilledButton(
+              onPressed: onRegister,
+              child: const Text('Créer mon compte'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
 
@@ -157,6 +201,27 @@ class _LoginScreenState extends State<LoginScreen> {
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       const _Logo(),
+                      ValueListenableBuilder<String?>(
+                        valueListenable: pendingInvite,
+                        builder: (context, code, _) => code == null
+                            ? const SizedBox.shrink()
+                            : Padding(
+                                padding: const EdgeInsets.only(top: 24),
+                                child: _InviteBanner(
+                                  code: code,
+                                  onRegister: _busy
+                                      ? null
+                                      : () => Navigator.of(context).push(
+                                          MaterialPageRoute(
+                                            builder: (_) =>
+                                                const RegisterScreen(
+                                                  asMember: true,
+                                                ),
+                                          ),
+                                        ),
+                                ),
+                              ),
+                      ),
                       const SizedBox(height: 32),
                       PhoneField(
                         dialCode: _dialCode,
@@ -204,7 +269,9 @@ class _LoginScreenState extends State<LoginScreen> {
                             ? null
                             : () => Navigator.of(context).push(
                                 MaterialPageRoute(
-                                  builder: (_) => const RegisterScreen(),
+                                  builder: (_) => RegisterScreen(
+                                    asMember: pendingInvite.value != null,
+                                  ),
                                 ),
                               ),
                         child: const Text('Pas encore de compte ? S\'inscrire'),
@@ -222,7 +289,10 @@ class _LoginScreenState extends State<LoginScreen> {
 }
 
 class RegisterScreen extends StatefulWidget {
-  const RegisterScreen({super.key});
+  const RegisterScreen({super.key, this.asMember = false});
+
+  /// Inscription depuis un lien d'invitation : compte « membre ».
+  final bool asMember;
 
   @override
   State<RegisterScreen> createState() => _RegisterScreenState();
@@ -254,6 +324,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         phone: normalizePhone(_dialCode, _phone.text),
         password: _password.text,
         fullName: _name.text.trim(),
+        role: widget.asMember ? Role.membre : Role.tontinier,
       );
       if (mounted) Navigator.of(context).popUntil((r) => r.isFirst);
     } catch (e) {

@@ -46,3 +46,6 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
+
+# APK publiés sur le site (copiés au moment de la publication)
+site/*.apk

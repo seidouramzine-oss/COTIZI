@@ -52,8 +52,9 @@ class Api {
     required String phone,
     required String password,
     required String fullName,
+    Role role = Role.tontinier,
   }) {
-    final future = _signUp(phone, password, fullName);
+    final future = _signUp(phone, password, fullName, role);
     _signingUp = future;
     return future.whenComplete(() => _signingUp = null);
   }
@@ -62,6 +63,7 @@ class Api {
     String phone,
     String password,
     String fullName,
+    Role role,
   ) async {
     try {
       await _auth.createUserWithEmailAndPassword(
@@ -74,7 +76,7 @@ class Api {
       }
       rethrow;
     }
-    await createProfile(fullName);
+    await createProfile(fullName, role: role);
   }
 
   static Future<void> signIn({
@@ -106,11 +108,19 @@ class Api {
       await myProfile() ??
       (throw const AppException('Complétez votre profil pour continuer'));
 
-  static Future<void> createProfile(String fullName) async {
-    final profile = Profile(fullName: fullName.trim(), phone: _accountPhone);
+  static Future<void> createProfile(
+    String fullName, {
+    Role role = Role.tontinier,
+  }) async {
+    final profile = Profile(
+      fullName: fullName.trim(),
+      phone: _accountPhone,
+      role: role,
+    );
     await _db.doc('users/$uid').set({
       'fullName': profile.fullName,
       'phone': profile.phone,
+      'role': role.name,
       'createdAt': _now,
     });
     _me = profile;

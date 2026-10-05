@@ -8,6 +8,7 @@ import 'package:intl/intl.dart';
 
 import 'api.dart';
 import 'firebase_options.dart';
+import 'invite_link.dart';
 import 'models.dart';
 import 'screens/auth_screens.dart';
 import 'screens/home_screen.dart';
@@ -25,6 +26,8 @@ Future<void> main() async {
     await FirebaseAuth.instance.useAuthEmulator('localhost', 9099);
     FirebaseFirestore.instance.useFirestoreEmulator('localhost', 8080);
   }
+  // Liens d'invitation (cotizi://join?c=CODE) : traités après connexion
+  listenToInviteLinks();
   runApp(const CotiziApp());
 }
 
@@ -119,7 +122,7 @@ class _ProfileGateState extends State<_ProfileGate> {
             ? CompleteProfileScreen(
                 onDone: () => setState(() => _profile = Api.myProfile()),
               )
-            : const HomeScreen(),
+            : HomeScreen(profile: profile),
       ),
     );
   }
