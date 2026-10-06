@@ -2,7 +2,7 @@ import 'package:app_links/app_links.dart';
 import 'package:flutter/foundation.dart';
 
 /// Site public de COTIZI (GitHub Pages) : page d'invitation et téléchargement.
-const siteUrl = 'https://zidane123-web.github.io';
+const siteUrl = 'https://seidouramzine-oss.github.io';
 
 /// Lien à partager : la page web ouvre COTIZI (cotizi://join?c=CODE)
 /// ou propose de télécharger l'application.
