@@ -8,6 +8,7 @@ import 'carnet_screens.dart';
 import 'group_screens.dart';
 import 'home_screen.dart';
 import 'payment_screens.dart';
+import 'subscription_screens.dart';
 import 'tontine_screens.dart';
 
 String _firstName(Profile p) => p.fullName.trim().split(RegExp(r'\s+')).first;
@@ -117,9 +118,33 @@ class OwnerDashboard extends StatefulWidget {
 
 class _OwnerDashboardState extends State<OwnerDashboard> with Reloadable {
   late Future<OwnerOverview> _data = Api.ownerOverview();
+  late Future<AccessStatus> _access = _loadAccess();
+
+  static Future<AccessStatus> _loadAccess() async {
+    final results = await Future.wait([Api.reloadProfile(), Api.isAdmin()]);
+    return AccessStatus(results[0] as Profile, isAdmin: results[1] as bool);
+  }
 
   @override
-  void reload() => setState(() => _data = Api.ownerOverview());
+  void reload() => setState(() {
+    _data = Api.ownerOverview();
+    _access = _loadAccess();
+  });
+
+  /// Essai gratuit, fin d'abonnement proche ou terminée.
+  Widget _accessBanner() => FutureBuilder<AccessStatus>(
+    future: _access,
+    builder: (context, snap) {
+      final status = snap.data;
+      if (status == null || !status.needsAttention) {
+        return const SizedBox.shrink();
+      }
+      return AccessBanner(
+        status,
+        onTap: () => open(const SubscriptionScreen()),
+      );
+    },
+  );
 
   void _review(PendingReview r) {
     final p = r.payment;
@@ -167,6 +192,7 @@ class _OwnerDashboardState extends State<OwnerDashboard> with Reloadable {
   }
 
   List<Widget> _empty() => [
+    _accessBanner(),
     EmptyState(
       icon: Icons.savings_outlined,
       title: 'Bienvenue sur COTIZI',
@@ -174,7 +200,7 @@ class _OwnerDashboardState extends State<OwnerDashboard> with Reloadable {
           'Créez votre première tontine à cagnotte ou à carnet, puis invitez '
           'vos membres en leur envoyant le lien.',
       action: FilledButton.icon(
-        onPressed: () => open(const CreateTontineScreen()),
+        onPressed: () => openIfCanCreate(const CreateTontineScreen()),
         icon: const Icon(Icons.add),
         label: const Text('Créer ma première tontine'),
       ),
@@ -184,6 +210,7 @@ class _OwnerDashboardState extends State<OwnerDashboard> with Reloadable {
   List<Widget> _content(OwnerOverview o) {
     final pendingColor = paymentStatusColor(PaymentStatus.pending);
     return [
+      _accessBanner(),
       o.pending.isEmpty
           ? _Banner(
               icon: Icons.verified_outlined,
@@ -242,7 +269,7 @@ class _OwnerDashboardState extends State<OwnerDashboard> with Reloadable {
       ),
       const SizedBox(height: 8),
       FilledButton.tonalIcon(
-        onPressed: () => open(const CreateTontineScreen()),
+        onPressed: () => openIfCanCreate(const CreateTontineScreen()),
         icon: const Icon(Icons.add),
         label: const Text('Nouvelle tontine'),
       ),

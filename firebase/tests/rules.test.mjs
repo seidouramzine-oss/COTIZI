@@ -415,3 +415,117 @@ test('scénario complet', async (t) => {
   await t.test('non connecté : rien de lisible', () =>
     assertFails(env.unauthenticatedContext().firestore().doc(`groups/${groupId}`).get()));
 });
+
+// ------------------------------------------- Abonnement et administration
+
+test('abonnement des tontiniers et administration', async (t) => {
+  const DAY = 24 * 3600 * 1000;
+  const ts = (ms) => firebase.firestore.Timestamp.fromMillis(ms);
+  const account = (id, phone) =>
+    env.authenticatedContext(id, { email: `${phone.slice(1)}@phone.cotizi.app` }).firestore();
+  const asAdmin = (fn) => env.withSecurityRulesDisabled((ctx) => fn(ctx.firestore()));
+  const newTontine = (fs, id, name) => fs.collection('tontines').doc().set({
+    ownerId: id, ownerName: name, name: 'Ma tontine', type: 'cagnotte', createdAt: now(),
+  });
+
+  // Nouveau tontinier : essai gratuit de 30 jours
+  const neuf = account('neuf', '+22997000001');
+  await assertSucceeds(neuf.doc('users/neuf').set({
+    fullName: 'Nouveau', phone: '+22997000001', role: 'tontinier', createdAt: now(),
+  }));
+  await t.test('essai gratuit : création de tontine autorisée', () =>
+    assertSucceeds(newTontine(neuf, 'neuf', 'Nouveau')));
+  await t.test('fixer soi-même son abonnement à l\'inscription : refusé', () =>
+    assertFails(account('triche', '+22997000009').doc('users/triche').set({
+      fullName: 'Triche', phone: '+22997000009', role: 'tontinier', createdAt: now(),
+      subscriptionEnd: ts(Date.now() + 365 * DAY),
+    })));
+  await t.test('prolonger soi-même son abonnement : refusé', () =>
+    assertFails(neuf.doc('users/neuf').update({ subscriptionEnd: ts(Date.now() + 365 * DAY) })));
+
+  // Tontinier inscrit il y a 31 jours : essai terminé
+  const ancien = account('ancien', '+22997000002');
+  await asAdmin((fs) => fs.doc('users/ancien').set({
+    fullName: 'Ancien', phone: '+22997000002', role: 'tontinier',
+    createdAt: ts(Date.now() - 31 * DAY),
+  }));
+  const vieilleTontine = 'tontine-ancien';
+  await asAdmin((fs) => fs.doc(`tontines/${vieilleTontine}`).set({
+    ownerId: 'ancien', ownerName: 'Ancien', name: 'Ancienne', type: 'cagnotte',
+    createdAt: ts(Date.now() - 20 * DAY),
+  }));
+  await t.test('essai terminé : création de tontine refusée', () =>
+    assertFails(newTontine(ancien, 'ancien', 'Ancien')));
+  await t.test('essai terminé : création de groupe refusée', async () => {
+    const ref = ancien.collection('groups').doc();
+    const batch = ancien.batch();
+    batch.set(ref, {
+      tontineId: vieilleTontine, tontineName: 'Ancienne', ownerId: 'ancien', ownerName: 'Ancien',
+      name: 'G', memberCount: 3, contributionAmount: 1000, frequency: 'weekly',
+      startDate: '2026-10-10', commissionType: 'percent', commissionValue: 5,
+      inviteCode: 'OLD234', status: 'recruiting', joinedCount: 0, drawnCount: 0,
+      memberIds: [], createdAt: now(),
+    });
+    batch.set(ancien.collection('invites').doc('OLD234'), { kind: 'group', targetId: ref.id, ownerId: 'ancien' });
+    await assertFails(batch.commit());
+  });
+  await t.test('essai terminé : son tableau de bord reste lisible', () =>
+    assertSucceeds(ancien.collection('tontines').where('ownerId', '==', 'ancien').get()));
+
+  // Administrateur (document admins/{uid} créé dans la console)
+  const admin = account('adm', '+22997000003');
+  await asAdmin(async (fs) => {
+    await fs.doc('users/adm').set({
+      fullName: 'Admin', phone: '+22997000003', role: 'tontinier',
+      createdAt: ts(Date.now() - 400 * DAY),
+    });
+    await fs.doc('admins/adm').set({ note: 'propriétaire' });
+  });
+  await t.test('savoir si l\'on est administrateur', async () => {
+    await assertSucceeds(admin.doc('admins/adm').get());
+    await assertSucceeds(neuf.doc('admins/neuf').get());
+  });
+  await t.test('lire la fiche administrateur d\'un autre : refusé', () =>
+    assertFails(neuf.doc('admins/adm').get()));
+  await t.test('se déclarer administrateur : refusé', () =>
+    assertFails(neuf.doc('admins/neuf').set({ note: 'moi' })));
+  await t.test('l\'administrateur crée des tontines sans abonnement', () =>
+    assertSucceeds(newTontine(admin, 'adm', 'Admin')));
+  await t.test('l\'administrateur voit tous les comptes', () =>
+    assertSucceeds(admin.collection('users').get()));
+  await t.test('liste des comptes par un tontinier : refusé', () =>
+    assertFails(neuf.collection('users').get()));
+  await t.test('prolonger l\'abonnement d\'un autre (non administrateur) : refusé', () =>
+    assertFails(neuf.doc('users/ancien').update({ subscriptionEnd: ts(Date.now() + 30 * DAY) })));
+
+  await assertSucceeds(admin.doc('users/ancien').update({
+    subscriptionEnd: ts(Date.now() + 30 * DAY),
+  }));
+  await t.test('abonnement prolongé : création de nouveau autorisée', () =>
+    assertSucceeds(newTontine(ancien, 'ancien', 'Ancien')));
+  await t.test('l\'administrateur ne modifie que l\'abonnement', () =>
+    assertFails(admin.doc('users/ancien').update({ fullName: 'Autre nom' })));
+  await t.test('abonnement sur un compte client : refusé', async () => {
+    await asAdmin((fs) => fs.doc('users/client').set({
+      fullName: 'Client', phone: '+22997000004', role: 'membre', createdAt: now(),
+    }));
+    await assertFails(admin.doc('users/client').update({ subscriptionEnd: ts(Date.now() + DAY) }));
+  });
+
+  // Arrêt de l'abonnement (fin = maintenant)
+  await assertSucceeds(admin.doc('users/neuf').update({ subscriptionEnd: now() }));
+  await t.test('abonnement arrêté : création refusée même pendant l\'essai', () =>
+    assertFails(newTontine(neuf, 'neuf', 'Nouveau')));
+
+  // Prix et numéro de paiement
+  const settings = { monthlyPrice: 5000, paymentPhone: '+229 01 97 00 00 00' };
+  await t.test('réglages de l\'abonnement par un tontinier : refusé', () =>
+    assertFails(neuf.doc('settings/subscription').set(settings)));
+  await assertSucceeds(admin.doc('settings/subscription').set(settings));
+  await t.test('réglages lisibles par tous les comptes', () =>
+    assertSucceeds(account('client', '+22997000004').doc('settings/subscription').get()));
+  await t.test('prix invalide : refusé', () =>
+    assertFails(admin.doc('settings/subscription').set({ ...settings, monthlyPrice: -1 })));
+  await t.test('autre document de réglages : refusé', () =>
+    assertFails(admin.doc('settings/autre').set(settings)));
+});

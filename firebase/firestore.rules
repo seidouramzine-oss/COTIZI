@@ -5,7 +5,9 @@ rules_version = '2';
 // chacun ne lit que ce qui le concerne et ne fait que les actions permises.
 //
 // Collections :
-//   users/{uid}                              profil (nom, téléphone)
+//   users/{uid}                              profil (nom, téléphone, rôle, abonnement)
+//   admins/{uid}                             administrateurs de COTIZI (créés dans la console)
+//   settings/subscription                    prix et numéro de paiement de l'abonnement
 //   tontines/{id}                            tontine (cagnotte ou carnet)
 //   invites/{code}                           code d'invitation -> groupe ou carnet
 //   groups/{id}                              groupe d'une tontine à cagnotte
@@ -58,6 +60,26 @@ service cloud.firestore {
       return get(doc('users/' + uid())).data;
     }
 
+    // Administrateur de COTIZI : document admins/{uid} créé dans la console
+    function isAdmin() {
+      return signedIn() && exists(doc('admins/' + uid()));
+    }
+
+    // Fin de l'abonnement d'un tontinier : date fixée par l'administrateur,
+    // sinon fin de l'essai gratuit de 30 jours après l'inscription.
+    function subscriptionEndOf(u) {
+      return u.get('subscriptionEnd',
+        u.get('createdAt', timestamp.value(0)) + duration.value(30, 'd'));
+    }
+
+    // Créer des tontines, groupes et carnets : tontinier avec un essai ou un
+    // abonnement en cours. Un client (inscrit par invitation) ne crée rien.
+    function canCreate() {
+      let u = me();
+      return u.get('role', 'tontinier') == 'tontinier'
+        && (subscriptionEndOf(u) > request.time || isAdmin());
+    }
+
     function groupData(groupId) {
       return get(doc('groups/' + groupId)).data;
     }
@@ -103,28 +125,49 @@ service cloud.firestore {
     // ----------------------------------------------------------- Profils
 
     match /users/{userId} {
-      allow read: if signedIn() && userId == uid();
-      // role : « tontinier » (inscription normale) ou « membre » (inscription
-      // par un lien d'invitation). Il ne peut plus être modifié ensuite.
+      allow read: if (signedIn() && userId == uid()) || isAdmin();
+      // role : « tontinier » ou « membre » (client inscrit avec un code
+      // d'invitation). Il ne peut plus être modifié ensuite.
+      // L'abonnement (subscriptionEnd) ne peut être fixé que par l'administrateur.
       allow create: if signedIn() && userId == uid()
         && incoming().keys().hasOnly(['fullName', 'phone', 'role', 'createdAt'])
         && incoming().get('role', 'tontinier') in ['tontinier', 'membre']
         && isText(incoming().fullName, 2, 60)
         && incoming().phone == phoneOfAccount()
         && incoming().createdAt == request.time;
-      allow update: if signedIn() && userId == uid()
-        && changedOnly(['fullName'])
-        && isText(incoming().fullName, 2, 60);
+      allow update: if (signedIn() && userId == uid()
+          && changedOnly(['fullName'])
+          && isText(incoming().fullName, 2, 60))
+        // L'administrateur prolonge ou arrête l'abonnement d'un tontinier
+        || (isAdmin()
+          && existing().get('role', 'tontinier') == 'tontinier'
+          && changedOnly(['subscriptionEnd'])
+          && incoming().subscriptionEnd is timestamp);
+    }
+
+    // ---------------------------------------------------- Administration
+
+    match /admins/{userId} {
+      // Chacun peut seulement vérifier s'il est administrateur
+      allow get: if signedIn() && userId == uid();
+    }
+
+    match /settings/{name} {
+      allow read: if signedIn();
+      allow write: if isAdmin() && name == 'subscription'
+        && incoming().keys().hasOnly(['monthlyPrice', 'paymentPhone'])
+        && incoming().monthlyPrice is int
+        && incoming().monthlyPrice >= 0 && incoming().monthlyPrice <= 10000000
+        && incoming().paymentPhone is string && incoming().paymentPhone.size() <= 30;
     }
 
     // ---------------------------------------------------------- Tontines
 
     match /tontines/{tontineId} {
       allow read: if signedIn() && existing().ownerId == uid();
-      // Un membre (inscrit par invitation) ne crée pas de tontine
       allow create: if signedIn()
         && incoming().keys().hasOnly(['ownerId', 'ownerName', 'name', 'type', 'createdAt'])
-        && me().get('role', 'tontinier') == 'tontinier'
+        && canCreate()
         && incoming().ownerId == uid()
         && incoming().ownerName == me().fullName
         && isText(incoming().name, 1, 80)
@@ -165,6 +208,7 @@ service cloud.firestore {
             'commissionType', 'commissionValue', 'inviteCode', 'status',
             'joinedCount', 'drawnCount', 'memberIds', 'createdAt'])
         && incoming().ownerId == uid()
+        && canCreate()
         && get(doc('tontines/' + incoming().tontineId)).data.ownerId == uid()
         && get(doc('tontines/' + incoming().tontineId)).data.type == 'cagnotte'
         && incoming().tontineName == get(doc('tontines/' + incoming().tontineId)).data.name
@@ -300,6 +344,7 @@ service cloud.firestore {
             'label', 'caseAmount', 'caseCount', 'clientId', 'clientName', 'clientPhone',
             'inviteCode', 'usedCases', 'approvedCases', 'lastPaymentId', 'createdAt'])
         && incoming().ownerId == uid()
+        && canCreate()
         && get(doc('tontines/' + incoming().tontineId)).data.ownerId == uid()
         && get(doc('tontines/' + incoming().tontineId)).data.type == 'carnet'
         && incoming().tontineName == get(doc('tontines/' + incoming().tontineId)).data.name

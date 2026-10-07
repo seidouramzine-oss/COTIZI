@@ -18,6 +18,15 @@ class AppException implements Exception {
   String toString() => message;
 }
 
+/// Essai ou abonnement du tontinier terminé : création impossible.
+class SubscriptionExpired extends AppException {
+  const SubscriptionExpired()
+    : super(
+        'Votre essai gratuit ou votre abonnement est terminé. '
+        'Renouvelez-le pour créer de nouvelles tontines.',
+      );
+}
+
 /// Accès aux données COTIZI (Firebase Auth + Firestore).
 /// Les règles de firebase/firestore.rules vérifient chaque écriture.
 class Api {
@@ -31,6 +40,7 @@ class Api {
   static FieldValue get _now => FieldValue.serverTimestamp();
 
   static Profile? _me;
+  static bool? _admin;
 
   /// Le numéro sert d'identifiant : le compte Firebase utilise un email
   /// technique dérivé du numéro (aucun email n'est envoyé).
@@ -48,13 +58,16 @@ class Api {
   /// l'attend avant de chercher le profil (sinon il paraîtrait manquant).
   static Future<void>? _signingUp;
 
+  /// Un client ([Role.membre]) s'inscrit avec le code d'invitation de son
+  /// tontinier : s'il est introuvable, le compte n'est pas créé.
   static Future<void> signUp({
     required String phone,
     required String password,
     required String fullName,
     Role role = Role.tontinier,
+    String? inviteCode,
   }) {
-    final future = _signUp(phone, password, fullName, role);
+    final future = _signUp(phone, password, fullName, role, inviteCode);
     _signingUp = future;
     return future.whenComplete(() => _signingUp = null);
   }
@@ -64,7 +77,10 @@ class Api {
     String password,
     String fullName,
     Role role,
+    String? inviteCode,
   ) async {
+    _me = null;
+    _admin = null;
     try {
       await _auth.createUserWithEmailAndPassword(
         email: phoneToEmail(phone),
@@ -76,7 +92,32 @@ class Api {
       }
       rethrow;
     }
+    if (role == Role.membre) {
+      try {
+        await verifyInviteCode(inviteCode ?? '');
+      } catch (_) {
+        // Code faux : on annule l'inscription pour pouvoir la refaire
+        await _auth.currentUser?.delete().catchError((_) => _auth.signOut());
+        rethrow;
+      }
+    }
     await createProfile(fullName, role: role);
+  }
+
+  /// Code d'invitation sans espaces ni tirets, en majuscules.
+  static String normalizeCode(String input) =>
+      input.toUpperCase().replaceAll(RegExp(r'[^A-Z0-9]'), '');
+
+  /// Vérifie qu'un code d'invitation existe ; renvoie le code normalisé.
+  static Future<String> verifyInviteCode(String input) async {
+    final code = normalizeCode(input);
+    if (code.isEmpty || !(await _db.doc('invites/$code').get()).exists) {
+      throw const AppException(
+        'Code d\'invitation introuvable. Vérifiez le code envoyé par votre '
+        'tontinier.',
+      );
+    }
+    return code;
   }
 
   static Future<void> signIn({
@@ -84,6 +125,7 @@ class Api {
     required String password,
   }) async {
     _me = null;
+    _admin = null;
     await _auth.signInWithEmailAndPassword(
       email: phoneToEmail(phone),
       password: password,
@@ -92,16 +134,50 @@ class Api {
 
   static Future<void> signOut() async {
     _me = null;
+    _admin = null;
     await _auth.signOut();
   }
 
   /// Profil de l'utilisateur connecté (null s'il n'a pas encore été créé).
   static Future<Profile?> myProfile() async {
     if (_signingUp != null) await _signingUp!.catchError((_) {});
+    // Inscription annulée (code d'invitation faux) : plus de compte
+    if (_auth.currentUser == null) return null;
     if (_me != null) return _me;
     final doc = await _db.doc('users/$uid').get();
     if (!doc.exists) return null;
     return _me = Profile.fromJson(doc.data()!);
+  }
+
+  /// Profil relu depuis le serveur (abonnement prolongé entre-temps…).
+  static Future<Profile?> reloadProfile() {
+    _me = null;
+    return myProfile();
+  }
+
+  /// Administrateur de COTIZI (document admins/{uid} créé dans la console).
+  static Future<bool> isAdmin() async {
+    if (_admin != null) return _admin!;
+    try {
+      return _admin = (await _db.doc('admins/$uid').get()).exists;
+    } on FirebaseException {
+      return false;
+    }
+  }
+
+  /// Création de tontine, groupe ou carnet : réservée aux tontiniers dont
+  /// l'essai ou l'abonnement est en cours (et à l'administrateur).
+  static Future<void> ensureCanCreate() async {
+    final me = await _requireMe();
+    if (me.isMember) {
+      throw const AppException(
+        'Votre compte client sert à participer aux tontines de votre tontinier.',
+      );
+    }
+    if (me.canCreateAt(DateTime.now()) || await isAdmin()) return;
+    final fresh = await reloadProfile();
+    if (fresh != null && fresh.canCreateAt(DateTime.now())) return;
+    throw const SubscriptionExpired();
   }
 
   static Future<Profile> _requireMe() async =>
@@ -150,6 +226,56 @@ class Api {
     }
     await user.updatePassword(next);
   }
+
+  // ---------------------------------------------------------- Administration
+
+  /// Tous les comptes (réservé à l'administrateur).
+  static Future<List<Account>> accounts() async {
+    final snap = await _db.collection('users').get();
+    return [
+      for (final d in snap.docs)
+        Account(id: d.id, profile: Profile.fromJson(d.data())),
+    ]..sort(
+      (a, b) => a.profile.fullName.toLowerCase().compareTo(
+        b.profile.fullName.toLowerCase(),
+      ),
+    );
+  }
+
+  /// Ajoute [months] mois à l'abonnement, à partir de sa fin actuelle si
+  /// elle n'est pas encore passée.
+  static Future<Account> extendSubscription(Account a, int months) async {
+    final now = DateTime.now();
+    final current = a.profile.accessEnd;
+    final end = addMonths(
+      current != null && current.isAfter(now) ? current : now,
+      months,
+    );
+    await _db.doc('users/${a.id}').update({
+      'subscriptionEnd': Timestamp.fromDate(end),
+    });
+    return Account(id: a.id, profile: a.profile.withSubscriptionEnd(end));
+  }
+
+  /// Arrête l'abonnement tout de suite (fin = maintenant).
+  static Future<Account> stopSubscription(Account a) async {
+    await _db.doc('users/${a.id}').update({'subscriptionEnd': _now});
+    return Account(
+      id: a.id,
+      profile: a.profile.withSubscriptionEnd(DateTime.now()),
+    );
+  }
+
+  static Future<SubscriptionSettings> subscriptionSettings() async {
+    final doc = await _db.doc('settings/subscription').get();
+    return SubscriptionSettings.fromJson(doc.data());
+  }
+
+  static Future<void> saveSubscriptionSettings(SubscriptionSettings s) =>
+      _db.doc('settings/subscription').set({
+        'monthlyPrice': s.monthlyPrice,
+        'paymentPhone': s.paymentPhone.trim(),
+      });
 
   // --------------------------------------------------------------- Accueils
 
@@ -247,6 +373,7 @@ class Api {
   }
 
   static Future<Tontine> createTontine(String name, TontineType type) async {
+    await ensureCanCreate();
     final me = await _requireMe();
     final ref = _db.collection('tontines').doc();
     await ref.set({
@@ -299,7 +426,7 @@ class Api {
 
   /// Rejoint un groupe ou un carnet ; renvoie (type, id).
   static Future<(String kind, String id)> joinWithCode(String input) async {
-    final code = input.toUpperCase().replaceAll(RegExp(r'[^A-Z0-9]'), '');
+    final code = normalizeCode(input);
     final invite = await _db.doc('invites/$code').get();
     if (!invite.exists) {
       throw const AppException('Code d\'invitation introuvable');
@@ -426,6 +553,7 @@ class Api {
     required CommissionType commissionType,
     required double commissionValue,
   }) async {
+    await ensureCanCreate();
     final me = await _requireMe();
     return _createWithInvite(
       'groups',
@@ -603,6 +731,7 @@ class Api {
     required String label,
     required int caseAmount,
   }) async {
+    await ensureCanCreate();
     final me = await _requireMe();
     return _createWithInvite(
       'carnets',

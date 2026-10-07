@@ -288,10 +288,127 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 }
 
+/// « Vous êtes : tontinier ou client ? » à l'inscription.
+class _RolePicker extends StatelessWidget {
+  const _RolePicker({required this.role, required this.onChanged});
+
+  final Role? role;
+  final ValueChanged<Role> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          'Vous êtes :',
+          style: Theme.of(context).textTheme.titleMedium
+              ?.copyWith(fontWeight: FontWeight.w700),
+        ),
+        const SizedBox(height: 8),
+        RadioGroup<Role>(
+          groupValue: role,
+          onChanged: (r) {
+            if (r != null) onChanged(r);
+          },
+          child: Column(
+            children: [
+              _RoleOption(
+                value: Role.tontinier,
+                selected: role == Role.tontinier,
+                icon: Icons.storefront_outlined,
+                title: 'Tontinier',
+                subtitle:
+                    'Je crée et je gère des tontines. Essai gratuit de '
+                    '${Profile.trialDays} jours.',
+              ),
+              const SizedBox(height: 8),
+              _RoleOption(
+                value: Role.membre,
+                selected: role == Role.membre,
+                icon: Icons.person_outline,
+                title: 'Client',
+                subtitle:
+                    'Je rejoins la tontine de mon tontinier avec son code '
+                    'd\'invitation.',
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _RoleOption extends StatelessWidget {
+  const _RoleOption({
+    required this.value,
+    required this.selected,
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+  });
+
+  final Role value;
+  final bool selected;
+  final IconData icon;
+  final String title;
+  final String subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Card(
+      margin: EdgeInsets.zero,
+      clipBehavior: Clip.antiAlias,
+      color: selected ? scheme.primaryContainer.withValues(alpha: 0.5) : null,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(
+          color: selected ? scheme.primary : scheme.outlineVariant,
+          width: selected ? 2 : 1,
+        ),
+      ),
+      child: RadioListTile<Role>(
+        value: value,
+        controlAffinity: ListTileControlAffinity.trailing,
+        secondary: Icon(icon, color: scheme.primary),
+        title: Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
+        subtitle: Text(subtitle),
+      ),
+    );
+  }
+}
+
+/// Code d'invitation obligatoire pour un client.
+class _InviteCodeField extends StatelessWidget {
+  const _InviteCodeField({required this.controller});
+
+  final TextEditingController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    return TextFormField(
+      controller: controller,
+      textCapitalization: TextCapitalization.characters,
+      autocorrect: false,
+      decoration: const InputDecoration(
+        labelText: 'Code d\'invitation',
+        hintText: 'Exemple : PAJ8R3',
+        helperText: 'Le code à 6 caractères envoyé par votre tontinier',
+        prefixIcon: Icon(Icons.key_outlined),
+      ),
+      validator: (v) => Api.normalizeCode(v ?? '').length != 6
+          ? 'Entrez le code à 6 caractères envoyé par votre tontinier'
+          : null,
+    );
+  }
+}
+
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key, this.asMember = false});
 
-  /// Inscription depuis un lien d'invitation : compte « membre ».
+  /// Inscription depuis un lien d'invitation : « Client » déjà choisi.
   final bool asMember;
 
   @override
@@ -304,7 +421,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final _phone = TextEditingController();
   final _password = TextEditingController();
   final _confirm = TextEditingController();
+  late final _code = TextEditingController(text: pendingInvite.value ?? '');
   String _dialCode = dialCodes.first.$1;
+  late Role? _role = widget.asMember || pendingInvite.value != null
+      ? Role.membre
+      : null;
   bool _busy = false;
 
   @override
@@ -313,21 +434,36 @@ class _RegisterScreenState extends State<RegisterScreen> {
     _phone.dispose();
     _password.dispose();
     _confirm.dispose();
+    _code.dispose();
     super.dispose();
   }
 
   Future<void> _submit() async {
+    final role = _role;
+    if (role == null) {
+      showError(
+        context,
+        const AppException('Choisissez d\'abord : tontinier ou client'),
+      );
+      return;
+    }
     if (!_form.currentState!.validate()) return;
     setState(() => _busy = true);
+    // Client : la tontine est rejointe dès l'arrivée sur l'accueil
+    final previousInvite = pendingInvite.value;
+    final code = role == Role.membre ? Api.normalizeCode(_code.text) : null;
+    if (code != null) pendingInvite.value = code;
     try {
       await Api.signUp(
         phone: normalizePhone(_dialCode, _phone.text),
         password: _password.text,
         fullName: _name.text.trim(),
-        role: widget.asMember ? Role.membre : Role.tontinier,
+        role: role,
+        inviteCode: code,
       );
       if (mounted) Navigator.of(context).popUntil((r) => r.isFirst);
     } catch (e) {
+      if (code != null) pendingInvite.value = previousInvite;
       if (mounted) showError(context, e);
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -349,6 +485,15 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
+                    _RolePicker(
+                      role: _role,
+                      onChanged: (r) => setState(() => _role = r),
+                    ),
+                    if (_role == Role.membre) ...[
+                      const SizedBox(height: 16),
+                      _InviteCodeField(controller: _code),
+                    ],
+                    const SizedBox(height: 24),
                     TextFormField(
                       controller: _name,
                       textCapitalization: TextCapitalization.words,
@@ -400,7 +545,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
                               height: 20,
                               child: CircularProgressIndicator(strokeWidth: 2),
                             )
-                          : const Text('Créer mon compte'),
+                          : Text(
+                              _role == Role.membre
+                                  ? 'Créer mon compte et rejoindre'
+                                  : 'Créer mon compte',
+                            ),
                     ),
                   ],
                 ),
@@ -426,19 +575,36 @@ class CompleteProfileScreen extends StatefulWidget {
 class _CompleteProfileScreenState extends State<CompleteProfileScreen> {
   final _form = GlobalKey<FormState>();
   final _name = TextEditingController();
+  late final _code = TextEditingController(text: pendingInvite.value ?? '');
+  Role? _role = pendingInvite.value != null ? Role.membre : null;
   bool _busy = false;
 
   @override
   void dispose() {
     _name.dispose();
+    _code.dispose();
     super.dispose();
   }
 
   Future<void> _submit() async {
+    final role = _role;
+    if (role == null) {
+      showError(
+        context,
+        const AppException('Choisissez d\'abord : tontinier ou client'),
+      );
+      return;
+    }
     if (!_form.currentState!.validate()) return;
     setState(() => _busy = true);
     try {
-      await Api.createProfile(_name.text);
+      if (role == Role.membre) {
+        final code = await Api.verifyInviteCode(_code.text);
+        await Api.createProfile(_name.text, role: role);
+        pendingInvite.value = code;
+      } else {
+        await Api.createProfile(_name.text, role: role);
+      }
       widget.onDone();
     } catch (e) {
       if (mounted) showError(context, e);
@@ -463,7 +629,16 @@ class _CompleteProfileScreenState extends State<CompleteProfileScreen> {
         child: ListView(
           padding: const EdgeInsets.all(24),
           children: [
-            const Text('Indiquez votre nom pour terminer votre inscription.'),
+            const Text('Terminez votre inscription.'),
+            const SizedBox(height: 16),
+            _RolePicker(
+              role: _role,
+              onChanged: (r) => setState(() => _role = r),
+            ),
+            if (_role == Role.membre) ...[
+              const SizedBox(height: 16),
+              _InviteCodeField(controller: _code),
+            ],
             const SizedBox(height: 16),
             TextFormField(
               controller: _name,

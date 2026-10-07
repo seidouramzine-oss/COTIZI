@@ -29,6 +29,21 @@ npx firebase login
 npx firebase deploy --only firestore:rules --project <id-du-projet>
 ```
 
+### Devenir administrateur (une seule fois)
+
+L'écran **Administration** (abonnements des tontiniers, prix, numéro de
+paiement) est réservé aux comptes listés dans la collection `admins` :
+
+1. **Authentication → Utilisateurs** : copier l'**UID** de votre compte
+   (la ligne `<votre numéro>@phone.cotizi.app`).
+2. **Firestore Database → Données → Commencer une collection** :
+   ID de la collection `admins`, ID du document = l'UID copié, un champ
+   `note` (chaîne) = `propriétaire`, puis **Enregistrer**.
+3. Dans l'application : **Profil → Administration**.
+
+Personne ne peut se déclarer administrateur depuis l'application : les règles
+refusent toute écriture dans `admins`.
+
 ## 3. Brancher l'application
 
 Reporter les valeurs de `google-services.json` dans `lib/firebase_options.dart` :
@@ -52,4 +67,5 @@ npm test   # lance l'émulateur Firestore et le scénario tests/rules.test.mjs
 
 Le scénario couvre : inscription, création de groupe, invitations, groupe complet,
 tirage au sort (impossible de choisir son numéro), déclarations avec preuve,
-refus motivé, validation, carnet de 31 cases, confidentialité des données.
+refus motivé, validation, carnet de 31 cases, confidentialité des données,
+essai gratuit et abonnement des tontiniers, administration.

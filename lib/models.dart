@@ -14,6 +14,20 @@ enum PaymentStatus { pending, approved, rejected }
 
 typedef Json = Map<String, dynamic>;
 
+/// Même jour [months] mois plus tard ; le 31 devient le dernier jour des
+/// mois plus courts.
+DateTime addMonths(DateTime d, int months) {
+  final lastDay = DateTime(d.year, d.month + months + 1, 0).day;
+  return DateTime(
+    d.year,
+    d.month + months,
+    min(d.day, lastDay),
+    d.hour,
+    d.minute,
+    d.second,
+  );
+}
+
 T _enum<T extends Enum>(List<T> values, Object? name) =>
     values.firstWhere((v) => v.name == name);
 
@@ -35,26 +49,87 @@ class Profile {
     required this.phone,
     this.role = Role.tontinier,
     this.createdAt,
+    this.subscriptionEnd,
   });
+
+  /// Essai gratuit d'un nouveau tontinier (même durée dans les règles).
+  static const trialDays = 30;
 
   final String fullName;
   final String phone;
   final Role role;
   final DateTime? createdAt;
 
+  /// Fin d'abonnement fixée par l'administrateur (null : période d'essai).
+  final DateTime? subscriptionEnd;
+
   bool get isMember => role == Role.membre;
+
+  /// Pendant l'essai : aucune date fixée par l'administrateur.
+  bool get isTrial => subscriptionEnd == null;
+
+  /// Fin de l'essai ou de l'abonnement.
+  DateTime? get accessEnd =>
+      subscriptionEnd ?? createdAt?.add(const Duration(days: trialDays));
+
+  bool canCreateAt(DateTime now) =>
+      !isMember && (accessEnd?.isAfter(now) ?? false);
+
+  /// Jours restants (0 le dernier jour, négatif une fois expiré).
+  int daysLeft(DateTime now) {
+    final end = accessEnd;
+    if (end == null) return -1;
+    return end.difference(now).inHours ~/ 24;
+  }
 
   factory Profile.fromJson(Json json) => Profile(
     fullName: json['fullName'] as String? ?? '',
     phone: json['phone'] as String? ?? '',
     role: json['role'] == 'membre' ? Role.membre : Role.tontinier,
-    createdAt: json['createdAt'] is Timestamp
-        ? (json['createdAt'] as Timestamp).toDate()
-        : null,
+    createdAt: _date(json['createdAt']),
+    subscriptionEnd: _date(json['subscriptionEnd']),
   );
 
-  Profile withName(String name) =>
-      Profile(fullName: name, phone: phone, role: role, createdAt: createdAt);
+  static DateTime? _date(Object? v) => v is Timestamp ? v.toDate() : null;
+
+  Profile withName(String name) => Profile(
+    fullName: name,
+    phone: phone,
+    role: role,
+    createdAt: createdAt,
+    subscriptionEnd: subscriptionEnd,
+  );
+
+  Profile withSubscriptionEnd(DateTime end) => Profile(
+    fullName: fullName,
+    phone: phone,
+    role: role,
+    createdAt: createdAt,
+    subscriptionEnd: end,
+  );
+}
+
+/// Compte vu par l'administrateur.
+class Account {
+  const Account({required this.id, required this.profile});
+
+  final String id;
+  final Profile profile;
+}
+
+/// Prix et numéro de paiement de l'abonnement (réglés par l'administrateur).
+class SubscriptionSettings {
+  const SubscriptionSettings({this.monthlyPrice = 0, this.paymentPhone = ''});
+
+  final int monthlyPrice;
+  final String paymentPhone;
+
+  bool get isSet => monthlyPrice > 0 || paymentPhone.isNotEmpty;
+
+  factory SubscriptionSettings.fromJson(Json? json) => SubscriptionSettings(
+    monthlyPrice: (json?['monthlyPrice'] as num?)?.toInt() ?? 0,
+    paymentPhone: json?['paymentPhone'] as String? ?? '',
+  );
 }
 
 class Tontine {
@@ -160,16 +235,7 @@ class Group {
           startDate.day + 14 * n,
         );
       case Frequency.monthly:
-        final lastDay = DateTime(
-          startDate.year,
-          startDate.month + n + 1,
-          0,
-        ).day;
-        return DateTime(
-          startDate.year,
-          startDate.month + n,
-          min(startDate.day, lastDay),
-        );
+        return addMonths(startDate, n);
     }
   }
 

@@ -23,7 +23,8 @@ lib/
   api.dart               toutes les lectures / écritures Firebase
   models.dart            tontines, groupes, carnets, paiements (+ calculs)
   format.dart            montants FCFA, dates, numéros, messages d'erreur
-  screens/               écrans (connexion, accueil, tontines, groupes, carnets, paiements)
+  screens/               écrans (connexion, accueil, tontines, groupes, carnets, paiements,
+                         abonnement, administration)
   widgets/common.dart    composants partagés
 firebase/
   firestore.rules        règles de sécurité (à publier dans la console Firebase)

@@ -9,6 +9,7 @@ import 'carnet_screens.dart';
 import 'dashboard_screens.dart';
 import 'group_screens.dart';
 import 'profile_screens.dart';
+import 'subscription_screens.dart';
 import 'tontine_screens.dart';
 
 /// Page d'un onglet qui sait se recharger quand on y revient.
@@ -20,11 +21,16 @@ mixin Reloadable<T extends StatefulWidget> on State<T> {
     await Navigator.of(context).push(MaterialPageRoute(builder: (_) => screen));
     if (mounted) reload();
   }
+
+  /// Ouvre un écran de création si l'essai ou l'abonnement est en cours.
+  Future<void> openIfCanCreate(Widget screen) async {
+    if (await checkCanCreate(context) && mounted) await open(screen);
+  }
 }
 
 /// Coque de l'application : barre de navigation en bas.
 /// Tontinier : Accueil, Mes tontines, Je participe, Profil.
-/// Membre (inscrit par invitation) : Accueil, Mes tontines, Profil.
+/// Client (inscrit avec un code d'invitation) : Accueil, Mes tontines, Profil.
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key, required this.profile});
 
@@ -184,7 +190,7 @@ class _ManagedTontinesPageState extends State<ManagedTontinesPage>
     return Scaffold(
       appBar: AppBar(title: const Text('Mes tontines')),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => open(const CreateTontineScreen()),
+        onPressed: () => openIfCanCreate(const CreateTontineScreen()),
         icon: const Icon(Icons.add),
         label: const Text('Nouvelle tontine'),
       ),

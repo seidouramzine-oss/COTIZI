@@ -7,6 +7,7 @@ import '../models.dart';
 import '../widgets/common.dart';
 import 'carnet_screens.dart';
 import 'group_screens.dart';
+import 'subscription_screens.dart';
 
 class CreateTontineScreen extends StatefulWidget {
   const CreateTontineScreen({super.key});
@@ -185,7 +186,14 @@ class _TontineScreenState extends State<TontineScreen> {
     if (mounted) _reload();
   }
 
+  Future<void> _createGroup() async {
+    if (await checkCanCreate(context) && mounted) {
+      await _open(CreateGroupScreen(tontine: widget.tontine));
+    }
+  }
+
   Future<void> _createCarnet(int existing) async {
+    if (!await checkCanCreate(context) || !mounted) return;
     final carnetId = await showDialog<String>(
       context: context,
       builder: (_) => _CreateCarnetDialog(
@@ -215,8 +223,7 @@ class _TontineScreenState extends State<TontineScreen> {
       ),
       floatingActionButton: _isCagnotte
           ? FloatingActionButton.extended(
-              onPressed: () =>
-                  _open(CreateGroupScreen(tontine: widget.tontine)),
+              onPressed: _createGroup,
               icon: const Icon(Icons.group_add),
               label: const Text('Nouveau groupe'),
             )

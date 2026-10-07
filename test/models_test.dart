@@ -159,4 +159,57 @@ void main() {
       expect(parseAmount(''), isNull);
     });
   });
+
+  group('Abonnement', () {
+    final now = DateTime(2026, 10, 7, 12);
+    Profile tontinier({
+      DateTime? created,
+      DateTime? end,
+      Role role = Role.tontinier,
+    }) => Profile(
+      fullName: 'T',
+      phone: '+22901000000',
+      role: role,
+      createdAt: created,
+      subscriptionEnd: end,
+    );
+
+    test('essai gratuit de 30 jours après l\'inscription', () {
+      final p = tontinier(created: DateTime(2026, 9, 20, 12));
+      expect(p.isTrial, isTrue);
+      expect(p.accessEnd, DateTime(2026, 10, 20, 12));
+      expect(p.canCreateAt(now), isTrue);
+      expect(p.daysLeft(now), 13);
+    });
+
+    test('essai terminé', () {
+      final p = tontinier(created: DateTime(2026, 9, 1));
+      expect(p.canCreateAt(now), isFalse);
+      expect(p.daysLeft(now), isNegative);
+    });
+
+    test('la date fixée par l\'administrateur remplace l\'essai', () {
+      final paid = tontinier(
+        created: DateTime(2026, 1, 1),
+        end: DateTime(2026, 12, 31),
+      );
+      expect(paid.isTrial, isFalse);
+      expect(paid.canCreateAt(now), isTrue);
+      final stopped = tontinier(created: DateTime(2026, 10, 1), end: now);
+      expect(stopped.canCreateAt(now), isFalse);
+    });
+
+    test('un client ne crée jamais, un ancien compte sans date non plus', () {
+      expect(
+        tontinier(created: now, role: Role.membre).canCreateAt(now),
+        isFalse,
+      );
+      expect(tontinier().canCreateAt(now), isFalse);
+    });
+
+    test('ajout de mois : le 31 devient le dernier jour du mois', () {
+      expect(addMonths(DateTime(2026, 1, 31, 9), 1), DateTime(2026, 2, 28, 9));
+      expect(addMonths(DateTime(2026, 10, 7), 12), DateTime(2027, 10, 7));
+    });
+  });
 }

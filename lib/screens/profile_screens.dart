@@ -9,6 +9,7 @@ import '../invite_link.dart';
 import '../models.dart';
 import '../settings.dart';
 import '../widgets/common.dart';
+import 'subscription_screens.dart';
 
 /// Onglet « Profil » : informations du compte et paramètres.
 class ProfilePage extends StatefulWidget {
@@ -27,6 +28,10 @@ class ProfilePage extends StatefulWidget {
 
 class _ProfilePageState extends State<ProfilePage> {
   Profile get _p => widget.profile;
+  final Future<bool> _isAdmin = Api.isAdmin();
+
+  void _push(Widget screen) =>
+      Navigator.of(context).push(MaterialPageRoute(builder: (_) => screen));
 
   Future<void> _editName() async {
     final name = await showDialog<String>(
@@ -133,7 +138,7 @@ class _ProfilePageState extends State<ProfilePage> {
                   Text(_p.phone, style: theme.textTheme.bodyMedium),
                   const SizedBox(height: 8),
                   StatusChip(
-                    _p.isMember ? 'Membre' : 'Tontinier',
+                    _p.isMember ? 'Client' : 'Tontinier',
                     scheme.primary,
                   ),
                   if (_p.createdAt != null) ...[
@@ -176,6 +181,41 @@ class _ProfilePageState extends State<ProfilePage> {
               ),
             ],
           ),
+          if (!_p.isMember) ...[
+            const SectionTitle('Mon activité'),
+            FutureBuilder<bool>(
+              future: _isAdmin,
+              builder: (context, snap) {
+                final status = AccessStatus(_p, isAdmin: snap.data ?? false);
+                return _Group(
+                  children: [
+                    ListTile(
+                      leading: const Icon(Icons.workspace_premium_outlined),
+                      title: const Text('Mon abonnement'),
+                      subtitle: Text(
+                        status.title,
+                        style: TextStyle(color: status.color(scheme)),
+                      ),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () => _push(const SubscriptionScreen()),
+                    ),
+                    if (snap.data == true)
+                      ListTile(
+                        leading: const Icon(
+                          Icons.admin_panel_settings_outlined,
+                        ),
+                        title: const Text('Administration'),
+                        subtitle: const Text(
+                          'Abonnements des tontiniers, prix et paiement',
+                        ),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: () => _push(const AdminScreen()),
+                      ),
+                  ],
+                );
+              },
+            ),
+          ],
           const SectionTitle('Paramètres'),
           _Group(
             children: [
@@ -460,7 +500,18 @@ class HelpScreen extends StatelessWidget {
           'Inviter des membres',
           'Ouvrez un groupe ou un carnet et appuyez sur « Partager ». Vos membres '
               'reçoivent un lien : en appuyant dessus, ils installent COTIZI et '
-              'rejoignent directement votre tontine.',
+              'rejoignent directement votre tontine. S\'ils ouvrent COTIZI sans '
+              'le lien, ils choisissent « Client » à l\'inscription et entrent '
+              'le code d\'invitation.',
+        ),
+      if (!isMember)
+        (
+          Icons.workspace_premium_outlined,
+          'Essai gratuit et abonnement',
+          'Un nouveau tontinier a 30 jours d\'essai gratuit. Ensuite, un '
+              'abonnement est nécessaire pour créer de nouvelles tontines, '
+              'groupes et carnets (Profil → Mon abonnement). Vos groupes en '
+              'cours continuent toujours.',
         ),
       (
         Icons.casino_outlined,

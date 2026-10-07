@@ -1,13 +1,31 @@
 # COTIZI — règles de fonctionnement
 
-COTIZI gère deux types de tontines. Toute personne inscrite peut être
-**tontinier** (elle crée et gère des tontines) et/ou **membre / client**
-(elle rejoint la tontine d'un autre avec un code d'invitation).
+COTIZI est un service pour les **tontiniers** : ils créent et gèrent des
+tontines, puis invitent leurs **clients**, qui ne font que participer.
 
 ## Compte
 
 - Inscription avec **nom, numéro de téléphone et mot de passe** (aucun SMS).
 - Le numéro (avec indicatif, +229 par défaut) sert d'identifiant de connexion.
+- À l'inscription, on choisit **Tontinier** ou **Client** ; ce choix est définitif.
+  - **Client** : le code d'invitation du tontinier est obligatoire (déjà rempli
+    s'il arrive par le lien). Code introuvable : le compte n'est pas créé. Le
+    client ne voit que ses tontines (Accueil, Mes tontines, Profil) et ne crée rien.
+  - **Tontinier** : peut créer des tontines et aussi rejoindre celles d'un autre
+    tontinier (« Je participe »).
+
+## Essai gratuit et abonnement des tontiniers
+
+- Un nouveau tontinier a **30 jours d'essai gratuit** à partir de son inscription.
+- Ensuite, il faut un **abonnement** pour créer de nouvelles tontines, groupes et
+  carnets. Sans abonnement, les groupes et carnets en cours **continuent** : le
+  tontinier peut toujours valider ou refuser les paiements de ses clients.
+- Le tontinier paie par Mobile Money au numéro affiché dans
+  **Profil → Mon abonnement** (prix et numéro réglés par l'administrateur), puis
+  prévient sur WhatsApp.
+- L'**administrateur** de COTIZI (Profil → Administration) voit tous les
+  tontiniers, prolonge l'abonnement de 1, 3 ou 12 mois (à partir de la fin en
+  cours, sinon d'aujourd'hui) ou l'arrête. Il n'a pas besoin d'abonnement.
 
 ## Tontine à cagnotte
 
