@@ -269,7 +269,7 @@ class _ProfilePageState extends State<ProfilePage> {
               ),
               ListTile(
                 leading: const Icon(Icons.help_outline),
-                title: const Text('Comment fonctionne COTIZI'),
+                title: const Text('Aide et assistance'),
                 trailing: const Icon(Icons.chevron_right),
                 onTap: () => Navigator.of(context).push(
                   MaterialPageRoute(
@@ -549,10 +549,21 @@ class HelpScreen extends StatelessWidget {
         (
           Icons.workspace_premium_outlined,
           'Essai gratuit et abonnement',
-          'Un nouveau tontinier a 30 jours d\'essai gratuit. Ensuite, un '
-              'abonnement est nécessaire pour créer de nouvelles tontines, '
-              'groupes et carnets (Profil → Mon abonnement). Vos groupes en '
-              'cours continuent toujours.',
+          'Un nouveau tontinier a 30 jours d\'essai gratuit. Ensuite, pour '
+              'créer de nouvelles tontines, groupes et carnets : Profil → Mon '
+              'abonnement → choisissez la durée et écrivez-nous sur WhatsApp. '
+              'Vous payez par Mobile Money, puis nous activons votre '
+              'abonnement. Vos groupes en cours continuent toujours.',
+        ),
+      if (!isMember)
+        (
+          Icons.gavel_outlined,
+          'Règlement du groupe',
+          'Vous fixez les conditions (cotisation, pénalités…) et vos règles. '
+              'Chaque participant avec l\'application doit accepter ce '
+              'règlement avant le démarrage ; vous vous portez garant de ceux '
+              'qui n\'ont pas l\'application. Si vous modifiez le règlement, '
+              'chacun doit l\'accepter de nouveau.',
         ),
       (
         Icons.casino_outlined,
@@ -594,8 +605,18 @@ class HelpScreen extends StatelessWidget {
             'ajoutez la capture de l\'envoi) ou espèces (remises en main '
             'propre). Le paiement reste « En attente » jusqu\'à ce que le '
             'tontinier le valide. En cas de retard, des pénalités peuvent '
-            's\'ajouter si le tontinier les a prévues.',
+            's\'ajouter si le règlement les prévoit (montant fixe ou '
+            'pourcentage du montant dû, après quelques jours de retard).',
       ),
+      if (isMember)
+        (
+          Icons.gavel_outlined,
+          'Règlement du groupe',
+          'Avant le démarrage, lisez le règlement du tontinier (cotisations, '
+              'pénalités, règles) et acceptez-le : la tontine ne démarre '
+              'qu\'avec l\'accord de tous. Il reste consultable avec le bouton '
+              '« Règlement » en haut de la page du groupe.',
+        ),
       (
         Icons.rule,
         'Validation par le tontinier',
@@ -606,10 +627,12 @@ class HelpScreen extends StatelessWidget {
     ];
     final theme = Theme.of(context);
     return Scaffold(
-      appBar: AppBar(title: const Text('Comment fonctionne COTIZI')),
+      appBar: AppBar(title: const Text('Aide et assistance')),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
+          SupportCard(isMember: isMember),
+          const SectionTitle('Comment fonctionne COTIZI'),
           for (final (icon, title, text) in sections)
             Card(
               child: Padding(
@@ -649,6 +672,85 @@ class HelpScreen extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// « Besoin d'aide ? » : écrire ou téléphoner à l'assistance COTIZI.
+class SupportCard extends StatelessWidget {
+  const SupportCard({super.key, required this.isMember});
+
+  final bool isMember;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return FutureBuilder<(SubscriptionSettings, Profile?)>(
+      future: Future.wait([Api.subscriptionSettings(), Api.myProfile()])
+          .then((r) => (r[0] as SubscriptionSettings, r[1] as Profile?)),
+      builder: (context, snap) {
+        final phone = snap.data?.$1.contactPhone ?? '';
+        final me = snap.data?.$2;
+        final digits = phone.replaceAll(RegExp(r'\D'), '');
+        return Card(
+          color: theme.colorScheme.primaryContainer,
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    Icon(
+                      Icons.support_agent,
+                      color: theme.colorScheme.onPrimaryContainer,
+                    ),
+                    const SizedBox(width: 10),
+                    Text(
+                      'Besoin d\'aide ?',
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w800,
+                        color: theme.colorScheme.onPrimaryContainer,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  isMember
+                      ? 'Une question sur vos cotisations ou votre cagnotte ? '
+                            'Écrivez d\'abord à votre tontinier (bouton en haut '
+                            'de la page de votre groupe). Pour un problème avec '
+                            'l\'application, écrivez à l\'assistance COTIZI.'
+                      : 'Notre équipe vous répond sur WhatsApp : utilisation '
+                            'de l\'application, abonnement, problème avec un '
+                            'groupe ou un paiement.',
+                  style: TextStyle(color: theme.colorScheme.onPrimaryContainer),
+                ),
+                if (digits.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  FilledButton.icon(
+                    onPressed: () => openWhatsApp(
+                      context,
+                      phone,
+                      'Bonjour, j\'ai besoin d\'aide sur COTIZI.'
+                      '${me == null ? '' : '\nNom : ${me.fullName}\nNuméro : ${me.phone}'}',
+                    ),
+                    icon: const Icon(Icons.chat_outlined),
+                    label: const Text('Écrire à l\'assistance sur WhatsApp'),
+                  ),
+                  const SizedBox(height: 8),
+                  OutlinedButton.icon(
+                    onPressed: () => launchUrl(Uri.parse('tel:+$digits')),
+                    icon: const Icon(Icons.call_outlined),
+                    label: const Text('Appeler l\'assistance'),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 }

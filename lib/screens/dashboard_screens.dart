@@ -8,6 +8,7 @@ import '../widgets/common.dart';
 import 'carnet_screens.dart';
 import 'group_screens.dart';
 import 'home_screen.dart';
+import 'profile_screens.dart' show HelpScreen;
 import 'business_screens.dart';
 import 'subscription_screens.dart';
 import 'tontine_screens.dart';
@@ -292,6 +293,13 @@ class _OwnerDashboardState extends State<OwnerDashboard> with Reloadable {
           builder: (context, snap) =>
               _Greeting(widget.profile, snap.data?.name ?? 'Espace tontinier'),
         ),
+        actions: [
+          IconButton(
+            tooltip: 'Aide',
+            icon: const Icon(Icons.help_outline),
+            onPressed: () => open(const HelpScreen(isMember: false)),
+          ),
+        ],
       ),
       body: RefreshIndicator(
         onRefresh: () async {
@@ -522,14 +530,14 @@ class _OwnerDashboardState extends State<OwnerDashboard> with Reloadable {
           ),
         );
       } else if (b != null && !date.isAfter(today)) {
-        final missing = g.shortfallsFor(pot);
+        final late = g.lateFor(pot).length;
         items.add(
           _TodoTile(
             icon: Icons.lock_outline,
             title: 'Remise bloquée · ${g.name}',
             subtitle:
-                'Il manque ${money(g.missingFor(pot))} · '
-                '${missing.length} retardataire${missing.length > 1 ? 's' : ''}',
+                'Il manque ${money(g.missingFor(pot))}'
+                '${late > 0 ? ' · $late en retard' : ' · paiements à valider'}',
             color: paymentStatusColor(PaymentStatus.rejected),
             onTap: () => open(GroupScreen(groupId: g.id)),
           ),
@@ -552,6 +560,20 @@ class _OwnerDashboardState extends State<OwnerDashboard> with Reloadable {
       }
     }
     for (final g in o.groups) {
+      if (!g.isStarted && g.pendingAcceptanceCount > 0 && g.joinedCount > 0) {
+        final n = g.pendingAcceptanceCount;
+        items.add(
+          _TodoTile(
+            icon: Icons.gavel_outlined,
+            title: '« ${g.name} » : règlement à accepter',
+            subtitle:
+                '$n participant${n > 1 ? 's' : ''} n\'${n > 1 ? 'ont' : 'a'} pas encore '
+                'accepté le règlement',
+            color: paymentStatusColor(PaymentStatus.pending),
+            onTap: () => open(GroupScreen(groupId: g.id)),
+          ),
+        );
+      }
       if (g.status == GroupStatus.recruiting &&
           g.joinedCount >= g.memberCount) {
         items.add(
@@ -644,7 +666,16 @@ class _MemberDashboardState extends State<MemberDashboard> with Reloadable {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: _Greeting(widget.profile, 'Espace participant')),
+      appBar: AppBar(
+        title: _Greeting(widget.profile, 'Espace participant'),
+        actions: [
+          IconButton(
+            tooltip: 'Aide',
+            icon: const Icon(Icons.help_outline),
+            onPressed: () => open(const HelpScreen(isMember: true)),
+          ),
+        ],
+      ),
       body: RefreshIndicator(
         onRefresh: () async {
           reload();
@@ -770,6 +801,22 @@ class _MemberDashboardState extends State<MemberDashboard> with Reloadable {
             ),
           ),
       ],
+      // ------------------------------------------------ Règlements à accepter
+      for (final s in o.groups.where(
+        (s) =>
+            !s.group.isStarted &&
+            !s.group.isLegacy &&
+            !s.group.hasAccepted(uid),
+      ))
+        StatusCard(
+          icon: Icons.gavel_outlined,
+          color: pendingColor,
+          title: 'Règlement à accepter · ${s.group.name}',
+          message:
+              'Lisez les conditions du tontinier et acceptez-les pour que la '
+              'tontine puisse démarrer.',
+          onTap: () => open(GroupScreen(groupId: s.group.id)),
+        ),
       // ------------------------------------------- Groupes en préparation
       for (final s in o.groups.where(
         (s) =>

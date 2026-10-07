@@ -18,6 +18,9 @@ enum OrderMode { draw, manual }
 /// Mode de paiement d'une cotisation ou d'une case.
 enum PaymentMethod { mobileMoney, cash }
 
+/// Pénalité de retard : montant fixe, ou pourcentage de la cotisation due.
+enum PenaltyType { fixed, percent }
+
 enum PaymentStatus { pending, approved, rejected }
 
 typedef Json = Map<String, dynamic>;
@@ -127,17 +130,60 @@ class Account {
 
 /// Prix et numéro de paiement de l'abonnement (réglés par l'administrateur).
 class SubscriptionSettings {
-  const SubscriptionSettings({this.monthlyPrice = 0, this.paymentPhone = ''});
+  const SubscriptionSettings({
+    this.monthlyPrice = 0,
+    this.paymentPhone = '',
+    this.supportPhone = '',
+  });
 
   final int monthlyPrice;
   final String paymentPhone;
+
+  /// Numéro WhatsApp de l'assistance COTIZI.
+  final String supportPhone;
+
+  /// Numéro à contacter sur WhatsApp (assistance, sinon paiement).
+  String get contactPhone =>
+      supportPhone.isNotEmpty ? supportPhone : paymentPhone;
 
   bool get isSet => monthlyPrice > 0 || paymentPhone.isNotEmpty;
 
   factory SubscriptionSettings.fromJson(Json? json) => SubscriptionSettings(
     monthlyPrice: (json?['monthlyPrice'] as num?)?.toInt() ?? 0,
     paymentPhone: json?['paymentPhone'] as String? ?? '',
+    supportPhone: json?['supportPhone'] as String? ?? '',
   );
+}
+
+/// Demande d'abonnement d'un tontinier (Administration).
+class SubscriptionRequest {
+  const SubscriptionRequest({
+    required this.userId,
+    required this.fullName,
+    required this.phone,
+    required this.months,
+    required this.amount,
+    required this.requestedAt,
+  });
+
+  final String userId;
+  final String fullName;
+  final String phone;
+  final int months;
+  final int amount;
+  final DateTime requestedAt;
+
+  factory SubscriptionRequest.fromDoc(DocumentSnapshot<Json> doc) {
+    final json = doc.data()!;
+    return SubscriptionRequest(
+      userId: doc.id,
+      fullName: json['fullName'] as String? ?? '',
+      phone: json['phone'] as String? ?? '',
+      months: _int(json['months']),
+      amount: _int(json['amount']),
+      requestedAt: _time(json['requestedAt']),
+    );
+  }
 }
 
 class Tontine {
@@ -205,7 +251,25 @@ class Group {
     this.members = const [],
     this.pendingCount = 0,
     this.levels,
+    this.penaltyType = PenaltyType.fixed,
+    this.rulesText = '',
+    this.termsVersion,
+    this.accepted = const {},
   });
+
+  /// Pénalité en montant fixe ([penaltyAmount] FCFA) ou en pourcentage
+  /// ([penaltyAmount] % de la cotisation due).
+  final PenaltyType penaltyType;
+
+  /// Règles propres au groupe, écrites par le tontinier.
+  final String rulesText;
+
+  /// Version du règlement (conditions + règles) que chaque participant doit
+  /// accepter avant le démarrage. Null : groupe créé avant la version 2.2.
+  final int? termsVersion;
+
+  /// Version du règlement acceptée par chaque participant (identifiant).
+  final Map<String, int> accepted;
 
   final String id;
   final String tontineId;
@@ -270,6 +334,33 @@ class Group {
       status == GroupStatus.active || status == GroupStatus.finished;
 
   bool get hasPenalty => penaltyAmount > 0;
+
+  /// Pénalité pour une cotisation payée en retard.
+  int get penaltyPerContribution => penaltyType == PenaltyType.percent
+      ? (contributionAmount * penaltyAmount / 100).round()
+      : penaltyAmount;
+
+  /// Le règlement doit être accepté par les participants (groupes 2.2).
+  bool get needsAcceptance => termsVersion != null;
+
+  /// [userId] a accepté le règlement en vigueur (ou n'a pas à le faire).
+  bool hasAccepted(String userId) =>
+      termsVersion == null || accepted[userId] == termsVersion;
+
+  /// Participants avec l'application (comptes de [memberIds]) qui n'ont pas
+  /// encore accepté le règlement en vigueur. Ceux sans application : le
+  /// tontinier s'en porte garant.
+  int get pendingAcceptanceCount => termsVersion == null
+      ? 0
+      : memberIds.where((id) => accepted[id] != termsVersion).length;
+
+  /// Les mêmes, avec leur nom (participants chargés).
+  List<GroupMember> get pendingAcceptance => [
+    for (final m in members)
+      if (memberIds.contains(m.userId) && !hasAccepted(m.userId)) m,
+  ];
+
+  bool get allAccepted => pendingAcceptanceCount == 0;
 
   /// Date de fin : dernière remise.
   DateTime get endDate => payoutDate(memberCount);
@@ -365,7 +456,7 @@ class Group {
       final limit = contributionDate(i).add(Duration(days: penaltyGraceDays));
       if (day.isAfter(DateTime(limit.year, limit.month, limit.day))) n++;
     }
-    return n * penaltyAmount;
+    return n * penaltyPerContribution;
   }
 
   /// Cagnotte en cours de collecte (la première pas encore remise).
@@ -389,9 +480,11 @@ class Group {
   int missingFor(int pot) => max(0, grossPot - collectedFor(pot));
 
   /// Participants qui n'ont pas encore tout payé (validé) pour la cagnotte
-  /// [pot] : cotisations manquantes, dont celles en attente de validation.
-  List<PotShortfall> shortfallsFor(int pot) {
+  /// [pot] : cotisations manquantes, dont celles en attente de validation
+  /// et celles déjà dues à la date [today] mais pas déclarées (retard).
+  List<PotShortfall> shortfallsFor(int pot, [DateTime? today]) {
     final from = (pot - 1) * perPot;
+    final due = (dueCount(today ?? DateTime.now()) - from).clamp(0, perPot);
     return [
       for (final m in members)
         if ((m.approvedCount - from).clamp(0, perPot) < perPot)
@@ -401,12 +494,20 @@ class Group {
             pending:
                 (m.declaredCount - from).clamp(0, perPot) -
                 (m.approvedCount - from).clamp(0, perPot),
+            late: max(0, due - (m.declaredCount - from).clamp(0, perPot)),
             amount:
                 (perPot - (m.approvedCount - from).clamp(0, perPot)) *
                 contributionAmount,
           ),
-    ]..sort((a, b) => b.missing.compareTo(a.missing));
+    ]..sort((a, b) => b.late.compareTo(a.late));
   }
+
+  /// Participants en retard pour la cagnotte [pot] : des cotisations déjà
+  /// dues (aujourd'hui compris) ne sont pas encore déclarées.
+  List<PotShortfall> lateFor(int pot, [DateTime? today]) => [
+    for (final f in shortfallsFor(pot, today))
+      if (f.late > 0) f,
+  ];
 
   GroupMember? beneficiaryOf(int pot) {
     for (final m in members) {
@@ -450,6 +551,10 @@ class Group {
     members: members ?? this.members,
     pendingCount: pendingCount ?? this.pendingCount,
     levels: levels,
+    penaltyType: penaltyType,
+    rulesText: rulesText,
+    termsVersion: termsVersion,
+    accepted: accepted,
   );
 
   factory Group.fromDoc(DocumentSnapshot<Json> doc) {
@@ -518,6 +623,19 @@ class Group {
                 e.key as String: _int(e.value),
             }
           : null,
+      penaltyType: json['penaltyType'] == 'percent'
+          ? PenaltyType.percent
+          : PenaltyType.fixed,
+      rulesText: json['rulesText'] as String? ?? '',
+      termsVersion: json['termsVersion'] == null
+          ? null
+          : _int(json['termsVersion']),
+      accepted: json['accepted'] is Map
+          ? {
+              for (final e in (json['accepted'] as Map).entries)
+                e.key as String: _int(e.value),
+            }
+          : const {},
     );
   }
 }
@@ -529,7 +647,11 @@ class PotShortfall {
     required this.missing,
     required this.pending,
     required this.amount,
+    this.late = 0,
   });
+
+  /// Cotisations déjà dues mais pas encore déclarées (retard).
+  final int late;
 
   final GroupMember member;
 
@@ -1015,8 +1137,12 @@ class GroupTerms {
     required this.penaltyGraceDays,
     required this.commissionType,
     required this.commissionValue,
+    this.penaltyType = PenaltyType.fixed,
+    this.rulesText = '',
   });
 
+  final PenaltyType penaltyType;
+  final String rulesText;
   final String name;
   final int memberCount;
   final int contributionAmount;

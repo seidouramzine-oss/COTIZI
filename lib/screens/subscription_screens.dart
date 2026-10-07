@@ -180,12 +180,16 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
                         'Invitation de vos clients par lien WhatsApp',
                       ),
                       _Feature(
-                        Icons.casino_outlined,
-                        'Tirage au sort des tours de cagnotte',
+                        Icons.fact_check_outlined,
+                        'Paiements Mobile Money ou espèces, validés par vous',
                       ),
                       _Feature(
-                        Icons.fact_check_outlined,
-                        'Paiements avec preuve, validés par vous',
+                        Icons.gavel_outlined,
+                        'Règlement, pénalités et remises sécurisées',
+                      ),
+                      _Feature(
+                        Icons.picture_as_pdf_outlined,
+                        'Reçus, relevés PDF, rappels et suivi des gains',
                       ),
                     ],
                   ),
@@ -265,72 +269,147 @@ class _Feature extends StatelessWidget {
   }
 }
 
-class _RenewCard extends StatelessWidget {
+/// Demande d'abonnement : on choisit la durée, on écrit à COTIZI sur
+/// WhatsApp, on paie par Mobile Money, puis l'équipe active l'abonnement.
+class _RenewCard extends StatefulWidget {
   const _RenewCard({required this.settings, required this.profile});
 
   final SubscriptionSettings settings;
   final Profile profile;
 
-  String get _digits => settings.paymentPhone.replaceAll(RegExp(r'\D'), '');
+  @override
+  State<_RenewCard> createState() => _RenewCardState();
+}
 
-  Future<void> _open(BuildContext context, Uri uri) async {
-    if (!await launchUrl(uri, mode: LaunchMode.externalApplication) &&
-        context.mounted) {
-      showError(context, const AppException('Impossible d\'ouvrir le lien'));
+class _RenewCardState extends State<_RenewCard> {
+  int _months = 1;
+  late Future<SubscriptionRequest?> _request = Api.myRequest();
+  bool _busy = false;
+
+  int get _amount => widget.settings.monthlyPrice * _months;
+
+  Future<void> _ask() async {
+    final phone = widget.settings.contactPhone;
+    setState(() => _busy = true);
+    try {
+      await Api.requestSubscription(_months, _amount);
+      if (!mounted) return;
+      setState(() => _request = Api.myRequest());
+      await openWhatsApp(
+        context,
+        phone,
+        'Bonjour, je souhaite m\'abonner à COTIZI pour $_months mois'
+        '${_amount > 0 ? ' (${money(_amount)})' : ''}.\n'
+        'Nom : ${widget.profile.fullName}\n'
+        'Numéro COTIZI : ${widget.profile.phone}',
+      );
+    } catch (e) {
+      if (mounted) showError(context, e);
+    } finally {
+      if (mounted) setState(() => _busy = false);
     }
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final message =
-        'Bonjour, je souhaite renouveler mon abonnement COTIZI.\n'
-        'Nom : ${profile.fullName}\nNuméro COTIZI : ${profile.phone}';
+    final settings = widget.settings;
+    final phone = settings.contactPhone;
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            if (settings.monthlyPrice > 0)
-              InfoRow(
-                'Prix',
-                '${money(settings.monthlyPrice)} par mois',
-                bold: true,
-              ),
-            if (settings.paymentPhone.isNotEmpty)
-              InfoRow('Mobile Money', settings.paymentPhone, bold: true),
-            if (settings.isSet) const SizedBox(height: 8),
             Text(
-              settings.paymentPhone.isNotEmpty
-                  ? '1. Envoyez le montant par Mobile Money au numéro '
-                        'ci-dessus.\n'
-                        '2. Prévenez-nous sur WhatsApp avec votre nom et votre '
-                        'numéro COTIZI.\n'
-                        '3. Votre abonnement est prolongé dès réception.'
-                  : 'Contactez l\'équipe COTIZI pour renouveler votre '
-                        'abonnement.',
-              style: theme.textTheme.bodyMedium,
+              'Durée',
+              style: theme.textTheme.titleSmall?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
             ),
-            if (_digits.isNotEmpty) ...[
-              const SizedBox(height: 16),
-              FilledButton.icon(
-                onPressed: () => _open(
-                  context,
-                  Uri.parse(
-                    'https://wa.me/$_digits?text=${Uri.encodeComponent(message)}',
-                  ),
+            const SizedBox(height: 8),
+            SegmentedButton<int>(
+              segments: const [
+                ButtonSegment(value: 1, label: Text('1 mois')),
+                ButtonSegment(value: 3, label: Text('3 mois')),
+                ButtonSegment(value: 12, label: Text('12 mois')),
+              ],
+              selected: {_months},
+              onSelectionChanged: (v) => setState(() => _months = v.first),
+            ),
+            if (settings.monthlyPrice > 0) ...[
+              const SizedBox(height: 12),
+              InfoRow('Montant à payer', money(_amount), bold: true),
+            ],
+            const SizedBox(height: 12),
+            for (final (n, text) in [
+              (1, 'Écrivez-nous sur WhatsApp avec le bouton ci-dessous.'),
+              (
+                2,
+                settings.paymentPhone.isNotEmpty
+                    ? 'Payez par Mobile Money au ${settings.paymentPhone}.'
+                    : 'Payez par Mobile Money au numéro que nous vous indiquons.',
+              ),
+              (3, 'Dès réception du paiement, nous activons votre abonnement.'),
+            ])
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    CircleAvatar(
+                      radius: 12,
+                      backgroundColor: theme.colorScheme.primaryContainer,
+                      child: Text(
+                        '$n',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w800,
+                          color: theme.colorScheme.onPrimaryContainer,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(child: Text(text)),
+                  ],
                 ),
+              ),
+            FutureBuilder<SubscriptionRequest?>(
+              future: _request,
+              builder: (context, snap) {
+                final r = snap.data;
+                if (r == null) return const SizedBox.shrink();
+                return Padding(
+                  padding: const EdgeInsets.only(top: 4, bottom: 8),
+                  child: StatusCard(
+                    icon: Icons.hourglass_top,
+                    title: 'Demande envoyée',
+                    message:
+                        '${r.months} mois${r.amount > 0 ? ' · ${money(r.amount)}' : ''}, '
+                        'le ${dateLong(r.requestedAt)}. Votre abonnement sera '
+                        'activé dès réception du paiement.',
+                    color: paymentStatusColor(PaymentStatus.pending),
+                  ),
+                );
+              },
+            ),
+            const SizedBox(height: 8),
+            if (phone.isNotEmpty) ...[
+              FilledButton.icon(
+                onPressed: _busy ? null : _ask,
                 icon: const Icon(Icons.chat_outlined),
-                label: const Text('Prévenir sur WhatsApp'),
+                label: const Text('Demander mon abonnement sur WhatsApp'),
               ),
               const SizedBox(height: 8),
               OutlinedButton.icon(
-                onPressed: () => _open(context, Uri.parse('tel:+$_digits')),
+                onPressed: () => launchUrl(
+                  Uri.parse('tel:+${phone.replaceAll(RegExp(r'\D'), '')}'),
+                ),
                 icon: const Icon(Icons.call_outlined),
-                label: const Text('Appeler'),
+                label: const Text('Appeler COTIZI'),
               ),
-            ],
+            ] else
+              const Text('Contactez l\'équipe COTIZI pour vous abonner.'),
           ],
         ),
       ),
@@ -351,6 +430,7 @@ class AdminScreen extends StatefulWidget {
 class _AdminScreenState extends State<AdminScreen> {
   late Future<void> _loading = _load();
   List<Account> _accounts = [];
+  List<SubscriptionRequest> _requests = [];
   SubscriptionSettings _settings = const SubscriptionSettings();
   final _search = TextEditingController();
 
@@ -358,9 +438,61 @@ class _AdminScreenState extends State<AdminScreen> {
     final results = await Future.wait([
       Api.accounts(),
       Api.subscriptionSettings(),
+      Api.subscriptionRequests(),
     ]);
     _accounts = results[0] as List<Account>;
     _settings = results[1] as SubscriptionSettings;
+    _requests = results[2] as List<SubscriptionRequest>;
+  }
+
+  /// Paiement reçu : active l'abonnement demandé et clôt la demande.
+  Future<void> _activate(SubscriptionRequest r) async {
+    final account = _accounts.where((a) => a.id == r.userId).firstOrNull;
+    if (account == null) return;
+    if (!await confirm(
+      context,
+      title: 'Activer l\'abonnement',
+      message:
+          'Avez-vous reçu le paiement de ${r.fullName}'
+          '${r.amount > 0 ? ' (${money(r.amount)})' : ''} ? Son abonnement '
+          'sera prolongé de ${r.months} mois.',
+      confirmLabel: 'Activer',
+    )) {
+      return;
+    }
+    try {
+      final updated = await Api.extendSubscription(account, r.months);
+      await Api.closeSubscriptionRequest(r.userId);
+      setState(() {
+        _accounts = [for (final x in _accounts) x.id == r.userId ? updated : x];
+        _requests = [
+          for (final x in _requests)
+            if (x.userId != r.userId) x,
+        ];
+      });
+      if (mounted) {
+        showInfo(
+          context,
+          'Abonnement activé jusqu\'au ${dateLong(updated.profile.accessEnd!)}',
+        );
+      }
+    } catch (e) {
+      if (mounted) showError(context, e);
+    }
+  }
+
+  Future<void> _dismiss(SubscriptionRequest r) async {
+    try {
+      await Api.closeSubscriptionRequest(r.userId);
+      setState(
+        () => _requests = [
+          for (final x in _requests)
+            if (x.userId != r.userId) x,
+        ],
+      );
+    } catch (e) {
+      if (mounted) showError(context, e);
+    }
   }
 
   void _reload() => setState(() => _loading = _load());
@@ -492,11 +624,62 @@ class _AdminScreenState extends State<AdminScreen> {
               ),
           ],
         ),
+        if (_requests.isNotEmpty) ...[
+          SectionTitle('Demandes d\'abonnement (${_requests.length})'),
+          for (final r in _requests)
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 8, 8),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      r.fullName,
+                      style: const TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    Text(
+                      '${r.phone} · ${r.months} mois'
+                      '${r.amount > 0 ? ' · ${money(r.amount)}' : ''} · '
+                      '${dateTime(r.requestedAt)}',
+                      style: theme.textTheme.bodySmall,
+                    ),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      children: [
+                        FilledButton(
+                          onPressed: () => _activate(r),
+                          child: Text(
+                            'Paiement reçu : activer ${r.months} mois',
+                          ),
+                        ),
+                        IconButton(
+                          tooltip: 'Écrire sur WhatsApp',
+                          icon: const Icon(Icons.chat_outlined),
+                          onPressed: () => openWhatsApp(
+                            context,
+                            r.phone,
+                            'Bonjour ${r.fullName}, merci pour votre demande '
+                            'd\'abonnement COTIZI (${r.months} mois).',
+                          ),
+                        ),
+                        IconButton(
+                          tooltip: 'Supprimer la demande',
+                          icon: const Icon(Icons.delete_outline),
+                          onPressed: () => _dismiss(r),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+        ],
         const SectionTitle('Paiement de l\'abonnement'),
         Card(
           child: ListTile(
             leading: const Icon(Icons.payments_outlined),
-            title: const Text('Prix et numéro Mobile Money'),
+            title: const Text('Prix, Mobile Money et assistance'),
             subtitle: Text(
               _settings.isSet
                   ? [
@@ -504,6 +687,8 @@ class _AdminScreenState extends State<AdminScreen> {
                         '${money(_settings.monthlyPrice)} par mois',
                       if (_settings.paymentPhone.isNotEmpty)
                         'Mobile Money : ${_settings.paymentPhone}',
+                      if (_settings.supportPhone.isNotEmpty)
+                        'Assistance WhatsApp : ${_settings.supportPhone}',
                     ].join('\n')
                   : 'Pas encore réglé : les tontiniers ne savent pas comment payer',
             ),
@@ -646,11 +831,15 @@ class _SettingsDialogState extends State<_SettingsDialog> {
         : '',
   );
   late final _phone = TextEditingController(text: widget.initial.paymentPhone);
+  late final _support = TextEditingController(
+    text: widget.initial.supportPhone,
+  );
 
   @override
   void dispose() {
     _price.dispose();
     _phone.dispose();
+    _support.dispose();
     super.dispose();
   }
 
@@ -679,6 +868,15 @@ class _SettingsDialogState extends State<_SettingsDialog> {
               hintText: '+229 01 97 00 00 00',
             ),
           ),
+          TextField(
+            controller: _support,
+            keyboardType: TextInputType.phone,
+            maxLength: 30,
+            decoration: const InputDecoration(
+              labelText: 'WhatsApp de l\'assistance (facultatif)',
+              helperText: 'Sinon, le numéro ci-dessus est utilisé',
+            ),
+          ),
         ],
       ),
       actions: [
@@ -692,6 +890,7 @@ class _SettingsDialogState extends State<_SettingsDialog> {
             SubscriptionSettings(
               monthlyPrice: (parseAmount(_price.text) ?? 0).clamp(0, 10000000),
               paymentPhone: _phone.text.trim(),
+              supportPhone: _support.text.trim(),
             ),
           ),
           child: const Text('Enregistrer'),

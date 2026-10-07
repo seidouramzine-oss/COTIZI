@@ -276,7 +276,38 @@ class Api {
       _db.doc('settings/subscription').set({
         'monthlyPrice': s.monthlyPrice,
         'paymentPhone': s.paymentPhone.trim(),
+        'supportPhone': s.supportPhone.trim(),
       });
+
+  /// Le tontinier demande un abonnement de [months] mois : la demande
+  /// apparaît dans l'Administration, il écrit ensuite à COTIZI sur WhatsApp.
+  static Future<void> requestSubscription(int months, int amount) async {
+    final me = await _requireMe();
+    await _db.doc('subscriptionRequests/$uid').set({
+      'fullName': me.fullName,
+      'phone': me.phone,
+      'months': months,
+      'amount': amount,
+      'requestedAt': _now,
+    });
+  }
+
+  /// Demandes d'abonnement en attente (administrateur), les plus anciennes
+  /// d'abord.
+  static Future<List<SubscriptionRequest>> subscriptionRequests() async {
+    final snap = await _db.collection('subscriptionRequests').get();
+    return snap.docs.map(SubscriptionRequest.fromDoc).toList()
+      ..sort((a, b) => a.requestedAt.compareTo(b.requestedAt));
+  }
+
+  /// Ma demande d'abonnement en attente, s'il y en a une.
+  static Future<SubscriptionRequest?> myRequest() async {
+    final doc = await _db.doc('subscriptionRequests/$uid').get();
+    return doc.exists ? SubscriptionRequest.fromDoc(doc) : null;
+  }
+
+  static Future<void> closeSubscriptionRequest(String userId) =>
+      _db.doc('subscriptionRequests/$userId').delete();
 
   // --------------------------------------------------------------- Accueils
 
@@ -683,6 +714,8 @@ class Api {
     'penaltyGraceDays': t.penaltyGraceDays,
     'commissionType': t.commissionType.name,
     'commissionValue': t.commissionValue,
+    'penaltyType': t.penaltyType.name,
+    'rulesText': t.rulesText.trim(),
   };
 
   static Future<String> createGroup(Tontine tontine, GroupTerms terms) async {
@@ -705,6 +738,9 @@ class Api {
         'memberIds': <String>[],
         'startedAt': null,
         'createdAt': _now,
+        // Règlement à accepter par chaque participant avant le démarrage
+        'termsVersion': 1,
+        'accepted': <String, int>{},
       },
       extra: (batch, id) {
         final (ref, data) = _eventDoc(
@@ -719,17 +755,52 @@ class Api {
     );
   }
 
-  /// Modification pendant les inscriptions.
+  /// Modification pendant les inscriptions. Si les conditions changent
+  /// (montants, pénalités, règles…), le règlement passe à une nouvelle
+  /// version que chacun doit accepter de nouveau.
   static Future<void> updateGroup(Group g, GroupTerms terms) async {
     final me = await _requireMe();
+    final changed =
+        terms.memberCount != g.memberCount ||
+        terms.contributionAmount != g.contributionAmount ||
+        terms.frequency != g.frequency ||
+        terms.contributionsPerPot != g.perPot ||
+        terms.orderMode != g.orderMode ||
+        terms.penaltyAmount != g.penaltyAmount ||
+        terms.penaltyGraceDays != g.penaltyGraceDays ||
+        terms.penaltyType != g.penaltyType ||
+        terms.commissionType != g.commissionType ||
+        terms.commissionValue != g.commissionValue ||
+        terms.rulesText.trim() != g.rulesText;
+    final newVersion = g.termsVersion != null && changed;
     final (ref, data) = _eventDoc(
       g.id,
       me,
       'edited',
-      'Conditions du groupe modifiées',
+      newVersion
+          ? 'Règlement modifié : chaque participant doit l\'accepter de nouveau'
+          : 'Conditions du groupe modifiées',
     );
     await (_db.batch()
-          ..update(_db.doc('groups/${g.id}'), _terms(terms))
+          ..update(_db.doc('groups/${g.id}'), {
+            ..._terms(terms),
+            if (newVersion) 'termsVersion': g.termsVersion! + 1,
+          })
+          ..set(ref, data))
+        .commit();
+  }
+
+  /// Le participant accepte le règlement en vigueur du groupe.
+  static Future<void> acceptRules(Group g) async {
+    final me = await _requireMe();
+    final (ref, data) = _eventDoc(
+      g.id,
+      me,
+      'rules_accepted',
+      '${me.fullName} a accepté le règlement',
+    );
+    await (_db.batch()
+          ..update(_db.doc('groups/${g.id}'), {'accepted.$uid': g.termsVersion})
           ..set(ref, data))
         .commit();
   }
@@ -809,6 +880,8 @@ class Api {
           ..update(_db.doc('groups/${g.id}'), {
             'joinedCount': FieldValue.increment(-1),
             'memberIds': FieldValue.arrayRemove([m.userId]),
+            if (g.accepted.containsKey(m.userId))
+              'accepted.${m.userId}': FieldValue.delete(),
           })
           ..set(eventRef, eventData))
         .commit();

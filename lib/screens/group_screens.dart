@@ -101,8 +101,8 @@ String reminderText(Group g, GroupMember m, MemberStanding s, String owner) =>
 String shortfallText(Group g, PotShortfall f, String owner) =>
     'Bonjour ${f.member.name}, la cagnotte n°${g.currentPot} du groupe '
     '« ${g.name} » ne peut être remise que lorsque tout le monde a payé. '
-    'Il vous reste ${contributionsLabel(f.missing)} à régler '
-    '(${money(f.amount)})${f.pending > 0 ? ', dont ${f.pending} en attente de validation' : ''}. '
+    'Vous avez ${contributionsLabel(f.late)} en retard '
+    '(${money(f.late * g.contributionAmount)}). '
     'Merci de payer et de déclarer votre paiement dans COTIZI. — $owner';
 
 /// Message pour tout le groupe (à envoyer dans le groupe WhatsApp).
@@ -111,7 +111,8 @@ String shortfallGroupText(Group g, List<PotShortfall> list, String owner) => [
       '(${money(g.netPot)}) sera remise dès que la collecte est complète. '
       'Il manque encore ${money(g.missingFor(g.currentPot))} :',
   for (final f in list)
-    '• ${f.member.name} : ${contributionsLabel(f.missing)} (${money(f.amount)})',
+    '• ${f.member.name} : ${contributionsLabel(f.late)} en retard '
+        '(${money(f.late * g.contributionAmount)})',
   'Merci de régulariser rapidement. — $owner',
 ].join('\n');
 
@@ -456,6 +457,11 @@ class _GroupScreenState extends State<GroupScreen> {
         actions: [
           if (g != null && !g.isLegacy) ...[
             IconButton(
+              tooltip: 'Règlement',
+              icon: const Icon(Icons.gavel_outlined),
+              onPressed: () => _push(RulesScreen(group: g)),
+            ),
+            IconButton(
               tooltip: 'Historique',
               icon: const Icon(Icons.history),
               onPressed: () => _push(GroupEventsScreen(group: g)),
@@ -495,7 +501,19 @@ class _GroupScreenState extends State<GroupScreen> {
                     ),
                 ],
               )
-            else if (g.memberById(Api.uid) != null)
+            else ...[
+              if ((d?.business?.contactPhone ?? '').isNotEmpty)
+                IconButton(
+                  tooltip: 'Écrire au tontinier',
+                  icon: const Icon(Icons.chat_outlined),
+                  onPressed: () => openWhatsApp(
+                    context,
+                    d!.business!.contactPhone,
+                    'Bonjour, j\'ai une question sur le groupe « ${g.name} ».',
+                  ),
+                ),
+            ],
+            if (!isOwner && g.memberById(Api.uid) != null)
               IconButton(
                 tooltip: 'Mon relevé PDF',
                 icon: const Icon(Icons.picture_as_pdf_outlined),
@@ -639,7 +657,7 @@ class _GroupScreenState extends State<GroupScreen> {
                 'Participants',
                 '${g.joinedCount} / ${g.memberCount}',
                 caption: g.hasPenalty
-                    ? 'pénalité ${money(g.penaltyAmount)}'
+                    ? 'pénalité ${penaltyShort(g)}'
                     : 'commission ${commissionLabel(g)}',
               ),
             ]),
@@ -659,12 +677,88 @@ class _GroupScreenState extends State<GroupScreen> {
     ),
   );
 
+  /// Règlement à accepter (participant) ou suivi des acceptations
+  /// (tontinier), avant le démarrage.
+  List<Widget> _acceptance(Group g, bool isOwner) {
+    if (!g.needsAcceptance || g.isStarted) return const [];
+    final wait = paymentStatusColor(PaymentStatus.pending);
+    final good = paymentStatusColor(PaymentStatus.approved);
+    if (!isOwner) {
+      if (!g.memberIds.contains(Api.uid)) return const [];
+      return [
+        g.hasAccepted(Api.uid)
+            ? StatusCard(
+                icon: Icons.verified_outlined,
+                title: 'Règlement accepté',
+                message: 'Vous avez accepté les conditions du tontinier.',
+                color: good,
+                onTap: () => _push(RulesScreen(group: g)),
+              )
+            : StatusCard(
+                icon: Icons.gavel_outlined,
+                title: 'Règlement à accepter',
+                message:
+                    'Lisez les conditions fixées par le tontinier (cotisations, '
+                    'pénalités, règles) et acceptez-les : la tontine ne peut '
+                    'pas démarrer sans votre accord.',
+                color: wait,
+                children: [
+                  const SizedBox(height: 12),
+                  FilledButton.icon(
+                    onPressed: () => _push(RulesScreen(group: g)),
+                    icon: const Icon(Icons.how_to_reg_outlined),
+                    label: const Text('Lire et accepter le règlement'),
+                  ),
+                ],
+              ),
+      ];
+    }
+    final total = g.memberIds.length;
+    final pending = g.pendingAcceptance;
+    return [
+      StatusCard(
+        icon: pending.isEmpty ? Icons.verified_outlined : Icons.gavel_outlined,
+        title:
+            'Règlement accepté par ${total - g.pendingAcceptanceCount} / '
+            '$total',
+        message: pending.isEmpty
+            ? 'Tous les participants avec l\'application ont accepté le '
+                  'règlement.'
+            : 'En attente : ${pending.map((m) => m.name).join(', ')}. La '
+                  'tontine ne pourra démarrer qu\'après leur accord.',
+        color: pending.isEmpty ? good : wait,
+        onTap: () => _push(RulesScreen(group: g)),
+        children: [
+          if (pending.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            for (final m in pending)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  onPressed: () => openWhatsApp(
+                    context,
+                    m.profile.phone,
+                    'Bonjour ${m.name}, merci d\'ouvrir COTIZI et d\'accepter le '
+                    'règlement du groupe « ${g.name} » pour que la tontine '
+                    'puisse démarrer.',
+                  ),
+                  icon: const Icon(Icons.chat_outlined, size: 18),
+                  label: Text('Rappeler ${m.name}'),
+                ),
+              ),
+          ],
+        ],
+      ),
+    ];
+  }
+
   // ------------------------------------------------------- Inscriptions
 
   List<Widget> _recruiting(Group g, bool isOwner) {
     final full = g.joinedCount >= g.memberCount;
     if (!isOwner) {
       return [
+        ..._acceptance(g, false),
         _Notice(
           icon: Icons.hourglass_top,
           text: full
@@ -678,6 +772,7 @@ class _GroupScreenState extends State<GroupScreen> {
     }
     return [
       const SizedBox(height: 4),
+      ..._acceptance(g, true),
       InviteCodeCard(
         code: g.inviteCode,
         hint:
@@ -741,6 +836,7 @@ class _GroupScreenState extends State<GroupScreen> {
     final me = g.memberById(Api.uid);
     if (isOwner) {
       return [
+        ..._acceptance(g, true),
         _Notice(
           icon: Icons.casino_outlined,
           text:
@@ -771,6 +867,7 @@ class _GroupScreenState extends State<GroupScreen> {
     if (me != null && me.drawPosition == null) {
       return [
         const SizedBox(height: 4),
+        ..._acceptance(g, false),
         Card(
           color: Theme.of(context).colorScheme.primaryContainer,
           child: Padding(
@@ -797,6 +894,7 @@ class _GroupScreenState extends State<GroupScreen> {
       ];
     }
     return [
+      ..._acceptance(g, false),
       _Notice(
         icon: Icons.casino_outlined,
         text:
@@ -811,18 +909,23 @@ class _GroupScreenState extends State<GroupScreen> {
   List<Widget> _ready(Group g, bool isOwner) {
     final me = g.memberById(Api.uid);
     return [
+      ..._acceptance(g, isOwner),
       if (isOwner) ...[
         StatusCard(
           icon: Icons.flag_outlined,
           title: 'Prête à démarrer',
-          message:
-              'L\'ordre des remises est fixé. Démarrez la tontine pour figer '
-              'les dates et ouvrir les paiements.',
+          message: g.allAccepted
+              ? 'L\'ordre des remises est fixé. Démarrez la tontine pour figer '
+                    'les dates et ouvrir les paiements.'
+              : 'L\'ordre des remises est fixé. La tontine pourra démarrer '
+                    'quand tous les participants auront accepté le règlement.',
           color: Theme.of(context).colorScheme.primary,
           children: [
             const SizedBox(height: 12),
             FilledButton.icon(
-              onPressed: _busy ? null : () => _push(StartGroupScreen(group: g)),
+              onPressed: _busy || !g.allAccepted
+                  ? null
+                  : () => _push(StartGroupScreen(group: g)),
               icon: const Icon(Icons.play_arrow),
               label: const Text('Démarrer la tontine'),
             ),
@@ -1116,14 +1219,23 @@ class _GroupScreenState extends State<GroupScreen> {
                   label: Text('Remettre la cagnotte à ${b.name}'),
                 )
               else ...[
-                LockNotice(
-                  color: bad,
-                  title: 'Remise impossible pour l\'instant',
-                  text:
-                      'Il manque ${money(missing)}. La remise se débloque dès '
-                      'que toute la collecte est validée.'
-                      '${reached ? ' La date de remise est atteinte : relancez les retardataires.' : ''}',
-                ),
+                reached
+                    ? LockNotice(
+                        color: bad,
+                        title: 'Remise impossible pour l\'instant',
+                        text:
+                            'La date de remise est atteinte mais il manque '
+                            '${money(missing)}. La remise se débloque dès que '
+                            'toute la collecte est validée.',
+                      )
+                    : LockNotice(
+                        color: theme.colorScheme.onSurfaceVariant,
+                        title: 'Collecte en cours',
+                        text:
+                            'La remise sera possible quand toutes les '
+                            'cotisations de cette cagnotte seront payées '
+                            '(encore ${money(missing)} à collecter).',
+                      ),
                 const SizedBox(height: 8),
                 FilledButton.icon(
                   onPressed: null,
@@ -1148,18 +1260,20 @@ class _GroupScreenState extends State<GroupScreen> {
     );
   }
 
-  /// Ce qui manque pour remettre la cagnotte en cours, avec relance.
+  /// Participants en retard pour la cagnotte en cours (cotisations déjà
+  /// dues, aujourd'hui compris, mais pas déclarées), avec relance.
   List<Widget> _shortfallSection(_GroupData d) {
     final g = d.group;
     final pot = g.currentPot;
     if (g.isPotComplete(pot)) return const [];
-    final list = g.shortfallsFor(pot);
+    final list = g.lateFor(pot);
+    if (list.isEmpty) return const [];
     final owner = ownerLabel(g, d.business);
     final bad = paymentStatusColor(PaymentStatus.rejected);
     final reachable = list.where((f) => !f.member.managed).toList();
     return [
       SectionTitle(
-        'Ce qui manque',
+        'En retard pour cette cagnotte',
         trailing: Text(
           '${list.length} participant${list.length > 1 ? 's' : ''}',
           style: Theme.of(context).textTheme.bodySmall,
@@ -1181,8 +1295,8 @@ class _GroupScreenState extends State<GroupScreen> {
                 ),
                 title: Text(f.member.name),
                 subtitle: Text(
-                  '${contributionsLabel(f.missing)} · ${money(f.amount)}'
-                  '${f.pending > 0 ? ' · ${f.pending} à valider' : ''}'
+                  '${contributionsLabel(f.late)} en retard · '
+                  '${money(f.late * g.contributionAmount)}'
                   '${f.member.managed ? ' · sans appli' : ''}',
                   style: TextStyle(color: bad, fontWeight: FontWeight.w600),
                 ),
@@ -1518,6 +1632,8 @@ class _GroupScreenState extends State<GroupScreen> {
             subtitle: Text(
               m.managed
                   ? '${m.profile.phone} · sans application'
+                  : g.needsAcceptance && !g.isStarted
+                  ? '${m.profile.phone} · ${g.hasAccepted(m.userId) ? 'règlement accepté' : 'règlement à accepter'}'
                   : m.profile.phone,
             ),
             trailing: isOwner && g.status == GroupStatus.recruiting

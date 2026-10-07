@@ -20,12 +20,16 @@ tontines, puis invitent leurs **clients**, qui ne font que participer.
 - Ensuite, il faut un **abonnement** pour créer de nouvelles tontines, groupes et
   carnets. Sans abonnement, les groupes et carnets en cours **continuent** : le
   tontinier peut toujours valider ou refuser les paiements de ses clients.
-- Le tontinier paie par Mobile Money au numéro affiché dans
-  **Profil → Mon abonnement** (prix et numéro réglés par l'administrateur), puis
-  prévient sur WhatsApp.
-- L'**administrateur** de COTIZI (Profil → Administration) voit tous les
-  tontiniers, prolonge l'abonnement de 1, 3 ou 12 mois (à partir de la fin en
-  cours, sinon d'aujourd'hui) ou l'arrête. Il n'a pas besoin d'abonnement.
+- Dans **Profil → Mon abonnement**, le tontinier choisit la durée (1, 3 ou 12
+  mois) et appuie sur **« Demander mon abonnement sur WhatsApp »** : sa demande
+  est enregistrée et WhatsApp s'ouvre vers COTIZI. Il paie par Mobile Money au
+  numéro indiqué ; dès réception, l'administrateur **active** l'abonnement.
+- L'**administrateur** de COTIZI (Profil → Administration) voit les
+  **demandes d'abonnement** (bouton « Paiement reçu : activer ») et tous les
+  tontiniers ; il prolonge l'abonnement de 1, 3 ou 12 mois (à partir de la fin
+  en cours, sinon d'aujourd'hui) ou l'arrête, et règle le prix, le numéro
+  Mobile Money et le WhatsApp de l'assistance. Il n'a pas besoin
+  d'abonnement.
 
 ## Profil pro du tontinier
 
@@ -46,12 +50,20 @@ tontines, puis invitent leurs **clients**, qui ne font que participer.
    - la **durée de collecte** avant chaque remise (ex. 30 jours = 30 cotisations) ;
    - l'**ordre des remises** : **tirage au sort** ou **ordre fixé** par le tontinier ;
    - sa **commission** (pourcentage ou montant fixe), **retenue sur chaque cagnotte** ;
-   - une **pénalité de retard** facultative (montant par cotisation en retard,
-     après un nombre de jours de tolérance) ; elle revient au tontinier ;
+   - une **pénalité de retard** facultative : un **montant fixe** ou un
+     **pourcentage du montant dû** par cotisation en retard, appliquée après le
+     nombre de jours de retard choisi (ex. 10 % après 2 jours) ; elle revient
+     au tontinier ;
+   - ses **règles** (texte libre, facultatif) ;
    - la **date de début** et la **date de la 1re remise** prévues. La **date de
      fin** (dernière remise) est calculée et affichée.
-3. Tant que la tontine n'a pas démarré, le tontinier peut **modifier** le groupe,
-   **retirer** un participant ou **supprimer** le groupe.
+3. Ces conditions et ces règles forment le **règlement du groupe**. Chaque
+   participant avec l'application doit **l'accepter** (bouton « Lire et
+   accepter le règlement ») ; le tontinier se porte garant des participants sans
+   application. **La tontine ne peut pas démarrer** tant que tous n'ont pas
+   accepté. Tant que la tontine n'a pas démarré, le tontinier peut **modifier**
+   le groupe (si les conditions ou les règles changent, chacun doit accepter de
+   nouveau), **retirer** un participant ou **supprimer** le groupe.
 4. Le groupe reçoit un **lien / code d'invitation** que le tontinier partage.
    Pour un participant **sans téléphone**, le tontinier l'ajoute avec son nom et
    son numéro (« Ajouter un participant sans application ») : il paie au
@@ -83,16 +95,18 @@ tontines, puis invitent leurs **clients**, qui ne font que participer.
 9. Le tontinier peut aussi **encaisser** lui-même un paiement reçu (espèces ou
    Mobile Money) pour un participant : il est validé directement et un reçu est
    créé.
-10. **« Vous êtes à jour »** : toutes les cotisations arrivées à échéance sont
-    déclarées. Sinon l'accueil affiche le nombre de cotisations **en retard**, le
+10. **« Vous êtes à jour »** : toutes les cotisations arrivées à échéance
+    (celle du jour comprise) sont déclarées. Un participant n'est **en retard**
+    que pour les cotisations déjà dues et non déclarées : les cotisations à
+    venir de la cagnotte ne comptent pas comme un retard. Sinon l'accueil affiche le nombre de cotisations **en retard**, le
     montant et les pénalités. Le tontinier voit qui est en retard et peut
     **relancer sur WhatsApp**.
 11. Les cotisations comptent dans l'ordre : les N premières pour la cagnotte n°1,
     les N suivantes pour la n°2, etc.
 12. **Une cagnotte ne peut être remise que lorsque sa collecte est complète**
     (toutes les cotisations de tous les participants pour cette cagnotte sont
-    validées). Avant, le bouton de remise est verrouillé et l'écran montre
-    **ce qui manque** : qui doit encore combien, avec un bouton pour relancer
+    validées). Avant, le bouton de remise est verrouillé ; l'écran montre les
+    **participants en retard** pour cette cagnotte, avec un bouton pour relancer
     chacun sur WhatsApp, ou tout le groupe en un message. Si un participant ne
     paie pas, le tontinier peut **encaisser pour lui** (il avance l'argent) pour
     débloquer la remise. Le serveur vérifie aussi cette règle.
@@ -109,6 +123,13 @@ tontines, puis invitent leurs **clients**, qui ne font que participer.
     participant voit les actions générales et celles qui le concernent.
 15. **Relevés PDF** : le tontinier partage le bilan d'un groupe ou le relevé d'un
     participant ; le participant peut partager son propre relevé.
+
+## Aide et assistance
+
+- **Aide et assistance** (bouton « ? » de l'accueil, ou Profil) : explications
+  et bouton pour écrire à l'**assistance COTIZI sur WhatsApp** (numéro réglé
+  par l'administrateur). Un client peut aussi **écrire à son tontinier** depuis
+  la page de son groupe.
 
 ## Rappels sur le téléphone
 

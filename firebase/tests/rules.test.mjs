@@ -993,3 +993,103 @@ test('version 2 : ordre, places réservées, démarrage, espèces, encaissement,
   await t.test('le tontinier encaisse des cases', () => assertSucceeds(recordCases(T)));
 });
 
+
+test('version 2.2 : règlement accepté, pénalité en pourcentage, demandes d\'abonnement', async (t) => {
+  const T = db('t');
+  const tontine = T.collection('tontines').doc();
+  await assertSucceeds(tontine.set({
+    ownerId: 't', ownerName: 'Tontinier', name: 'Tontine du marché', type: 'cagnotte', createdAt: now(),
+  }));
+  const terms = {
+    memberCount: 2, orderMode: 'manual', contributionAmount: 5000,
+    penaltyType: 'percent', penaltyAmount: 10, penaltyGraceDays: 2,
+    rulesText: 'Cotisation à payer avant 18 h.', termsVersion: 1, accepted: {},
+  };
+  await t.test('pénalité de plus de 100 % : refusé', () =>
+    assertFails(createGroup(T, tontine.id, 'PCT234', { ...terms, penaltyAmount: 150 })));
+  await t.test('règlement trop long : refusé', () =>
+    assertFails(createGroup(T, tontine.id, 'PCT235', { ...terms, rulesText: 'x'.repeat(2001) })));
+  await t.test('groupe créé avec des accords déjà remplis : refusé', () =>
+    assertFails(createGroup(T, tontine.id, 'PCT236', { ...terms, accepted: { a: 1 } })));
+  const R = await createGroup(T, tontine.id, 'REG222', terms);
+  await assertSucceeds(joinGroup('a', R));
+  await assertSucceeds(joinGroup('b', R));
+  const accept = (id, version, who = id) =>
+    db(who).doc(`groups/${R}`).update({ [`accepted.${id}`]: version });
+
+  await t.test('accepter à la place d\'un autre : refusé', () => assertFails(accept('b', 1, 'a')));
+  await t.test('accepter une autre version : refusé', () => assertFails(accept('a', 2)));
+  await t.test('une personne extérieure accepte : refusé', () => assertFails(accept('c', 1)));
+  await assertSucceeds(accept('a', 1));
+  await t.test('changer les montants sans nouvelle version : refusé', () =>
+    assertFails(T.doc(`groups/${R}`).update({ contributionAmount: 6000 })));
+  await t.test('changer le règlement sans nouvelle version : refusé', () =>
+    assertFails(T.doc(`groups/${R}`).update({ rulesText: 'Autre règle' })));
+  await assertSucceeds(T.doc(`groups/${R}`).update({ contributionAmount: 6000, termsVersion: 2 }));
+  await t.test('changer seulement le nom : même version', () =>
+    assertSucceeds(T.doc(`groups/${R}`).update({ name: 'Groupe R' })));
+
+  // Ordre fixé puis démarrage
+  const order = T.batch();
+  order.update(T.doc(`groups/${R}/members/a`), { drawPosition: 1 });
+  order.update(T.doc(`groups/${R}/members/b`), { drawPosition: 2 });
+  order.update(T.doc(`groups/${R}`), { status: 'drawing', drawnCount: 2 });
+  await assertSucceeds(order.commit());
+  const start = () => T.doc(`groups/${R}`).update({
+    status: 'active', startDate: '2026-10-12', firstPayoutDate: '2026-10-13', startedAt: now(),
+    levels: { 0: 2 },
+  });
+  await t.test('démarrer sans l\'accord de tous : refusé', () => assertFails(start()));
+  await assertSucceeds(accept('b', 2));
+  await t.test('démarrer avec un accord d\'une ancienne version : refusé', () => assertFails(start()));
+  await assertSucceeds(accept('a', 2));
+  await assertSucceeds(start());
+  await t.test('accepter après le démarrage : refusé', () => assertFails(accept('a', 3)));
+
+  // Pénalité de 10 % de la cotisation (6 000 F) : 600 F au plus par cotisation
+  await t.test('pénalité au-delà de 10 % : refusé', () =>
+    assertFails(declare('a', R, 1, { method: 'cash', penalty: 700 })));
+  await assertSucceeds(declare('a', R, 1, { method: 'cash', penalty: 600 }));
+
+  // Retrait d'un participant : son accord est effacé, pas celui des autres
+  const Q = await createGroup(T, tontine.id, 'RET222', { ...terms, memberCount: 3 });
+  await assertSucceeds(joinGroup('a', Q));
+  await assertSucceeds(joinGroup('b', Q));
+  await assertSucceeds(db('a').doc(`groups/${Q}`).update({ 'accepted.a': 1 }));
+  await assertSucceeds(db('b').doc(`groups/${Q}`).update({ 'accepted.b': 1 }));
+  const remove = (who, erase) => {
+    const batch = T.batch();
+    batch.delete(T.doc(`groups/${Q}/members/${who}`));
+    batch.update(T.doc(`groups/${Q}`), {
+      joinedCount: firebase.firestore.FieldValue.increment(-1),
+      memberIds: firebase.firestore.FieldValue.arrayRemove(who),
+      [`accepted.${erase}`]: firebase.firestore.FieldValue.delete(),
+    });
+    return batch.commit();
+  };
+  await t.test('effacer l\'accord d\'un autre participant : refusé', () => assertFails(remove('a', 'b')));
+  await assertSucceeds(remove('a', 'a'));
+
+  // Demandes d'abonnement
+  const request = (id, fields = {}) => db(id).doc(`subscriptionRequests/${id}`).set({
+    fullName: people[id].name, phone: people[id].phone, months: 3, amount: 15000,
+    requestedAt: now(), ...fields,
+  });
+  await assertSucceeds(request('t'));
+  await t.test('demande pour une durée non proposée : refusé', () =>
+    assertFails(request('t', { months: 2 })));
+  await t.test('demande avec un autre nom : refusé', () =>
+    assertFails(request('t', { fullName: 'Autre' })));
+  await t.test('un client demande un abonnement : refusé', () => assertFails(request('a')));
+  await t.test('lire la demande d\'un autre : refusé', () =>
+    assertFails(db('b').doc('subscriptionRequests/t').get()));
+  const admin = env.authenticatedContext('adm', { email: '22997000003@phone.cotizi.app' }).firestore();
+  await t.test('l\'administrateur voit les demandes', () =>
+    assertSucceeds(admin.collection('subscriptionRequests').get()));
+  await t.test('l\'administrateur supprime une demande traitée', () =>
+    assertSucceeds(admin.doc('subscriptionRequests/t').delete()));
+  await t.test('numéro d\'assistance dans les réglages', () =>
+    assertSucceeds(admin.doc('settings/subscription').set({
+      monthlyPrice: 5000, paymentPhone: '+22901000000', supportPhone: '+22901000001',
+    })));
+});

@@ -134,6 +134,9 @@ service cloud.firestore {
         && g.orderMode in ['draw', 'manual']
         && g.penaltyAmount is int && g.penaltyAmount >= 0 && g.penaltyAmount <= 1000000
         && g.penaltyGraceDays is int && g.penaltyGraceDays >= 0 && g.penaltyGraceDays <= 30
+        && g.get('penaltyType', 'fixed') in ['fixed', 'percent']
+        && (g.get('penaltyType', 'fixed') == 'fixed' || g.penaltyAmount <= 100)
+        && g.get('rulesText', '') is string && g.get('rulesText', '').size() <= 2000
         && g.commissionValue is number && g.commissionValue >= 0
         && ((g.commissionType == 'percent' && g.commissionValue <= 100)
           || (g.commissionType == 'fixed'
@@ -172,6 +175,26 @@ service cloud.firestore {
       return !('levels' in g) || g.levels.keys().hasOnly(levelsFrom(pot));
     }
 
+    // Règlement du groupe : une modification des conditions (montants,
+    // pénalités, règles…) crée une nouvelle version, à accepter de nouveau.
+    function termsVersionOk() {
+      return !('termsVersion' in existing())
+        || (incoming().termsVersion in [existing().termsVersion, existing().termsVersion + 1]
+          && (incoming().termsVersion == existing().termsVersion + 1
+            || !incoming().diff(existing()).affectedKeys().hasAny(['memberCount',
+                'contributionAmount', 'frequency', 'contributionsPerPot', 'orderMode',
+                'penaltyAmount', 'penaltyGraceDays', 'penaltyType', 'commissionType',
+                'commissionValue', 'rulesText'])));
+    }
+
+    // Tous les participants avec l'application ont accepté le règlement en
+    // vigueur (ceux sans application : le tontinier s'en porte garant)
+    function allAccepted(g) {
+      return !('termsVersion' in g)
+        || (g.accepted.keys().hasAll(g.memberIds)
+          && g.accepted.values().hasOnly([g.termsVersion]));
+    }
+
     function validNote() {
       return incoming().get('note', null) == null
         || (incoming().note is string && incoming().note.size() <= 200);
@@ -182,7 +205,13 @@ service cloud.firestore {
       return isV2(g)
         && incoming().count is int && incoming().count >= 1
         && incoming().penalty is int && incoming().penalty >= 0
-        && incoming().penalty <= incoming().count * g.penaltyAmount
+        // Pénalité par cotisation : montant fixe, ou pourcentage de la
+        // cotisation due (arrondi)
+        && ((g.get('penaltyType', 'fixed') == 'fixed'
+            && incoming().penalty <= incoming().count * g.penaltyAmount)
+          || (g.get('penaltyType', 'fixed') == 'percent'
+            && incoming().penalty
+              <= incoming().count * (g.contributionAmount * g.penaltyAmount / 100 + 1)))
         && incoming().amount == incoming().count * g.contributionAmount + incoming().penalty
         && validNote();
     }
@@ -255,10 +284,28 @@ service cloud.firestore {
     match /settings/{name} {
       allow read: if signedIn();
       allow write: if isAdmin() && name == 'subscription'
-        && incoming().keys().hasOnly(['monthlyPrice', 'paymentPhone'])
+        && incoming().keys().hasOnly(['monthlyPrice', 'paymentPhone', 'supportPhone'])
         && incoming().monthlyPrice is int
         && incoming().monthlyPrice >= 0 && incoming().monthlyPrice <= 10000000
-        && incoming().paymentPhone is string && incoming().paymentPhone.size() <= 30;
+        && incoming().paymentPhone is string && incoming().paymentPhone.size() <= 30
+        && incoming().get('supportPhone', '') is string
+        && incoming().get('supportPhone', '').size() <= 30;
+    }
+
+    // Demande d'abonnement d'un tontinier : il écrit à COTIZI sur WhatsApp,
+    // paie, puis l'administrateur active l'abonnement et supprime la demande.
+    match /subscriptionRequests/{userId} {
+      allow read: if signedIn() && (userId == uid() || isAdmin());
+      allow create, update: if signedIn() && userId == uid()
+        && me().get('role', 'tontinier') == 'tontinier'
+        && incoming().keys().hasOnly(['fullName', 'phone', 'months', 'amount', 'requestedAt'])
+        && incoming().fullName == me().fullName
+        && incoming().phone == me().phone
+        && incoming().months in [1, 3, 12]
+        && incoming().amount is int
+        && incoming().amount >= 0 && incoming().amount <= 200000000
+        && incoming().requestedAt == request.time;
+      allow delete: if signedIn() && (userId == uid() || isAdmin());
     }
 
     // ---------------------------------------------------------- Tontines
@@ -321,7 +368,7 @@ service cloud.firestore {
             'contributionsPerPot', 'firstPayoutDate', 'paidOutCount', 'orderMode',
             'penaltyAmount', 'penaltyGraceDays', 'commissionType', 'commissionValue',
             'inviteCode', 'status', 'joinedCount', 'drawnCount', 'memberIds',
-            'startedAt', 'createdAt'])
+            'startedAt', 'createdAt', 'penaltyType', 'rulesText', 'termsVersion', 'accepted'])
         && incoming().ownerId == uid()
         && canCreate()
         && get(doc('tontines/' + incoming().tontineId)).data.ownerId == uid()
@@ -336,6 +383,9 @@ service cloud.firestore {
         && incoming().paidOutCount == 0
         && incoming().startedAt == null
         && incoming().createdAt == request.time
+        // Règlement : chaque participant devra l'accepter avant le démarrage
+        && (!('termsVersion' in incoming())
+          || (incoming().termsVersion == 1 && incoming().accepted == {}))
         && getAfter(doc('invites/' + incoming().inviteCode)).data.targetId == groupId;
 
       allow update: if signedIn() && isV2(existing()) && (
@@ -344,9 +394,11 @@ service cloud.firestore {
           && existing().status == 'recruiting'
           && changedOnly(['name', 'memberCount', 'contributionAmount', 'frequency',
               'startDate', 'contributionsPerPot', 'firstPayoutDate', 'orderMode',
-              'penaltyAmount', 'penaltyGraceDays', 'commissionType', 'commissionValue'])
+              'penaltyAmount', 'penaltyGraceDays', 'commissionType', 'commissionValue',
+              'penaltyType', 'rulesText', 'termsVersion'])
           && validTerms(incoming())
-          && incoming().memberCount >= existing().joinedCount)
+          && incoming().memberCount >= existing().joinedCount
+          && termsVersionOk())
         // Le tontinier ajoute un participant sans application
         || (existing().ownerId == uid()
           && existing().status == 'recruiting'
@@ -356,10 +408,12 @@ service cloud.firestore {
         // Le tontinier retire un participant pendant les inscriptions
         || (existing().ownerId == uid()
           && existing().status == 'recruiting'
-          && changedOnly(['joinedCount', 'memberIds'])
+          && changedOnly(['joinedCount', 'memberIds', 'accepted'])
           && incoming().joinedCount == existing().joinedCount - 1
           && existing().memberIds.hasAll(incoming().memberIds)
-          && incoming().memberIds.size() >= existing().memberIds.size() - 1)
+          && incoming().memberIds.size() >= existing().memberIds.size() - 1
+          && existing().get('accepted', {}).diff(incoming().get('accepted', {})).affectedKeys()
+            .hasOnly(existing().memberIds.removeAll(incoming().memberIds)))
         // Tirage au sort : le tontinier le lance (groupe complet)
         || (existing().ownerId == uid()
           && existing().orderMode == 'draw'
@@ -386,6 +440,7 @@ service cloud.firestore {
           && existing().status == 'drawing'
           && existing().drawnCount == existing().memberCount
           && changedOnly(['status', 'startDate', 'firstPayoutDate', 'startedAt', 'levels'])
+          && allAccepted(existing())
           && incoming().status == 'active'
           && incoming().startedAt == request.time
           && incoming().levels == {'0': existing().memberCount}
@@ -423,6 +478,13 @@ service cloud.firestore {
           && !(uid() in existing().memberIds)
           && incoming().memberIds == existing().memberIds.concat([uid()])
           && getAfter(memberPath(groupId, uid())).data.get('claimedFrom', '') == managedIdOfMe())
+        // Un participant accepte le règlement en vigueur (avant le démarrage)
+        || ('termsVersion' in existing()
+          && uid() in existing().memberIds
+          && existing().status in ['recruiting', 'drawing']
+          && changedOnly(['accepted'])
+          && existing().accepted.diff(incoming().accepted).affectedKeys().hasOnly([uid()])
+          && incoming().accepted[uid()] == existing().termsVersion)
         // Un participant tire son numéro
         || (uid() in existing().memberIds
           && changedOnly(['drawnCount'])

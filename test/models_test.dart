@@ -415,10 +415,15 @@ void main() {
       expect(late.at, DateTime(2026, 10, 8, 9));
       expect(late.body, contains('2 cotisations en retard'));
       // Cotisation du 8 oct. : rappel le 7 à 18 h
-      final eve = plan.firstWhere((r) => r.title.startsWith('Cotisation demain'));
+      final eve = plan.firstWhere(
+        (r) => r.title.startsWith('Cotisation demain'),
+      );
       expect(eve.at, DateTime(2026, 10, 7, 18));
       expect(eve.body, contains('aussi 2 cotisations en retard'));
-      expect(plan.where((r) => r.title.startsWith('Cotisation demain')).length, 10);
+      expect(
+        plan.where((r) => r.title.startsWith('Cotisation demain')).length,
+        10,
+      );
     });
 
     test('le tontinier : matin de chaque remise', () {
@@ -428,6 +433,59 @@ void main() {
         DateTime(2026, 11, 29, 8),
       ]);
       expect(plan.first.body, contains('collecte est complète'));
+    });
+  });
+
+  group('Version 2.2', () {
+    test('pénalité en pourcentage du montant dû, après 2 jours', () {
+      final g = Group(
+        id: 'g',
+        tontineId: 't',
+        tontineName: 'T',
+        ownerId: 'o',
+        ownerName: 'O',
+        name: 'G',
+        memberCount: 3,
+        contributionAmount: 5000,
+        frequency: Frequency.daily,
+        startDate: DateTime(2026, 10, 1),
+        contributionsPerPot: 10,
+        firstPayoutDate: DateTime(2026, 10, 10),
+        orderMode: OrderMode.draw,
+        penaltyType: PenaltyType.percent,
+        penaltyAmount: 10,
+        penaltyGraceDays: 2,
+        commissionType: CommissionType.percent,
+        commissionValue: 0,
+        inviteCode: 'ABC234',
+        status: GroupStatus.active,
+      );
+      expect(g.penaltyPerContribution, 500);
+      // Le 5 oct. : cotisations des 1er et 2 oct. en retard de plus de 2 jours
+      expect(g.penaltyFor(1, 5, DateTime(2026, 10, 5)), 1000);
+      expect(g.penaltyFor(3, 1, DateTime(2026, 10, 5)), 0);
+    });
+
+    test('retards de la cagnotte : seulement les cotisations déjà dues', () {
+      final g = _group(
+        members: 3,
+        contribution: 5000,
+        frequency: Frequency.daily,
+        start: DateTime(2026, 10, 1),
+        perPot: 30,
+        firstPayout: DateTime(2026, 10, 30),
+        members_: [
+          _member('a', pos: 1, declared: 5, approved: 5),
+          _member('b', pos: 2, declared: 4, approved: 4),
+          _member('c', pos: 3),
+        ],
+      );
+      final today = DateTime(2026, 10, 5); // 5 cotisations dues
+      expect(g.isPotComplete(1), isFalse);
+      final late = g.lateFor(1, today);
+      expect(late.map((f) => f.member.userId), ['c', 'b']);
+      expect(late.first.late, 5);
+      expect(late.last.late, 1);
     });
   });
 }

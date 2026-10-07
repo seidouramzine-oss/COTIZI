@@ -43,6 +43,8 @@ class _GroupFormScreenState extends State<GroupFormScreen> {
   late final _grace = TextEditingController(
     text: '${_g?.penaltyGraceDays ?? 1}',
   );
+  late final _rules = TextEditingController(text: _g?.rulesText ?? '');
+  late PenaltyType _penaltyType = _g?.penaltyType ?? PenaltyType.fixed;
   late Frequency _frequency = _g?.frequency ?? Frequency.daily;
   late CommissionType _commissionType =
       _g?.commissionType ?? CommissionType.percent;
@@ -67,6 +69,7 @@ class _GroupFormScreenState extends State<GroupFormScreen> {
       _commission,
       _penalty,
       _grace,
+      _rules,
     ]) {
       c.dispose();
     }
@@ -104,6 +107,8 @@ class _GroupFormScreenState extends State<GroupFormScreen> {
       orderMode: _orderMode,
       penaltyAmount: _penaltyAmount,
       penaltyGraceDays: _graceDays,
+      penaltyType: _penaltyType,
+      rulesText: _rules.text.trim(),
       commissionType: _commissionType,
       commissionValue: _commissionValue,
       inviteCode: '',
@@ -157,6 +162,8 @@ class _GroupFormScreenState extends State<GroupFormScreen> {
       orderMode: _orderMode,
       penaltyAmount: _penaltyAmount,
       penaltyGraceDays: _graceDays,
+      penaltyType: _penaltyType,
+      rulesText: _rules.text,
       commissionType: _commissionType,
       commissionValue: _commissionValue,
     );
@@ -175,7 +182,7 @@ class _GroupFormScreenState extends State<GroupFormScreen> {
     }
   }
 
-  static const _steps = ['Le groupe', 'Cotisations', 'Remises', 'Dates'];
+  static const _steps = ['Le groupe', 'Cotisations', 'Règles', 'Dates'];
 
   /// Étape affichée (0 à 3). Seuls ses champs sont vérifiés pour continuer.
   int _step = 0;
@@ -356,16 +363,37 @@ class _GroupFormScreenState extends State<GroupFormScreen> {
       onChanged: (v) => setState(() => _withPenalty = v),
     ),
     if (_withPenalty) ...[
+      SegmentedButton<PenaltyType>(
+        segments: const [
+          ButtonSegment(value: PenaltyType.percent, label: Text('Pourcentage')),
+          ButtonSegment(value: PenaltyType.fixed, label: Text('Montant fixe')),
+        ],
+        selected: {_penaltyType},
+        onSelectionChanged: (s) => setState(() => _penaltyType = s.first),
+      ),
+      const SizedBox(height: 12),
       TextFormField(
         controller: _penalty,
         keyboardType: TextInputType.number,
         inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-        decoration: const InputDecoration(
-          labelText: 'Pénalité par cotisation en retard',
-          suffixText: 'FCFA',
+        decoration: InputDecoration(
+          labelText: _penaltyType == PenaltyType.percent
+              ? 'Pénalité (% du montant dû)'
+              : 'Pénalité par cotisation en retard',
+          suffixText: _penaltyType == PenaltyType.percent ? '%' : 'FCFA',
+          helperText:
+              _penaltyType == PenaltyType.percent &&
+                  _contribution > 0 &&
+                  _penaltyAmount > 0
+              ? 'Soit ${money(g.penaltyPerContribution)} par cotisation de '
+                    '${money(_contribution)} payée en retard'
+              : null,
         ),
         validator: (v) {
           final n = parseAmount(v ?? '') ?? 0;
+          if (_penaltyType == PenaltyType.percent) {
+            return n <= 0 || n > 100 ? 'Entre 1 et 100 %' : null;
+          }
           return n <= 0 || n > 1000000 ? 'Indiquez un montant' : null;
         },
       ),
@@ -375,10 +403,12 @@ class _GroupFormScreenState extends State<GroupFormScreen> {
         keyboardType: TextInputType.number,
         inputFormatters: [FilteringTextInputFormatter.digitsOnly],
         decoration: const InputDecoration(
-          labelText: 'Jours de tolérance',
+          labelText: 'Appliquée après combien de jours de retard ?',
           suffixText: 'jours',
           helperText:
-              'Pas de pénalité si la cotisation est payée dans ce délai.',
+              'Ex. 2 : pas de pénalité si la cotisation est payée dans les '
+              '2 jours qui suivent sa date.',
+          helperMaxLines: 2,
         ),
         validator: (v) {
           final n = int.tryParse(v ?? '') ?? -1;
@@ -386,6 +416,28 @@ class _GroupFormScreenState extends State<GroupFormScreen> {
         },
       ),
     ],
+    const SizedBox(height: 20),
+    Text(
+      'Vos règles (facultatif)',
+      style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+    ),
+    const SizedBox(height: 8),
+    TextFormField(
+      controller: _rules,
+      minLines: 3,
+      maxLines: 8,
+      maxLength: 2000,
+      textCapitalization: TextCapitalization.sentences,
+      decoration: const InputDecoration(
+        hintText:
+            'Ex. Les cotisations se paient avant 18 h. En cas d\'abandon, '
+            'les sommes versées sont rendues à la fin de la tontine.',
+        helperText:
+            'Avec les conditions ci-dessus, elles forment le règlement que '
+            'chaque participant devra accepter avant le démarrage.',
+        helperMaxLines: 3,
+      ),
+    ),
   ];
 
   List<Widget> _datesStep(Group g) => [
@@ -665,22 +717,29 @@ class GroupSummary extends StatelessWidget {
               'Total versé par participant',
               money(g.totalContributions * g.contributionAmount),
             ),
-            if (g.hasPenalty)
-              InfoRow(
-                'Pénalité de retard',
-                g.penaltyGraceDays == 0
-                    ? '${money(g.penaltyAmount)} par cotisation, dès le '
-                          'lendemain de l\'échéance'
-                    : '${money(g.penaltyAmount)} par cotisation, après '
-                          '${g.penaltyGraceDays} jour${g.penaltyGraceDays > 1 ? 's' : ''} '
-                          'de tolérance',
-              ),
+            if (g.hasPenalty) InfoRow('Pénalité de retard', penaltyLabel(g)),
+            if (!g.hasPenalty) const InfoRow('Pénalité de retard', 'aucune'),
             InfoRow(
               'Ordre des remises',
               g.orderMode == OrderMode.manual
                   ? 'fixé par le tontinier'
                   : 'tirage au sort',
             ),
+            InfoRow(
+              'Remise de la cagnotte',
+              'quand toute sa collecte est payée',
+            ),
+            if (g.rulesText.isNotEmpty) ...[
+              const Divider(height: 24),
+              Text(
+                'Règles du tontinier',
+                style: theme.textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(g.rulesText, style: theme.textTheme.bodyMedium),
+            ],
           ],
         ),
       ),

@@ -208,6 +208,10 @@ class _StartGroupScreenState extends State<StartGroupScreen> {
       orderMode: g.orderMode,
       penaltyAmount: g.penaltyAmount,
       penaltyGraceDays: g.penaltyGraceDays,
+      penaltyType: g.penaltyType,
+      rulesText: g.rulesText,
+      termsVersion: g.termsVersion,
+      accepted: g.accepted,
       commissionType: g.commissionType,
       commissionValue: g.commissionValue,
       inviteCode: g.inviteCode,
@@ -329,6 +333,16 @@ class _StartGroupScreenState extends State<StartGroupScreen> {
                       '${g.memberCount} / ${g.memberCount} participants'
                           '${managed > 0 ? ', dont $managed sans appli' : ''}',
                     ),
+                    if (g.needsAcceptance)
+                      _check(
+                        g.allAccepted,
+                        'Règlement accepté par tous',
+                        g.allAccepted
+                            ? '${g.memberIds.length} / ${g.memberIds.length} '
+                                  'participants avec l\'application'
+                            : 'En attente : '
+                                  '${g.pendingAcceptance.map((m) => m.name).join(', ')}',
+                      ),
                     _check(
                       true,
                       'Ordre des remises fixé',
@@ -409,7 +423,7 @@ class _StartGroupScreenState extends State<StartGroupScreen> {
           ),
           const SizedBox(height: 16),
           FilledButton.icon(
-            onPressed: _busy ? null : _launch,
+            onPressed: _busy || !g.allAccepted ? null : _launch,
             icon: const Icon(Icons.play_arrow),
             label: const Text('Démarrer la tontine'),
           ),
@@ -664,6 +678,135 @@ class _PayoutSheetState extends State<PayoutSheet> {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// Règlement du groupe : conditions fixées par le tontinier et ses règles.
+/// Chaque participant l'accepte avant le démarrage.
+class RulesScreen extends StatefulWidget {
+  const RulesScreen({super.key, required this.group});
+
+  final Group group;
+
+  @override
+  State<RulesScreen> createState() => _RulesScreenState();
+}
+
+class _RulesScreenState extends State<RulesScreen> {
+  bool _read = false;
+  bool _busy = false;
+
+  Future<void> _accept() async {
+    setState(() => _busy = true);
+    try {
+      await Api.acceptRules(widget.group);
+      if (!mounted) return;
+      showInfo(context, 'Règlement accepté');
+      Navigator.pop(context, true);
+    } catch (e) {
+      if (mounted) showError(context, e);
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final g = widget.group;
+    final theme = Theme.of(context);
+    final isOwner = g.ownerId == Api.uid;
+    final canAccept =
+        !isOwner &&
+        g.needsAcceptance &&
+        g.memberIds.contains(Api.uid) &&
+        !g.isStarted;
+    final accepted = g.hasAccepted(Api.uid);
+    final good = paymentStatusColor(PaymentStatus.approved);
+    final wait = paymentStatusColor(PaymentStatus.pending);
+    return Scaffold(
+      appBar: AppBar(title: const Text('Règlement du groupe')),
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
+        children: [
+          Text(
+            isOwner
+                ? 'Voici le règlement que chaque participant doit accepter '
+                      'avant le démarrage. Si vous le modifiez, chacun devra '
+                      'l\'accepter de nouveau.'
+                : 'Voici les conditions fixées par ${g.ownerName} pour le '
+                      'groupe « ${g.name} ». Lisez-les avant d\'accepter.',
+            style: theme.textTheme.bodyMedium,
+          ),
+          const SizedBox(height: 8),
+          GroupSummary(g),
+          if (isOwner && g.needsAcceptance) ...[
+            SectionTitle(
+              'Acceptation (${g.memberIds.length - g.pendingAcceptanceCount} / '
+              '${g.memberIds.length})',
+            ),
+            Card(
+              child: Column(
+                children: [
+                  for (final m in g.members)
+                    ListTile(
+                      dense: true,
+                      leading: Icon(
+                        m.managed || g.hasAccepted(m.userId)
+                            ? Icons.check_circle
+                            : Icons.schedule,
+                        color: m.managed || g.hasAccepted(m.userId)
+                            ? good
+                            : wait,
+                      ),
+                      title: Text(m.name),
+                      subtitle: Text(
+                        m.managed
+                            ? 'Sans application : vous vous en portez garant'
+                            : g.hasAccepted(m.userId)
+                            ? 'A accepté'
+                            : 'Pas encore accepté',
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
+          if (canAccept) ...[
+            const SizedBox(height: 12),
+            if (accepted)
+              StatusCard(
+                icon: Icons.verified_outlined,
+                title: 'Vous avez accepté ce règlement',
+                color: good,
+              )
+            else ...[
+              CheckboxListTile(
+                value: _read,
+                onChanged: (v) => setState(() => _read = v ?? false),
+                controlAffinity: ListTileControlAffinity.leading,
+                contentPadding: EdgeInsets.zero,
+                title: const Text(
+                  'J\'ai lu le règlement et je l\'accepte',
+                  style: TextStyle(fontWeight: FontWeight.w600),
+                ),
+              ),
+              const SizedBox(height: 8),
+              FilledButton.icon(
+                onPressed: !_read || _busy ? null : _accept,
+                icon: const Icon(Icons.how_to_reg_outlined),
+                label: const Text('Accepter le règlement'),
+              ),
+            ],
+          ] else if (!isOwner && g.needsAcceptance && accepted) ...[
+            const SizedBox(height: 12),
+            StatusCard(
+              icon: Icons.verified_outlined,
+              title: 'Vous avez accepté ce règlement',
+              color: good,
+            ),
+          ],
+        ],
       ),
     );
   }

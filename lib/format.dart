@@ -99,6 +99,25 @@ String paymentStatusLabel(PaymentStatus s) => switch (s) {
   PaymentStatus.rejected => 'Refusé',
 };
 
+/// Pénalité de retard : « 10 % du montant dû (500 FCFA par cotisation),
+/// après 2 jours de retard ».
+String penaltyLabel(Group g) {
+  final amount = g.penaltyType == PenaltyType.percent
+      ? '${g.penaltyAmount} % du montant dû '
+            '(${money(g.penaltyPerContribution)} par cotisation)'
+      : '${money(g.penaltyAmount)} par cotisation';
+  final when = g.penaltyGraceDays == 0
+      ? 'dès le lendemain de l\'échéance'
+      : 'après ${g.penaltyGraceDays} jour${g.penaltyGraceDays > 1 ? 's' : ''} '
+            'de retard';
+  return '$amount, $when';
+}
+
+/// Montant court de la pénalité (« 10 % » ou « 500 FCFA »).
+String penaltyShort(Group g) => g.penaltyType == PenaltyType.percent
+    ? '${g.penaltyAmount} %'
+    : money(g.penaltyAmount);
+
 /// Couleurs d'état (lisibles en texte sur fond clair) : orange = en
 /// attente, vert = validé / à jour, rouge = refusé / bloqué.
 Color paymentStatusColor(PaymentStatus s) => switch (s) {
