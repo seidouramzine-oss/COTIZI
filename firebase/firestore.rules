@@ -11,13 +11,16 @@ rules_version = '2';
 //   tontines/{id}                            tontine (cagnotte ou carnet)
 //   invites/{code}                           code d'invitation -> groupe ou carnet
 //   groups/{id}                              groupe d'une tontine à cagnotte
-//   groups/{id}/members/{uid}                membre (numéro tiré, cotisations payées)
-//   groups/{id}/draws/{uid}                  numéro attribué au lancement du tirage
+//   groups/{id}/members/{uid | p<numéro>}    participant (rang, cotisations, pénalités) ;
+//                                            p<numéro> : participant sans application
+//   groups/{id}/draws/{id}                   rang attribué au lancement du tirage
 //   groups/{id}/payments/{id}                paiement d'une ou plusieurs cotisations
 //   groups/{id}/payouts/{n}                  remise de la cagnotte n au bénéficiaire
+//   groups/{id}/events/{id}                  journal du groupe
 //   carnets/{id}                             carnet de 31 cases
 //   carnets/{id}/payments/{id}               paiement de cases
 //   proofs/{id}                              capture d'écran (image compressée)
+//   businesses/{uid}                         profil pro du tontinier (nom, logo, numéros)
 service cloud.firestore {
   match /databases/{database}/documents {
 
@@ -97,20 +100,69 @@ service cloud.firestore {
       return uid() in groupData(groupId).memberIds;
     }
 
-    // Groupe « en cours » : tout le monde a tiré son numéro
-    function isActive(g) {
-      return g.status == 'drawing' && g.drawnCount == g.memberCount;
-    }
-
-    // Groupe créé à partir de la version 1.4 (collecte sur plusieurs
-    // cotisations). Les anciens groupes sont en lecture seule.
+    // Groupe de la version 2 (ordre des remises, démarrage, pénalités).
+    // Les groupes plus anciens sont en lecture seule.
     function isV2(g) {
-      return 'contributionsPerPot' in g;
+      return 'orderMode' in g;
     }
 
-    // Cotisations que chaque membre verse en tout
+    // Groupe démarré par le tontinier : cotisations et remises
+    function isStarted(g) {
+      return isV2(g) && g.status == 'active';
+    }
+
+    // Cotisations que chaque participant verse en tout
     function totalOf(g) {
       return g.memberCount * g.contributionsPerPot;
+    }
+
+    function isDate(v) {
+      return v is string && v.matches('[0-9]{4}-[0-9]{2}-[0-9]{2}');
+    }
+
+    // Conditions d'un groupe (création et modification avant démarrage)
+    function validTerms(g) {
+      return isText(g.name, 1, 80)
+        && g.memberCount is int && g.memberCount >= 2 && g.memberCount <= 100
+        && g.contributionAmount is int && g.contributionAmount > 0
+        && g.frequency in ['daily', 'weekly', 'biweekly', 'monthly']
+        && isDate(g.startDate)
+        && g.contributionsPerPot is int
+        && g.contributionsPerPot >= 1 && g.contributionsPerPot <= 366
+        && isDate(g.firstPayoutDate)
+        && g.firstPayoutDate >= g.startDate
+        && g.orderMode in ['draw', 'manual']
+        && g.penaltyAmount is int && g.penaltyAmount >= 0 && g.penaltyAmount <= 1000000
+        && g.penaltyGraceDays is int && g.penaltyGraceDays >= 0 && g.penaltyGraceDays <= 30
+        && g.commissionValue is number && g.commissionValue >= 0
+        && ((g.commissionType == 'percent' && g.commissionValue <= 100)
+          || (g.commissionType == 'fixed'
+            && g.commissionValue <= g.memberCount * g.contributionsPerPot * g.contributionAmount));
+    }
+
+    function validNote() {
+      return incoming().get('note', null) == null
+        || (incoming().note is string && incoming().note.size() <= 200);
+    }
+
+    // Paiement de [count] cotisations : montant = cotisations + pénalités
+    function validContributionPayment(g) {
+      return isV2(g)
+        && incoming().count is int && incoming().count >= 1
+        && incoming().penalty is int && incoming().penalty >= 0
+        && incoming().penalty <= incoming().count * g.penaltyAmount
+        && incoming().amount == incoming().count * g.contributionAmount + incoming().penalty
+        && validNote();
+    }
+
+    // Chiffres du numéro du compte, et identifiant d'une place réservée par
+    // le tontinier pour ce numéro (participant ajouté sans application)
+    function phoneDigits() {
+      return request.auth.token.email.split('@')[0];
+    }
+
+    function managedIdOfMe() {
+      return 'p' + phoneDigits();
     }
 
     function memberPath(groupId, memberId) {
@@ -210,9 +262,22 @@ service cloud.firestore {
             && carnetAfter(incoming().targetId).ownerId == uid()
             && carnetAfter(incoming().targetId).inviteCode == code)
         );
+      // Supprimée avec son groupe
+      allow delete: if signedIn() && existing().ownerId == uid()
+        && existing().kind == 'group'
+        && !existsAfter(doc('groups/' + existing().targetId));
     }
 
     // ------------------------------------------------ Tontine à cagnotte
+    //
+    // Déroulé d'un groupe (version 2) :
+    //   recruiting  inscriptions (le tontinier peut tout modifier, retirer un
+    //               participant, ajouter un participant sans application)
+    //   drawing     ordre des remises : tirage au sort ou ordre fixé par le
+    //               tontinier ; prêt quand drawnCount == memberCount
+    //   active      démarrée par le tontinier (dates figées) : cotisations,
+    //               paiements, remises
+    // Les groupes des versions précédentes (sans orderMode) sont en lecture seule.
 
     match /groups/{groupId} {
       allow read: if signedIn()
@@ -221,92 +286,193 @@ service cloud.firestore {
       allow create: if signedIn()
         && incoming().keys().hasOnly(['tontineId', 'tontineName', 'ownerId', 'ownerName',
             'name', 'memberCount', 'contributionAmount', 'frequency', 'startDate',
-            'contributionsPerPot', 'firstPayoutDate', 'paidOutCount',
-            'commissionType', 'commissionValue', 'inviteCode', 'status',
-            'joinedCount', 'drawnCount', 'memberIds', 'createdAt'])
+            'contributionsPerPot', 'firstPayoutDate', 'paidOutCount', 'orderMode',
+            'penaltyAmount', 'penaltyGraceDays', 'commissionType', 'commissionValue',
+            'inviteCode', 'status', 'joinedCount', 'drawnCount', 'memberIds',
+            'startedAt', 'createdAt'])
         && incoming().ownerId == uid()
         && canCreate()
         && get(doc('tontines/' + incoming().tontineId)).data.ownerId == uid()
         && get(doc('tontines/' + incoming().tontineId)).data.type == 'cagnotte'
         && incoming().tontineName == get(doc('tontines/' + incoming().tontineId)).data.name
         && incoming().ownerName == me().fullName
-        && isText(incoming().name, 1, 80)
-        && incoming().memberCount is int
-        && incoming().memberCount >= 2 && incoming().memberCount <= 100
-        && incoming().contributionAmount is int && incoming().contributionAmount > 0
-        && incoming().frequency in ['daily', 'weekly', 'biweekly', 'monthly']
-        && incoming().startDate is string
-        && incoming().startDate.matches('[0-9]{4}-[0-9]{2}-[0-9]{2}')
-        && incoming().contributionsPerPot is int
-        && incoming().contributionsPerPot >= 1 && incoming().contributionsPerPot <= 366
-        && incoming().firstPayoutDate is string
-        && incoming().firstPayoutDate.matches('[0-9]{4}-[0-9]{2}-[0-9]{2}')
-        && incoming().firstPayoutDate >= incoming().startDate
-        && incoming().paidOutCount == 0
-        && incoming().commissionValue is number && incoming().commissionValue >= 0
-        && ((incoming().commissionType == 'percent' && incoming().commissionValue <= 100)
-          || (incoming().commissionType == 'fixed'
-            && incoming().commissionValue <= incoming().memberCount
-              * incoming().contributionsPerPot * incoming().contributionAmount))
+        && validTerms(incoming())
         && incoming().status == 'recruiting'
         && incoming().joinedCount == 0
         && incoming().drawnCount == 0
         && incoming().memberIds == []
+        && incoming().paidOutCount == 0
+        && incoming().startedAt == null
         && incoming().createdAt == request.time
         && getAfter(doc('invites/' + incoming().inviteCode)).data.targetId == groupId;
 
-      allow update: if signedIn() && (
-        // Le tontinier lance le tirage (groupe complet) ou le termine
+      allow update: if signedIn() && isV2(existing()) && (
+        // Le tontinier modifie le groupe pendant les inscriptions
         (existing().ownerId == uid()
-          && changedOnly(['status', 'drawnCount'])
-          && incoming().drawnCount is int
-          && incoming().drawnCount >= existing().drawnCount
-          && incoming().drawnCount <= existing().memberCount
-          && (incoming().status == existing().status
-            || (existing().status == 'recruiting' && incoming().status == 'drawing'
-              && existing().joinedCount == existing().memberCount))
-          && (incoming().drawnCount == existing().drawnCount || incoming().status == 'drawing'))
-        // Un membre rejoint le groupe avec le code
-        || (existing().ownerId != uid()
-          && changedOnly(['joinedCount', 'memberIds'])
           && existing().status == 'recruiting'
-          && !(uid() in existing().memberIds)
-          && incoming().memberIds == existing().memberIds.concat([uid()])
+          && changedOnly(['name', 'memberCount', 'contributionAmount', 'frequency',
+              'startDate', 'contributionsPerPot', 'firstPayoutDate', 'orderMode',
+              'penaltyAmount', 'penaltyGraceDays', 'commissionType', 'commissionValue'])
+          && validTerms(incoming())
+          && incoming().memberCount >= existing().joinedCount)
+        // Le tontinier ajoute un participant sans application
+        || (existing().ownerId == uid()
+          && existing().status == 'recruiting'
+          && changedOnly(['joinedCount'])
           && incoming().joinedCount == existing().joinedCount + 1
-          && incoming().joinedCount <= existing().memberCount
-          && existsAfter(doc('groups/' + groupId + '/members/' + uid())))
-        // Un membre tire son numéro
-        || (uid() in existing().memberIds
-          && changedOnly(['drawnCount'])
+          && incoming().joinedCount <= existing().memberCount)
+        // Le tontinier retire un participant pendant les inscriptions
+        || (existing().ownerId == uid()
+          && existing().status == 'recruiting'
+          && changedOnly(['joinedCount', 'memberIds'])
+          && incoming().joinedCount == existing().joinedCount - 1
+          && existing().memberIds.hasAll(incoming().memberIds)
+          && incoming().memberIds.size() >= existing().memberIds.size() - 1)
+        // Tirage au sort : le tontinier le lance (groupe complet)
+        || (existing().ownerId == uid()
+          && existing().orderMode == 'draw'
+          && existing().status == 'recruiting'
+          && existing().joinedCount == existing().memberCount
+          && changedOnly(['status'])
+          && incoming().status == 'drawing')
+        // Tirage au sort : le tontinier tire pour les retardataires
+        || (existing().ownerId == uid()
           && existing().status == 'drawing'
-          && incoming().drawnCount == existing().drawnCount + 1
-          && get(doc('groups/' + groupId + '/members/' + uid())).data.drawPosition == null
-          && getAfter(doc('groups/' + groupId + '/members/' + uid())).data.drawPosition != null)
+          && changedOnly(['drawnCount'])
+          && incoming().drawnCount > existing().drawnCount
+          && incoming().drawnCount <= existing().memberCount)
+        // Ordre fixé par le tontinier (groupe complet)
+        || (existing().ownerId == uid()
+          && existing().orderMode == 'manual'
+          && existing().status == 'recruiting'
+          && existing().joinedCount == existing().memberCount
+          && changedOnly(['status', 'drawnCount'])
+          && incoming().status == 'drawing'
+          && incoming().drawnCount == existing().memberCount)
+        // Démarrage : dates figées
+        || (existing().ownerId == uid()
+          && existing().status == 'drawing'
+          && existing().drawnCount == existing().memberCount
+          && changedOnly(['status', 'startDate', 'firstPayoutDate', 'startedAt'])
+          && incoming().status == 'active'
+          && incoming().startedAt == request.time
+          && isDate(incoming().startDate)
+          && isDate(incoming().firstPayoutDate)
+          && incoming().firstPayoutDate >= incoming().startDate)
         // Le tontinier confirme la remise de la cagnotte suivante
         || (existing().ownerId == uid()
-          && isV2(existing())
-          && isActive(existing())
+          && existing().status == 'active'
           && changedOnly(['paidOutCount'])
           && incoming().paidOutCount == existing().paidOutCount + 1
           && incoming().paidOutCount <= existing().memberCount
           && existsAfter(doc('groups/' + groupId + '/payouts/' + string(incoming().paidOutCount))))
+        // Un client rejoint le groupe avec le code (inscriptions)
+        || (existing().ownerId != uid()
+          && existing().status == 'recruiting'
+          && changedOnly(['joinedCount', 'memberIds'])
+          && !(uid() in existing().memberIds)
+          && incoming().memberIds == existing().memberIds.concat([uid()])
+          && incoming().joinedCount == existing().joinedCount + 1
+          && incoming().joinedCount <= existing().memberCount
+          && existsAfter(memberPath(groupId, uid())))
+        // Un client retrouve la place que le tontinier lui avait réservée
+        || (existing().ownerId != uid()
+          && changedOnly(['memberIds'])
+          && !(uid() in existing().memberIds)
+          && incoming().memberIds == existing().memberIds.concat([uid()])
+          && getAfter(memberPath(groupId, uid())).data.get('claimedFrom', '') == managedIdOfMe())
+        // Un participant tire son numéro
+        || (uid() in existing().memberIds
+          && changedOnly(['drawnCount'])
+          && existing().status == 'drawing'
+          && incoming().drawnCount == existing().drawnCount + 1
+          && get(memberPath(groupId, uid())).data.drawPosition == null
+          && getAfter(memberPath(groupId, uid())).data.drawPosition != null)
       );
+
+      // Suppression par le tontinier tant que le groupe n'a pas démarré
+      allow delete: if signedIn() && existing().ownerId == uid()
+        && isV2(existing()) && existing().status != 'active';
 
       match /members/{memberId} {
         allow read: if signedIn() && (isGroupOwner(groupId) || isGroupMember(groupId));
+        // Chacun peut vérifier si une place lui est réservée (son numéro)
+        allow get: if signedIn() && memberId == managedIdOfMe();
+
+        // Un client rejoint le groupe
         allow create: if signedIn() && memberId == uid()
+          && isV2(groupData(groupId))
           && incoming().keys().hasOnly(['fullName', 'phone', 'joinedAt', 'drawPosition',
-              'declaredCount', 'approvedCount', 'lastPaymentId'])
+              'declaredCount', 'approvedCount', 'lastPaymentId', 'penaltyPaid'])
           && incoming().fullName == me().fullName
           && incoming().phone == me().phone
           && incoming().drawPosition == null
           && incoming().get('declaredCount', 0) == 0
           && incoming().get('approvedCount', 0) == 0
           && incoming().get('lastPaymentId', null) == null
+          && incoming().get('penaltyPaid', 0) == 0
           && incoming().joinedAt == request.time
           && uid() in groupAfter(groupId).memberIds;
-        // Révéler son numéro (le membre lui-même ou le tontinier pour les retardataires)
+
+        // Le tontinier ajoute un participant sans application (id : p<numéro>)
+        allow create: if signedIn() && isGroupOwner(groupId)
+          && isV2(groupData(groupId))
+          && groupData(groupId).status == 'recruiting'
+          && incoming().keys().hasOnly(['fullName', 'phone', 'joinedAt', 'drawPosition',
+              'declaredCount', 'approvedCount', 'lastPaymentId', 'penaltyPaid',
+              'managed', 'claimedBy'])
+          && isText(incoming().fullName, 2, 60)
+          && incoming().phone is string
+          && incoming().phone.matches('[+][1-9][0-9]{7,14}')
+          && memberId == 'p' + incoming().phone.split('[+]')[1]
+          && incoming().managed == true
+          && incoming().claimedBy == null
+          && incoming().drawPosition == null
+          && incoming().declaredCount == 0
+          && incoming().approvedCount == 0
+          && incoming().lastPaymentId == null
+          && incoming().penaltyPaid == 0
+          && incoming().joinedAt == request.time
+          && groupAfter(groupId).joinedCount == groupData(groupId).joinedCount + 1;
+
+        // Le client retrouve sa place réservée : copie exacte de la place
+        allow create: if signedIn() && memberId == uid()
+          && isV2(groupData(groupId))
+          && exists(memberPath(groupId, managedIdOfMe()))
+          && get(memberPath(groupId, managedIdOfMe())).data.get('claimedBy', null) == null
+          && ((groupData(groupId).status == 'recruiting'
+              && !existsAfter(memberPath(groupId, managedIdOfMe())))
+            || (groupData(groupId).status != 'recruiting'
+              && get(memberPath(groupId, managedIdOfMe())).data.drawPosition != null
+              && getAfter(memberPath(groupId, managedIdOfMe())).data.claimedBy == uid()))
+          && incoming().keys().hasOnly(['fullName', 'phone', 'joinedAt', 'drawPosition',
+              'declaredCount', 'approvedCount', 'lastPaymentId', 'penaltyPaid', 'claimedFrom'])
+          && incoming().claimedFrom == managedIdOfMe()
+          && incoming().fullName == me().fullName
+          && incoming().phone == me().phone
+          && incoming().joinedAt == request.time
+          && incoming().drawPosition == get(memberPath(groupId, managedIdOfMe())).data.drawPosition
+          && incoming().declaredCount == get(memberPath(groupId, managedIdOfMe())).data.declaredCount
+          && incoming().approvedCount == get(memberPath(groupId, managedIdOfMe())).data.approvedCount
+          && incoming().penaltyPaid == get(memberPath(groupId, managedIdOfMe())).data.get('penaltyPaid', 0)
+          && incoming().lastPaymentId == null
+          && uid() in groupAfter(groupId).memberIds;
+
+        // La place réservée est reprise par son titulaire : supprimée pendant
+        // les inscriptions, conservée (historique) ensuite
+        allow update: if signedIn() && memberId == managedIdOfMe()
+          && changedOnly(['claimedBy'])
+          && existing().get('claimedBy', null) == null
+          && incoming().claimedBy == uid()
+          && getAfter(memberPath(groupId, uid())).data.get('claimedFrom', '') == managedIdOfMe();
+        allow delete: if signedIn() && memberId == managedIdOfMe()
+          && groupData(groupId).status == 'recruiting'
+          && getAfter(memberPath(groupId, uid())).data.get('claimedFrom', '') == managedIdOfMe();
+
+        // Tirage au sort : révéler son numéro (le membre, ou le tontinier pour
+        // les retardataires et les participants sans application)
         allow update: if signedIn()
+          && isV2(groupData(groupId))
           && ((memberId == uid()
               && groupAfter(groupId).drawnCount == groupData(groupId).drawnCount + 1)
             || (isGroupOwner(groupId)
@@ -316,10 +482,21 @@ service cloud.firestore {
           && groupData(groupId).status == 'drawing'
           && incoming().drawPosition == get(doc('groups/' + groupId + '/draws/' + memberId)).data.position;
 
+        // Ordre fixé par le tontinier (avant le démarrage)
+        allow update: if signedIn() && isGroupOwner(groupId)
+          && isV2(groupData(groupId))
+          && groupData(groupId).orderMode == 'manual'
+          && (groupData(groupId).status == 'drawing'
+            || (groupData(groupId).status == 'recruiting'
+              && groupAfter(groupId).status == 'drawing'))
+          && changedOnly(['drawPosition'])
+          && incoming().drawPosition is int
+          && incoming().drawPosition >= 1
+          && incoming().drawPosition <= groupData(groupId).memberCount;
+
         // Le membre déclare des cotisations (paiement créé dans le même envoi)
         allow update: if signedIn() && memberId == uid()
-          && isV2(groupData(groupId))
-          && isActive(groupData(groupId))
+          && isStarted(groupData(groupId))
           && changedOnly(['declaredCount', 'lastPaymentId'])
           && incoming().declaredCount is int
           && incoming().declaredCount > existing().get('declaredCount', 0)
@@ -328,66 +505,106 @@ service cloud.firestore {
           && getAfter(doc('groups/' + groupId + '/payments/' + incoming().lastPaymentId)).data.count
             == incoming().declaredCount - existing().get('declaredCount', 0);
 
-        // Le tontinier met à jour les compteurs en validant / refusant
+        // Le tontinier met à jour les compteurs (validation, refus, encaissement)
         allow update: if signedIn() && isGroupOwner(groupId)
-          && isV2(groupData(groupId))
-          && changedOnly(['declaredCount', 'approvedCount'])
+          && isStarted(groupData(groupId))
+          && changedOnly(['declaredCount', 'approvedCount', 'penaltyPaid'])
           && incoming().declaredCount is int && incoming().approvedCount is int
+          && incoming().get('penaltyPaid', 0) is int
+          && incoming().get('penaltyPaid', 0) >= 0
           && incoming().approvedCount >= 0
           && incoming().approvedCount <= incoming().declaredCount
           && incoming().declaredCount <= totalOf(groupData(groupId));
+
+        // Retrait d'un participant, ou suppression du groupe, avant le démarrage
+        allow delete: if signedIn() && isGroupOwner(groupId)
+          && isV2(groupData(groupId))
+          && groupData(groupId).status != 'active';
       }
 
       // Numéros tirés au hasard par l'application du tontinier au lancement
       match /draws/{memberId} {
         allow read: if signedIn() && (memberId == uid() || isGroupOwner(groupId));
         allow create: if signedIn() && isGroupOwner(groupId)
+          && isV2(groupData(groupId))
           && groupData(groupId).status == 'recruiting'
           && groupAfter(groupId).status == 'drawing'
-          && exists(doc('groups/' + groupId + '/members/' + memberId))
+          && exists(memberPath(groupId, memberId))
           && incoming().keys().hasOnly(['position'])
           && incoming().position is int
           && incoming().position >= 1
           && incoming().position <= groupData(groupId).memberCount;
+        allow delete: if signedIn() && isGroupOwner(groupId)
+          && isV2(groupData(groupId))
+          && groupData(groupId).status != 'active';
       }
 
       match /payments/{paymentId} {
         allow read: if signedIn()
-          && (existing().userId == uid() || isGroupOwner(groupId));
+          && (existing().userId == uid() || existing().userId == managedIdOfMe()
+            || isGroupOwner(groupId));
 
-        // Paiement de [count] cotisations ; le compteur du membre avance
-        // dans le même envoi
+        // Le participant déclare [count] cotisations (+ pénalités de retard),
+        // payées par Mobile Money (capture obligatoire) ou en espèces
         allow create: if signedIn()
           && incoming().keys().hasOnly(['userId', 'payerName', 'payerPhone', 'count',
-              'amount', 'proofId', 'status', 'rejectionReason', 'declaredAt', 'reviewedAt'])
+              'amount', 'penalty', 'method', 'note', 'proofId', 'status',
+              'rejectionReason', 'declaredAt', 'reviewedAt', 'recordedBy'])
           && incoming().userId == uid()
           && isGroupMember(groupId)
-          && isV2(groupData(groupId))
-          && isActive(groupData(groupId))
-          && incoming().count is int
-          && incoming().count >= 1
-          && incoming().amount == incoming().count * groupData(groupId).contributionAmount
+          && isStarted(groupData(groupId))
+          && validContributionPayment(groupData(groupId))
           && incoming().payerName == me().fullName
           && incoming().payerPhone == me().phone
+          && ((incoming().method == 'mobile_money' && ownsProof(incoming().proofId))
+            || (incoming().method == 'cash' && incoming().proofId == null))
           && incoming().status == 'pending'
           && incoming().rejectionReason == null
           && incoming().reviewedAt == null
+          && incoming().recordedBy == 'member'
           && incoming().declaredAt == request.time
           && getAfter(memberPath(groupId, uid())).data.lastPaymentId == paymentId
           && getAfter(memberPath(groupId, uid())).data.declaredCount
-            == get(memberPath(groupId, uid())).data.get('declaredCount', 0) + incoming().count
-          && ownsProof(incoming().proofId);
+            == get(memberPath(groupId, uid())).data.get('declaredCount', 0) + incoming().count;
+
+        // Le tontinier encaisse lui-même : paiement validé d'office
+        allow create: if signedIn()
+          && isGroupOwner(groupId)
+          && isStarted(groupData(groupId))
+          && incoming().keys().hasOnly(['userId', 'payerName', 'payerPhone', 'count',
+              'amount', 'penalty', 'method', 'note', 'proofId', 'status',
+              'rejectionReason', 'declaredAt', 'reviewedAt', 'recordedBy'])
+          && exists(memberPath(groupId, incoming().userId))
+          && get(memberPath(groupId, incoming().userId)).data.get('claimedBy', null) == null
+          && incoming().payerName == get(memberPath(groupId, incoming().userId)).data.fullName
+          && incoming().payerPhone == get(memberPath(groupId, incoming().userId)).data.phone
+          && validContributionPayment(groupData(groupId))
+          && incoming().method in ['cash', 'mobile_money']
+          && incoming().proofId == null
+          && incoming().status == 'approved'
+          && incoming().rejectionReason == null
+          && incoming().recordedBy == 'owner'
+          && incoming().declaredAt == request.time
+          && incoming().reviewedAt == request.time
+          && getAfter(memberPath(groupId, incoming().userId)).data.declaredCount
+            == get(memberPath(groupId, incoming().userId)).data.get('declaredCount', 0) + incoming().count
+          && getAfter(memberPath(groupId, incoming().userId)).data.approvedCount
+            == get(memberPath(groupId, incoming().userId)).data.get('approvedCount', 0) + incoming().count
+          && getAfter(memberPath(groupId, incoming().userId)).data.get('penaltyPaid', 0)
+            == get(memberPath(groupId, incoming().userId)).data.get('penaltyPaid', 0) + incoming().penalty;
 
         // Le tontinier valide (cotisations payées) ou refuse (à payer de nouveau)
         allow update: if signedIn()
           && isGroupOwner(groupId)
-          && isV2(groupData(groupId))
+          && isStarted(groupData(groupId))
           && validReview()
           && ((incoming().status == 'approved'
               && getAfter(memberPath(groupId, existing().userId)).data.approvedCount
                 == get(memberPath(groupId, existing().userId)).data.get('approvedCount', 0) + existing().count
               && getAfter(memberPath(groupId, existing().userId)).data.declaredCount
-                == get(memberPath(groupId, existing().userId)).data.get('declaredCount', 0))
+                == get(memberPath(groupId, existing().userId)).data.get('declaredCount', 0)
+              && getAfter(memberPath(groupId, existing().userId)).data.get('penaltyPaid', 0)
+                == get(memberPath(groupId, existing().userId)).data.get('penaltyPaid', 0) + existing().get('penalty', 0))
             || (incoming().status == 'rejected'
               && getAfter(memberPath(groupId, existing().userId)).data.declaredCount
                 == get(memberPath(groupId, existing().userId)).data.get('declaredCount', 0) - existing().count
@@ -395,12 +612,14 @@ service cloud.firestore {
                 == get(memberPath(groupId, existing().userId)).data.get('approvedCount', 0)));
       }
 
-      // Remise de la cagnotte n au bénéficiaire (tirage n), confirmée par le tontinier
+      // Remise de la cagnotte n au bénéficiaire (rang n), confirmée par le
+      // tontinier puis par le bénéficiaire
       match /payouts/{pot} {
         allow read: if signedIn() && (isGroupOwner(groupId) || isGroupMember(groupId));
         allow create: if signedIn() && isGroupOwner(groupId)
-          && isV2(groupData(groupId))
-          && incoming().keys().hasOnly(['tour', 'beneficiaryId', 'beneficiaryName', 'amount', 'paidAt'])
+          && isStarted(groupData(groupId))
+          && incoming().keys().hasOnly(['tour', 'beneficiaryId', 'beneficiaryName', 'amount',
+              'paidAt', 'receivedAt', 'problem'])
           && incoming().tour is int
           && pot == string(incoming().tour)
           && incoming().tour == groupData(groupId).paidOutCount + 1
@@ -408,7 +627,39 @@ service cloud.firestore {
           && get(memberPath(groupId, incoming().beneficiaryId)).data.drawPosition == incoming().tour
           && isText(incoming().beneficiaryName, 1, 60)
           && incoming().amount is int && incoming().amount >= 0
-          && incoming().paidAt == request.time;
+          && incoming().paidAt == request.time
+          && incoming().receivedAt == null
+          && incoming().problem == null;
+        // Le bénéficiaire confirme la réception, ou signale un problème
+        allow update: if signedIn()
+          && (existing().beneficiaryId == uid()
+            || get(memberPath(groupId, uid())).data.get('claimedFrom', '') == existing().beneficiaryId)
+          && existing().receivedAt == null
+          && changedOnly(['receivedAt', 'problem'])
+          && ((incoming().receivedAt == request.time && incoming().problem == null)
+            || (incoming().receivedAt == null && isText(incoming().problem, 1, 300)));
+      }
+
+      // Journal du groupe (non modifiable). Le tontinier voit tout ; un
+      // participant voit les étapes du groupe et ses propres actions.
+      match /events/{eventId} {
+        allow read: if signedIn() && (isGroupOwner(groupId)
+          || (isGroupMember(groupId)
+            && (existing().visibility == 'all' || existing().memberId == uid())));
+        allow create: if signedIn()
+          && (groupAfter(groupId).ownerId == uid() || uid() in groupAfter(groupId).memberIds)
+          && incoming().keys().hasOnly(['type', 'text', 'actorId', 'actorName', 'memberId',
+              'visibility', 'at'])
+          && incoming().actorId == uid()
+          && isText(incoming().type, 1, 40)
+          && isText(incoming().text, 1, 300)
+          && isText(incoming().actorName, 1, 80)
+          && incoming().visibility in ['all', 'member']
+          && (incoming().memberId == null || incoming().memberId is string)
+          && incoming().at == request.time;
+        allow delete: if signedIn() && isGroupOwner(groupId)
+          && isV2(groupData(groupId))
+          && groupData(groupId).status != 'active';
       }
     }
 
@@ -456,7 +707,7 @@ service cloud.firestore {
           && !exists(doc('carnets/' + carnetId + '/payments/' + incoming().lastPaymentId))
           && getAfter(doc('carnets/' + carnetId + '/payments/' + incoming().lastPaymentId)).data.caseCount
             == incoming().usedCases - existing().usedCases)
-        // Le tontinier met à jour les compteurs en validant / refusant
+        // Le tontinier met à jour les compteurs (validation, refus, encaissement)
         || (existing().ownerId == uid()
           && changedOnly(['usedCases', 'approvedCases'])
           && incoming().approvedCases >= 0
@@ -468,9 +719,11 @@ service cloud.firestore {
         allow read: if signedIn()
           && (existing().userId == uid() || carnetData(carnetId).ownerId == uid());
 
+        // Le client déclare des cases : Mobile Money (capture) ou espèces
         allow create: if signedIn()
           && incoming().keys().hasOnly(['userId', 'payerName', 'payerPhone', 'caseCount',
-              'amount', 'proofId', 'status', 'rejectionReason', 'declaredAt', 'reviewedAt'])
+              'amount', 'method', 'note', 'proofId', 'status', 'rejectionReason',
+              'declaredAt', 'reviewedAt', 'recordedBy'])
           && incoming().userId == uid()
           && carnetData(carnetId).clientId == uid()
           && incoming().caseCount is int
@@ -478,14 +731,44 @@ service cloud.firestore {
           && incoming().amount == incoming().caseCount * carnetData(carnetId).caseAmount
           && incoming().payerName == me().fullName
           && incoming().payerPhone == me().phone
+          && validNote()
+          && ((incoming().get('method', 'mobile_money') == 'mobile_money'
+              && ownsProof(incoming().proofId))
+            || (incoming().get('method', '') == 'cash' && incoming().proofId == null))
+          && incoming().get('recordedBy', 'member') == 'member'
           && incoming().status == 'pending'
           && incoming().rejectionReason == null
           && incoming().reviewedAt == null
           && incoming().declaredAt == request.time
           && carnetAfter(carnetId).lastPaymentId == paymentId
           && carnetAfter(carnetId).usedCases
+            == carnetData(carnetId).usedCases + incoming().caseCount;
+
+        // Le tontinier encaisse lui-même : paiement validé d'office
+        allow create: if signedIn()
+          && carnetData(carnetId).ownerId == uid()
+          && carnetData(carnetId).clientId != null
+          && incoming().keys().hasOnly(['userId', 'payerName', 'payerPhone', 'caseCount',
+              'amount', 'method', 'note', 'proofId', 'status', 'rejectionReason',
+              'declaredAt', 'reviewedAt', 'recordedBy'])
+          && incoming().userId == carnetData(carnetId).clientId
+          && incoming().payerName == carnetData(carnetId).clientName
+          && incoming().payerPhone == carnetData(carnetId).clientPhone
+          && incoming().caseCount is int
+          && incoming().caseCount >= 1
+          && incoming().amount == incoming().caseCount * carnetData(carnetId).caseAmount
+          && validNote()
+          && incoming().method in ['cash', 'mobile_money']
+          && incoming().proofId == null
+          && incoming().status == 'approved'
+          && incoming().rejectionReason == null
+          && incoming().recordedBy == 'owner'
+          && incoming().declaredAt == request.time
+          && incoming().reviewedAt == request.time
+          && carnetAfter(carnetId).usedCases
             == carnetData(carnetId).usedCases + incoming().caseCount
-          && ownsProof(incoming().proofId);
+          && carnetAfter(carnetId).approvedCases
+            == carnetData(carnetId).approvedCases + incoming().caseCount;
 
         // Le tontinier valide (cases payées) ou refuse (cases libérées)
         allow update: if signedIn()
@@ -500,6 +783,25 @@ service cloud.firestore {
                 == carnetData(carnetId).usedCases - existing().caseCount
               && carnetAfter(carnetId).approvedCases == carnetData(carnetId).approvedCases));
       }
+    }
+
+    // ------------------------------------------- Profil pro du tontinier
+
+    // Nom de l'activité, logo et numéros de paiement, visibles des clients
+    match /businesses/{ownerId} {
+      allow read: if signedIn();
+      allow create, update: if signedIn() && ownerId == uid()
+        && incoming().keys().hasOnly(['name', 'city', 'contactPhone', 'logo', 'logoMime',
+            'accounts', 'updatedAt'])
+        && isText(incoming().name, 2, 60)
+        && incoming().city is string && incoming().city.size() <= 40
+        && incoming().contactPhone is string && incoming().contactPhone.size() <= 30
+        && (incoming().logo == null
+          || (incoming().logo is string && incoming().logo.size() <= 200000))
+        && (incoming().logoMime == null
+          || incoming().logoMime in ['image/jpeg', 'image/png', 'image/webp'])
+        && incoming().accounts is list && incoming().accounts.size() <= 3
+        && incoming().updatedAt == request.time;
     }
 
     // ------------------------------------------------ Preuves de paiement

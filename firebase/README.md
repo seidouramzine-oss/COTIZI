@@ -66,7 +66,11 @@ npm test   # lance l'émulateur Firestore et le scénario tests/rules.test.mjs
 ```
 
 Le scénario couvre : inscription, création de groupe, invitations, groupe complet,
-tirage au sort (impossible de choisir son numéro), paiement de plusieurs
-cotisations avec preuve, refus motivé, validation, remises confirmées, anciens
-groupes en lecture seule, carnet de 31 cases, confidentialité des données,
-essai gratuit et abonnement des tontiniers, administration.
+tirage au sort (impossible de choisir son numéro) ou ordre fixé par le tontinier,
+modification et suppression avant le démarrage, bouton « Démarrer », paiement de
+plusieurs cotisations (Mobile Money avec preuve ou espèces) avec pénalités de
+retard, refus motivé, validation, encaissement par le tontinier, participants
+sans application et récupération de leur place, remises confirmées par le
+bénéficiaire, historique des actions, profil pro, anciens groupes en lecture
+seule, carnet de 31 cases, confidentialité des données, essai gratuit et
+abonnement des tontiniers, administration.

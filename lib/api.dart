@@ -6,6 +6,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:image_picker/image_picker.dart';
 
+import 'format.dart';
 import 'models.dart';
 
 /// Erreur métier avec un message prêt à afficher.
@@ -342,9 +343,19 @@ class Api {
         final detail = await group(g.id);
         final payments = await groupPayments(detail);
         final me = detail.memberById(uid);
+        final pos = me?.drawPosition;
+        Payout? toConfirm;
+        if (!detail.isLegacy && pos != null && pos <= detail.paidOutCount) {
+          final doc = await _db.doc('groups/${detail.id}/payouts/$pos').get();
+          final payout = doc.exists ? Payout.fromDoc(doc) : null;
+          if (payout != null && !payout.confirmed && payout.problem == null) {
+            toConfirm = payout;
+          }
+        }
         return MemberGroupStatus(
           group: detail,
           payments: payments,
+          payoutToConfirm: toConfirm,
           standing: me == null
               ? MemberStanding(
                   due: 0,
@@ -411,12 +422,14 @@ class Api {
   }
 
   /// Crée un groupe ou un carnet avec son code ; réessaie si le code
-  /// tiré existe déjà (refus des règles).
+  /// tiré existe déjà (refus des règles). [extra] ajoute d'autres écritures
+  /// au même envoi (journal).
   static Future<String> _createWithInvite(
     String collection,
     String kind,
-    Json Function(String code) data,
-  ) async {
+    Json Function(String code) data, {
+    void Function(WriteBatch batch, String id)? extra,
+  }) async {
     for (var attempt = 0; ; attempt++) {
       final code = _newCode();
       final ref = _db.collection(collection).doc();
@@ -427,6 +440,7 @@ class Api {
           'targetId': ref.id,
           'ownerId': uid,
         });
+      extra?.call(batch, ref.id);
       try {
         await batch.commit();
         return ref.id;
@@ -435,6 +449,12 @@ class Api {
       }
     }
   }
+
+  /// Chiffres du numéro du compte (sans le +).
+  static String get _phoneDigits => _auth.currentUser!.email!.split('@').first;
+
+  /// Identifiant de la place réservée pour un numéro (+229…) : p229…
+  static String managedId(String phone) => 'p${phone.replaceAll('+', '')}';
 
   /// Rejoint un groupe ou un carnet ; renvoie (type, id).
   static Future<(String kind, String id)> joinWithCode(String input) async {
@@ -457,26 +477,71 @@ class Api {
     if (kind == 'group') {
       if (await _canRead('groups/$targetId')) return (kind, targetId);
       final ref = _db.doc('groups/$targetId');
-      final batch = _db.batch()
-        ..update(ref, {
-          'joinedCount': FieldValue.increment(1),
-          'memberIds': FieldValue.arrayUnion([uid]),
-        })
-        ..set(ref.collection('members').doc(uid), {
-          'fullName': me.fullName,
-          'phone': me.phone,
-          'joinedAt': _now,
-          'drawPosition': null,
-          'declaredCount': 0,
-          'approvedCount': 0,
-          'lastPaymentId': null,
-        });
+      // Place réservée par le tontinier à ce numéro ?
+      final reserved = await ref
+          .collection('members')
+          .doc('p$_phoneDigits')
+          .get();
+      final batch = _db.batch();
+      final (eventRef, eventData) = _eventDoc(
+        targetId,
+        me,
+        'joined',
+        reserved.exists
+            ? '${me.fullName} a rejoint le groupe (place réservée)'
+            : '${me.fullName} a rejoint le groupe',
+      );
+      if (reserved.exists && reserved.data()?['claimedBy'] == null) {
+        final spot = GroupMember.fromDoc(reserved);
+        batch
+          ..set(ref.collection('members').doc(uid), {
+            'fullName': me.fullName,
+            'phone': me.phone,
+            'joinedAt': _now,
+            'drawPosition': spot.drawPosition,
+            'declaredCount': spot.declaredCount,
+            'approvedCount': spot.approvedCount,
+            'lastPaymentId': null,
+            'penaltyPaid': spot.penaltyPaid,
+            'claimedFrom': reserved.id,
+          })
+          ..update(ref, {
+            'memberIds': FieldValue.arrayUnion([uid]),
+          });
+        // Pendant les inscriptions la place est remplacée ; ensuite elle est
+        // gardée pour l'historique de ses paiements.
+        if (spot.drawPosition == null) {
+          batch.delete(reserved.reference);
+        } else {
+          batch.update(reserved.reference, {'claimedBy': uid});
+        }
+      } else {
+        batch
+          ..update(ref, {
+            'joinedCount': FieldValue.increment(1),
+            'memberIds': FieldValue.arrayUnion([uid]),
+          })
+          ..set(ref.collection('members').doc(uid), {
+            'fullName': me.fullName,
+            'phone': me.phone,
+            'joinedAt': _now,
+            'drawPosition': null,
+            'declaredCount': 0,
+            'approvedCount': 0,
+            'lastPaymentId': null,
+            'penaltyPaid': 0,
+          });
+      }
+      batch.set(eventRef, eventData);
       try {
         await batch.commit();
       } on FirebaseException catch (e) {
         if (e.code == 'permission-denied') {
-          throw const AppException(
-            'Ce groupe est complet ou le tirage au sort a déjà commencé',
+          throw AppException(
+            reserved.exists
+                ? 'Le tirage au sort est en cours : réessayez dès que '
+                      'votre numéro est tiré.'
+                : 'Ce groupe est complet ou les inscriptions sont terminées',
           );
         }
         rethrow;
@@ -510,6 +575,50 @@ class Api {
     }
   }
 
+  // ----------------------------------------------------------- Journal
+
+  /// Ligne du journal : visible de tous ([memberId] null) ou seulement du
+  /// tontinier et du participant [memberId].
+  static (DocumentReference<Json>, Json) _eventDoc(
+    String groupId,
+    Profile me,
+    String type,
+    String text, {
+    String? memberId,
+  }) => (
+    _db.collection('groups/$groupId/events').doc(),
+    {
+      'type': type,
+      'text': text,
+      'actorId': uid,
+      'actorName': me.fullName,
+      'memberId': memberId,
+      'visibility': memberId == null ? 'all' : 'member',
+      'at': _now,
+    },
+  );
+
+  /// Journal du groupe, le plus récent d'abord.
+  static Future<List<GroupEvent>> events(Group g) async {
+    final col = _db.collection('groups/${g.id}/events');
+    final List<QuerySnapshot<Json>> snaps;
+    if (g.ownerId == uid) {
+      snaps = [await col.get()];
+    } else {
+      final ids = g.memberById(uid)?.paymentIds ?? [uid];
+      snaps = await Future.wait([
+        col.where('visibility', isEqualTo: 'all').get(),
+        col.where('memberId', whereIn: ids).get(),
+      ]);
+    }
+    final seen = <String>{};
+    return [
+      for (final snap in snaps)
+        for (final d in snap.docs)
+          if (seen.add(d.id)) GroupEvent.fromDoc(d),
+    ]..sort((a, b) => b.at.compareTo(a.at));
+  }
+
   // ------------------------------------------------- Tontine à cagnotte
 
   static Future<List<Group>> groupsOf(String tontineId) async {
@@ -540,6 +649,8 @@ class Api {
     return snap.docs.map(Group.fromDoc).toList();
   }
 
+  /// Groupe et ses participants (sans les places reprises par leur
+  /// titulaire), dans l'ordre des remises.
   static Future<Group> group(String id) async {
     final results = await Future.wait([
       _db.doc('groups/$id').get(),
@@ -548,6 +659,7 @@ class Api {
     final members =
         (results[1] as QuerySnapshot<Json>).docs
             .map(GroupMember.fromDoc)
+            .where((m) => m.claimedBy == null)
             .toList()
           ..sort(
             (a, b) => (a.drawPosition ?? 1 << 30).compareTo(
@@ -558,18 +670,22 @@ class Api {
         .copyWith(members: members);
   }
 
-  static Future<String> createGroup({
-    required Tontine tontine,
-    required String name,
-    required int memberCount,
-    required int contributionAmount,
-    required Frequency frequency,
-    required DateTime startDate,
-    required int contributionsPerPot,
-    required DateTime firstPayoutDate,
-    required CommissionType commissionType,
-    required double commissionValue,
-  }) async {
+  static Json _terms(GroupTerms t) => {
+    'name': t.name.trim(),
+    'memberCount': t.memberCount,
+    'contributionAmount': t.contributionAmount,
+    'frequency': t.frequency.name,
+    'startDate': dateKey(t.startDate),
+    'contributionsPerPot': t.contributionsPerPot,
+    'firstPayoutDate': dateKey(t.firstPayoutDate),
+    'orderMode': t.orderMode.name,
+    'penaltyAmount': t.penaltyAmount,
+    'penaltyGraceDays': t.penaltyGraceDays,
+    'commissionType': t.commissionType.name,
+    'commissionValue': t.commissionValue,
+  };
+
+  static Future<String> createGroup(Tontine tontine, GroupTerms terms) async {
     await ensureCanCreate();
     final me = await _requireMe();
     return _createWithInvite(
@@ -580,58 +696,173 @@ class Api {
         'tontineName': tontine.name,
         'ownerId': uid,
         'ownerName': me.fullName,
-        'name': name.trim(),
-        'memberCount': memberCount,
-        'contributionAmount': contributionAmount,
-        'frequency': frequency.name,
-        'startDate': dateKey(startDate),
-        'contributionsPerPot': contributionsPerPot,
-        'firstPayoutDate': dateKey(firstPayoutDate),
+        ..._terms(terms),
         'paidOutCount': 0,
-        'commissionType': commissionType.name,
-        'commissionValue': commissionValue,
         'inviteCode': code,
         'status': 'recruiting',
         'joinedCount': 0,
         'drawnCount': 0,
         'memberIds': <String>[],
+        'startedAt': null,
         'createdAt': _now,
+      },
+      extra: (batch, id) {
+        final (ref, data) = _eventDoc(
+          id,
+          me,
+          'created',
+          'Groupe créé : ${terms.memberCount} participants, '
+              '${money(terms.contributionAmount)} ${frequencyLower(terms.frequency)}',
+        );
+        batch.set(ref, data);
       },
     );
   }
 
-  /// Le tontinier voit tous les paiements ; un membre seulement les siens.
+  /// Modification pendant les inscriptions.
+  static Future<void> updateGroup(Group g, GroupTerms terms) async {
+    final me = await _requireMe();
+    final (ref, data) = _eventDoc(
+      g.id,
+      me,
+      'edited',
+      'Conditions du groupe modifiées',
+    );
+    await (_db.batch()
+          ..update(_db.doc('groups/${g.id}'), _terms(terms))
+          ..set(ref, data))
+        .commit();
+  }
+
+  /// Suppression d'un groupe qui n'a pas démarré (avec ses participants,
+  /// son tirage, son journal et son code d'invitation).
+  static Future<void> deleteGroup(Group g) async {
+    final base = _db.doc('groups/${g.id}');
+    final subs = await Future.wait([
+      base.collection('members').get(),
+      base.collection('draws').get(),
+      base.collection('events').get(),
+    ]);
+    final batch = _db.batch();
+    for (final snap in subs) {
+      for (final d in snap.docs) {
+        batch.delete(d.reference);
+      }
+    }
+    batch
+      ..delete(base)
+      ..delete(_db.doc('invites/${g.inviteCode}'));
+    await batch.commit();
+  }
+
+  /// Le tontinier ajoute un participant sans application : sa place est
+  /// réservée à son numéro.
+  static Future<void> addManagedMember(
+    Group g,
+    String fullName,
+    String phone,
+  ) async {
+    final me = await _requireMe();
+    final id = managedId(phone);
+    final ref = _db.doc('groups/${g.id}/members/$id');
+    if ((await ref.get()).exists ||
+        g.members.any((m) => m.profile.phone == phone)) {
+      throw const AppException('Ce numéro est déjà dans le groupe');
+    }
+    final (eventRef, eventData) = _eventDoc(
+      g.id,
+      me,
+      'managed_added',
+      '${fullName.trim()} ajouté par le tontinier (sans application)',
+    );
+    await (_db.batch()
+          ..set(ref, {
+            'fullName': fullName.trim(),
+            'phone': phone,
+            'joinedAt': _now,
+            'drawPosition': null,
+            'declaredCount': 0,
+            'approvedCount': 0,
+            'lastPaymentId': null,
+            'penaltyPaid': 0,
+            'managed': true,
+            'claimedBy': null,
+          })
+          ..update(_db.doc('groups/${g.id}'), {
+            'joinedCount': FieldValue.increment(1),
+          })
+          ..set(eventRef, eventData))
+        .commit();
+  }
+
+  /// Retrait d'un participant pendant les inscriptions.
+  static Future<void> removeMember(Group g, GroupMember m) async {
+    final me = await _requireMe();
+    final (eventRef, eventData) = _eventDoc(
+      g.id,
+      me,
+      'member_removed',
+      '${m.name} retiré du groupe',
+    );
+    await (_db.batch()
+          ..delete(_db.doc('groups/${g.id}/members/${m.userId}'))
+          ..update(_db.doc('groups/${g.id}'), {
+            'joinedCount': FieldValue.increment(-1),
+            'memberIds': FieldValue.arrayRemove([m.userId]),
+          })
+          ..set(eventRef, eventData))
+        .commit();
+  }
+
+  /// Le tontinier voit tous les paiements ; un participant seulement les
+  /// siens (y compris ceux de sa place réservée).
   static Future<List<Payment>> groupPayments(Group g) async {
     Query<Json> query = _db.collection('groups/${g.id}/payments');
-    if (g.ownerId != uid) query = query.where('userId', isEqualTo: uid);
+    if (g.ownerId != uid) {
+      query = query.where(
+        'userId',
+        whereIn: g.memberById(uid)?.paymentIds ?? [uid],
+      );
+    }
     final snap = await query.get();
     return snap.docs.map(Payment.fromDoc).toList()
       ..sort((a, b) => b.declaredAt.compareTo(a.declaredAt));
   }
 
   /// Lance le tirage : l'ordre de passage est tiré au hasard ici, puis
-  /// chaque membre découvre son numéro en « tirant ».
+  /// chaque participant découvre son numéro en « tirant ».
   static Future<void> startDraw(Group g) async {
-    final positions = List.generate(g.memberCount, (i) => i + 1)
-      ..shuffle(Random.secure());
-    final members = await _db.collection('groups/${g.id}/members').get();
-    if (members.docs.length != g.memberCount) {
+    final me = await _requireMe();
+    final members = (await _db.collection('groups/${g.id}/members').get()).docs
+        .where((d) => d.data()['claimedBy'] == null)
+        .toList();
+    if (members.length != g.memberCount) {
       throw AppException(
-        'Le groupe n\'est pas encore complet (${members.docs.length} / ${g.memberCount})',
+        'Le groupe n\'est pas encore complet (${members.length} / ${g.memberCount})',
       );
     }
+    final positions = List.generate(g.memberCount, (i) => i + 1)
+      ..shuffle(Random.secure());
+    final (eventRef, eventData) = _eventDoc(
+      g.id,
+      me,
+      'draw_started',
+      'Tirage au sort lancé',
+    );
     final batch = _db.batch()
-      ..update(_db.doc('groups/${g.id}'), {'status': 'drawing'});
-    for (var i = 0; i < members.docs.length; i++) {
-      batch.set(_db.doc('groups/${g.id}/draws/${members.docs[i].id}'), {
+      ..update(_db.doc('groups/${g.id}'), {'status': 'drawing'})
+      ..set(eventRef, eventData);
+    for (var i = 0; i < members.length; i++) {
+      batch.set(_db.doc('groups/${g.id}/draws/${members[i].id}'), {
         'position': positions[i],
       });
     }
     await batch.commit();
   }
 
-  /// Un membre découvre son numéro.
-  static Future<int> drawLot(String groupId) {
+  /// Un participant découvre son numéro.
+  static Future<int> drawLot(String groupId) async {
+    final me = await _requireMe();
     return _db.runTransaction((tx) async {
       final group = await tx.get(_db.doc('groups/$groupId'));
       final member = await tx.get(_db.doc('groups/$groupId/members/$uid'));
@@ -642,34 +873,106 @@ class Api {
         throw const AppException('Le tirage au sort n\'est pas encore ouvert');
       }
       final position = (draw['position'] as num).toInt();
-      tx.update(member.reference, {'drawPosition': position});
-      tx.update(group.reference, {
-        'drawnCount': (group['drawnCount'] as num).toInt() + 1,
-      });
+      final (eventRef, eventData) = _eventDoc(
+        groupId,
+        me,
+        'number_drawn',
+        '${me.fullName} a tiré le n°$position',
+      );
+      tx
+        ..update(member.reference, {'drawPosition': position})
+        ..update(group.reference, {
+          'drawnCount': (group['drawnCount'] as num).toInt() + 1,
+        })
+        ..set(eventRef, eventData);
       return position;
     });
   }
 
-  /// Le tontinier révèle les numéros des membres qui n'ont pas tiré.
-  /// L'état est relu ici : des membres ont pu tirer depuis l'affichage.
+  /// Le tontinier révèle les numéros des participants qui n'ont pas tiré
+  /// (et des participants sans application).
   static Future<void> finishDraw(Group g) async {
+    final me = await _requireMe();
     final members = await _db.collection('groups/${g.id}/members').get();
     final batch = _db.batch();
-    for (final m in members.docs.where((d) => d['drawPosition'] == null)) {
+    for (final m in members.docs.where(
+      (d) => d['drawPosition'] == null && d.data()['claimedBy'] == null,
+    )) {
       final draw = await _db.doc('groups/${g.id}/draws/${m.id}').get();
       batch.update(m.reference, {'drawPosition': draw['position']});
     }
-    batch.update(_db.doc('groups/${g.id}'), {'drawnCount': g.memberCount});
+    final (eventRef, eventData) = _eventDoc(
+      g.id,
+      me,
+      'draw_finished',
+      'Tirage au sort terminé',
+    );
+    batch
+      ..update(_db.doc('groups/${g.id}'), {'drawnCount': g.memberCount})
+      ..set(eventRef, eventData);
     await batch.commit();
   }
 
-  /// Le participant déclare [count] cotisations (une seule preuve).
-  /// Son compteur de cotisations déclarées avance dans le même envoi.
+  /// Ordre des remises fixé par le tontinier ([ordered] : 1er bénéficiaire
+  /// en premier).
+  static Future<void> setManualOrder(Group g, List<GroupMember> ordered) async {
+    final me = await _requireMe();
+    final batch = _db.batch();
+    for (var i = 0; i < ordered.length; i++) {
+      batch.update(_db.doc('groups/${g.id}/members/${ordered[i].userId}'), {
+        'drawPosition': i + 1,
+      });
+    }
+    if (g.status == GroupStatus.recruiting) {
+      batch.update(_db.doc('groups/${g.id}'), {
+        'status': 'drawing',
+        'drawnCount': g.memberCount,
+      });
+    }
+    final (eventRef, eventData) = _eventDoc(
+      g.id,
+      me,
+      'order_set',
+      'Ordre des remises fixé : ${[for (final m in ordered) m.name].join(', ')}',
+    );
+    batch.set(eventRef, eventData);
+    await batch.commit();
+  }
+
+  /// Démarrage : dates de la 1re cotisation et de la 1re remise figées.
+  static Future<void> startGroup(
+    Group g,
+    DateTime start,
+    DateTime firstPayout,
+    String summary,
+  ) async {
+    final me = await _requireMe();
+    final (eventRef, eventData) = _eventDoc(
+      g.id,
+      me,
+      'started',
+      'Tontine démarrée : $summary',
+    );
+    await (_db.batch()
+          ..update(_db.doc('groups/${g.id}'), {
+            'status': 'active',
+            'startDate': dateKey(start),
+            'firstPayoutDate': dateKey(firstPayout),
+            'startedAt': _now,
+          })
+          ..set(eventRef, eventData))
+        .commit();
+  }
+
+  /// Le participant déclare [count] cotisations, payées par Mobile Money
+  /// (capture) ou en espèces. Les pénalités de retard sont ajoutées.
   static Future<void> declareContributions({
     required Group group,
     required int count,
-    required Uint8List proof,
-    required String mime,
+    required PaymentMethod method,
+    Uint8List? proof,
+    String? mime,
+    String? note,
   }) async {
     final me = await _requireMe();
     final memberRef = _db.doc('groups/${group.id}/members/$uid');
@@ -683,53 +986,153 @@ class Api {
               : 'Il ne vous reste que $remaining cotisation(s) à payer',
         );
       }
-      final proofRef = _db.collection('proofs').doc();
-      tx.set(
-        proofRef,
-        _proofData(proof, mime, 'group', group.id, group.ownerId),
+      final penalty = group.penaltyFor(
+        member.declaredCount + 1,
+        count,
+        DateTime.now(),
       );
+      String? proofId;
+      if (method == PaymentMethod.mobileMoney) {
+        final proofRef = _db.collection('proofs').doc();
+        tx.set(
+          proofRef,
+          _proofData(proof!, mime!, 'group', group.id, group.ownerId),
+        );
+        proofId = proofRef.id;
+      }
+      final amount = count * group.contributionAmount + penalty;
       final payRef = _db.collection('groups/${group.id}/payments').doc();
       tx.set(payRef, {
         'userId': uid,
         'payerName': me.fullName,
         'payerPhone': me.phone,
         'count': count,
-        'amount': count * group.contributionAmount,
-        'proofId': proofRef.id,
+        'amount': amount,
+        'penalty': penalty,
+        'method': _methodKey(method),
+        'note': _cleanNote(note),
+        'proofId': proofId,
         'status': 'pending',
         'rejectionReason': null,
         'declaredAt': _now,
         'reviewedAt': null,
+        'recordedBy': 'member',
       });
       tx.update(memberRef, {
         'declaredCount': member.declaredCount + count,
         'lastPaymentId': payRef.id,
       });
+      final (eventRef, eventData) = _eventDoc(
+        group.id,
+        me,
+        'payment_declared',
+        'Paiement déclaré : ${contributionsLabel(count)}, ${money(amount)} '
+            '(${method == PaymentMethod.cash ? 'espèces' : 'Mobile Money'})',
+        memberId: uid,
+      );
+      tx.set(eventRef, eventData);
     });
   }
 
-  /// Validation : les cotisations comptent comme payées ; refus : elles
-  /// redeviennent à payer.
+  static String _methodKey(PaymentMethod m) =>
+      m == PaymentMethod.cash ? 'cash' : 'mobile_money';
+
+  static String? _cleanNote(String? note) {
+    final n = note?.trim() ?? '';
+    return n.isEmpty ? null : (n.length > 200 ? n.substring(0, 200) : n);
+  }
+
+  /// Validation : les cotisations (et pénalités) comptent comme payées ;
+  /// refus : elles redeviennent à payer.
   static Future<void> reviewContributions(
     String groupId,
     Payment p,
     bool approve,
     String? reason,
-  ) {
+  ) async {
+    final me = await _requireMe();
     final memberRef = _db.doc('groups/$groupId/members/${p.userId}');
-    return _db.runTransaction((tx) async {
+    await _db.runTransaction((tx) async {
       final member = GroupMember.fromDoc(await tx.get(memberRef));
-      tx.update(
-        _db.doc('groups/$groupId/payments/${p.id}'),
-        _review(approve, reason),
-      );
-      tx.update(
-        memberRef,
+      tx
+        ..update(
+          _db.doc('groups/$groupId/payments/${p.id}'),
+          _review(approve, reason),
+        )
+        ..update(
+          memberRef,
+          approve
+              ? {
+                  'approvedCount': member.approvedCount + p.count,
+                  'penaltyPaid': member.penaltyPaid + p.penalty,
+                }
+              : {'declaredCount': member.declaredCount - p.count},
+        );
+      final (eventRef, eventData) = _eventDoc(
+        groupId,
+        me,
+        approve ? 'payment_approved' : 'payment_rejected',
         approve
-            ? {'approvedCount': member.approvedCount + p.count}
-            : {'declaredCount': member.declaredCount - p.count},
+            ? 'Paiement de ${p.payer.fullName} validé : ${money(p.amount)}'
+            : 'Paiement de ${p.payer.fullName} refusé : ${reason ?? ''}',
+        memberId: p.userId,
       );
+      tx.set(eventRef, eventData);
     });
+  }
+
+  /// Le tontinier encaisse lui-même un paiement (validé d'office).
+  static Future<Payment> recordPayment({
+    required Group group,
+    required GroupMember member,
+    required int count,
+    required PaymentMethod method,
+    required int penalty,
+    String? note,
+  }) async {
+    final me = await _requireMe();
+    final memberRef = _db.doc('groups/${group.id}/members/${member.userId}');
+    final payRef = _db.collection('groups/${group.id}/payments').doc();
+    final amount = count * group.contributionAmount + penalty;
+    await _db.runTransaction((tx) async {
+      final fresh = GroupMember.fromDoc(await tx.get(memberRef));
+      if (count > group.totalContributions - fresh.declaredCount) {
+        throw const AppException('Plus que les cotisations restantes');
+      }
+      tx
+        ..set(payRef, {
+          'userId': member.userId,
+          'payerName': fresh.name,
+          'payerPhone': fresh.profile.phone,
+          'count': count,
+          'amount': amount,
+          'penalty': penalty,
+          'method': _methodKey(method),
+          'note': _cleanNote(note),
+          'proofId': null,
+          'status': 'approved',
+          'rejectionReason': null,
+          'declaredAt': _now,
+          'reviewedAt': _now,
+          'recordedBy': 'owner',
+        })
+        ..update(memberRef, {
+          'declaredCount': fresh.declaredCount + count,
+          'approvedCount': fresh.approvedCount + count,
+          'penaltyPaid': fresh.penaltyPaid + penalty,
+        });
+      final (eventRef, eventData) = _eventDoc(
+        group.id,
+        me,
+        'payment_recorded',
+        'Encaissé par le tontinier : ${fresh.name}, '
+            '${contributionsLabel(count)}, ${money(amount)} '
+            '(${method == PaymentMethod.cash ? 'espèces' : 'Mobile Money'})',
+        memberId: member.userId,
+      );
+      tx.set(eventRef, eventData);
+    });
+    return Payment.fromDoc(await payRef.get());
   }
 
   /// Remises déjà confirmées, par numéro de cagnotte.
@@ -740,24 +1143,59 @@ class Api {
     };
   }
 
-  /// Le tontinier confirme avoir remis la cagnotte en cours à son
-  /// bénéficiaire.
+  /// Le tontinier confirme avoir remis la cagnotte en cours.
   static Future<void> confirmPayout(Group g) async {
+    final me = await _requireMe();
     final pot = g.paidOutCount + 1;
     final beneficiary = g.beneficiaryOf(pot);
     if (beneficiary == null) {
       throw const AppException('Bénéficiaire introuvable');
     }
-    final batch = _db.batch()
-      ..set(_db.doc('groups/${g.id}/payouts/$pot'), {
-        'tour': pot,
-        'beneficiaryId': beneficiary.userId,
-        'beneficiaryName': beneficiary.name,
-        'amount': g.netPot,
-        'paidAt': _now,
-      })
-      ..update(_db.doc('groups/${g.id}'), {'paidOutCount': pot});
-    await batch.commit();
+    final (eventRef, eventData) = _eventDoc(
+      g.id,
+      me,
+      'payout_confirmed',
+      'Cagnotte n°$pot remise à ${beneficiary.name} : ${money(g.netPot)}',
+    );
+    await (_db.batch()
+          ..set(_db.doc('groups/${g.id}/payouts/$pot'), {
+            'tour': pot,
+            'beneficiaryId': beneficiary.userId,
+            'beneficiaryName': beneficiary.name,
+            'amount': g.netPot,
+            'paidAt': _now,
+            'receivedAt': null,
+            'problem': null,
+          })
+          ..update(_db.doc('groups/${g.id}'), {'paidOutCount': pot})
+          ..set(eventRef, eventData))
+        .commit();
+  }
+
+  /// Le bénéficiaire confirme avoir reçu la cagnotte, ou signale un
+  /// problème ([problem]).
+  static Future<void> answerPayout(
+    String groupId,
+    Payout p, {
+    String? problem,
+  }) async {
+    final me = await _requireMe();
+    final (eventRef, eventData) = _eventDoc(
+      groupId,
+      me,
+      problem == null ? 'payout_received' : 'payout_problem',
+      problem == null
+          ? '${me.fullName} confirme avoir reçu la cagnotte n°${p.pot}'
+          : '${me.fullName} signale un problème sur la cagnotte n°${p.pot} : '
+                '$problem',
+    );
+    await (_db.batch()
+          ..update(_db.doc('groups/$groupId/payouts/${p.pot}'), {
+            'receivedAt': problem == null ? _now : null,
+            'problem': problem?.trim(),
+          })
+          ..set(eventRef, eventData))
+        .commit();
   }
 
   static Json _review(bool approve, String? reason) => {
@@ -830,8 +1268,10 @@ class Api {
   static Future<void> declareCarnetPayment({
     required Carnet carnet,
     required int caseCount,
-    required Uint8List proof,
-    required String mime,
+    required PaymentMethod method,
+    Uint8List? proof,
+    String? mime,
+    String? note,
   }) async {
     final me = await _requireMe();
     final carnetRef = _db.doc('carnets/${carnet.id}');
@@ -842,29 +1282,77 @@ class Api {
           'Il ne reste que ${fresh.remainingCases} case(s) à payer sur ce carnet',
         );
       }
-      final proofRef = _db.collection('proofs').doc();
-      tx.set(
-        proofRef,
-        _proofData(proof, mime, 'carnet', carnet.id, carnet.ownerId),
-      );
+      String? proofId;
+      if (method == PaymentMethod.mobileMoney) {
+        final proofRef = _db.collection('proofs').doc();
+        tx.set(
+          proofRef,
+          _proofData(proof!, mime!, 'carnet', carnet.id, carnet.ownerId),
+        );
+        proofId = proofRef.id;
+      }
       final payRef = carnetRef.collection('payments').doc();
-      tx.set(payRef, {
-        'userId': uid,
-        'payerName': me.fullName,
-        'payerPhone': me.phone,
-        'caseCount': caseCount,
-        'amount': caseCount * fresh.caseAmount,
-        'proofId': proofRef.id,
-        'status': 'pending',
-        'rejectionReason': null,
-        'declaredAt': _now,
-        'reviewedAt': null,
-      });
-      tx.update(carnetRef, {
-        'usedCases': fresh.usedCases + caseCount,
-        'lastPaymentId': payRef.id,
-      });
+      tx
+        ..set(payRef, {
+          'userId': uid,
+          'payerName': me.fullName,
+          'payerPhone': me.phone,
+          'caseCount': caseCount,
+          'amount': caseCount * fresh.caseAmount,
+          'method': _methodKey(method),
+          'note': _cleanNote(note),
+          'proofId': proofId,
+          'status': 'pending',
+          'rejectionReason': null,
+          'declaredAt': _now,
+          'reviewedAt': null,
+          'recordedBy': 'member',
+        })
+        ..update(carnetRef, {
+          'usedCases': fresh.usedCases + caseCount,
+          'lastPaymentId': payRef.id,
+        });
     });
+  }
+
+  /// Le tontinier encaisse lui-même des cases (validées d'office).
+  static Future<Payment> recordCarnetPayment({
+    required Carnet carnet,
+    required int caseCount,
+    required PaymentMethod method,
+    String? note,
+  }) async {
+    final carnetRef = _db.doc('carnets/${carnet.id}');
+    final payRef = carnetRef.collection('payments').doc();
+    await _db.runTransaction((tx) async {
+      final fresh = Carnet.fromDoc(await tx.get(carnetRef));
+      if (caseCount > fresh.remainingCases) {
+        throw AppException(
+          'Il ne reste que ${fresh.remainingCases} case(s) à payer sur ce carnet',
+        );
+      }
+      tx
+        ..set(payRef, {
+          'userId': fresh.clientId,
+          'payerName': fresh.client?.fullName,
+          'payerPhone': fresh.client?.phone,
+          'caseCount': caseCount,
+          'amount': caseCount * fresh.caseAmount,
+          'method': _methodKey(method),
+          'note': _cleanNote(note),
+          'proofId': null,
+          'status': 'approved',
+          'rejectionReason': null,
+          'declaredAt': _now,
+          'reviewedAt': _now,
+          'recordedBy': 'owner',
+        })
+        ..update(carnetRef, {
+          'usedCases': fresh.usedCases + caseCount,
+          'approvedCases': fresh.approvedCases + caseCount,
+        });
+    });
+    return Payment.fromDoc(await payRef.get());
   }
 
   /// Validation : les cases deviennent payées ; refus : elles sont libérées.
@@ -888,6 +1376,136 @@ class Api {
             : {'usedCases': fresh.usedCases - p.caseCount},
       );
     });
+  }
+
+  // ---------------------------------------------------- Profil pro
+
+  static final _businesses = <String, Business?>{};
+
+  /// Profil pro d'un tontinier (null s'il ne l'a pas rempli).
+  static Future<Business?> business(String ownerId) async {
+    if (_businesses.containsKey(ownerId)) return _businesses[ownerId];
+    try {
+      final doc = await _db.doc('businesses/$ownerId').get();
+      return _businesses[ownerId] = doc.exists ? Business.fromDoc(doc) : null;
+    } on FirebaseException {
+      return null;
+    }
+  }
+
+  static Future<void> saveBusiness(Business b) async {
+    await _db.doc('businesses/$uid').set({
+      'name': b.name.trim(),
+      'city': b.city.trim(),
+      'contactPhone': b.contactPhone.trim(),
+      'logo': b.logo,
+      'logoMime': b.logoMime,
+      'accounts': [
+        for (final a in b.accounts)
+          if (a.number.trim().isNotEmpty) a.toJson(),
+      ],
+      'updatedAt': _now,
+    });
+    _businesses.remove(uid);
+  }
+
+  /// Logo choisi dans la galerie (déjà réduit) : base64 et type.
+  static Future<(String, String)> readLogo(XFile file) async {
+    final (bytes, mime) = await readProof(file);
+    final data = base64.encode(bytes);
+    if (data.length > 200000) {
+      throw const AppException(
+        'Logo trop lourd. Choisissez une image plus petite.',
+      );
+    }
+    return (data, mime);
+  }
+
+  // ---------------------------------------------------- Gains du tontinier
+
+  /// Tableau de bord des gains : encaissements du mois, commissions,
+  /// pénalités, retards et prochaines remises.
+  static Future<Gains> gains() async {
+    final now = DateTime.now();
+    final monthStart = DateTime(now.year, now.month);
+    final today = DateTime(now.year, now.month, now.day);
+    final results = await Future.wait([
+      _db.collection('groups').where('ownerId', isEqualTo: uid).get(),
+      _db.collection('carnets').where('ownerId', isEqualTo: uid).get(),
+    ]);
+    final groupDocs = results[0].docs
+        .map(Group.fromDoc)
+        .where((g) => !g.isLegacy && g.isStarted)
+        .toList();
+    final carnets = results[1].docs.map(Carnet.fromDoc).toList();
+    final groups = await Future.wait(groupDocs.map((g) => group(g.id)));
+
+    Future<int> collected(String path) async {
+      final snap = await _db
+          .collection(path)
+          .where('status', isEqualTo: 'approved')
+          .get();
+      return snap.docs
+          .map(Payment.fromDoc)
+          .where((p) {
+            final at = p.reviewedAt ?? p.declaredAt;
+            return !at.isBefore(monthStart);
+          })
+          .fold<int>(0, (n, p) => n + p.amount);
+    }
+
+    final sums = await Future.wait([
+      for (final g in groups) collected('groups/${g.id}/payments'),
+      for (final c in carnets.where((c) => c.clientId != null))
+        collected('carnets/${c.id}/payments'),
+    ]);
+
+    var earned = 0;
+    var upcoming = 0;
+    var penalties = 0;
+    var lateAmount = 0;
+    var lateMembers = 0;
+    final payouts = <(Group, int, DateTime)>[];
+    for (final g in groups) {
+      earned += g.paidOutCount * g.commission;
+      upcoming += (g.memberCount - g.paidOutCount) * g.commission;
+      for (final m in g.members) {
+        penalties += m.penaltyPaid;
+        final s = g.standingOf(m, now);
+        if (s.late > 0 && g.status == GroupStatus.active) {
+          lateMembers++;
+          lateAmount += s.late * g.contributionAmount + s.penaltyDue;
+        }
+      }
+      if (g.status == GroupStatus.active) {
+        final pot = g.currentPot;
+        final date = g.payoutDate(pot);
+        if (!date.isAfter(today.add(const Duration(days: 7)))) {
+          payouts.add((g, pot, date));
+        }
+      }
+    }
+    for (final c in carnets) {
+      if (c.isComplete) {
+        earned += c.caseAmount;
+      } else if (c.clientId != null) {
+        upcoming += c.caseAmount;
+      }
+    }
+    payouts.sort((a, b) => a.$3.compareTo(b.$3));
+    return Gains(
+      collectedThisMonth: sums.fold(0, (n, s) => n + s),
+      commissionsEarned: earned,
+      commissionsUpcoming: upcoming,
+      penaltiesCollected: penalties,
+      lateAmount: lateAmount,
+      lateMembers: lateMembers,
+      upcomingPayouts: payouts,
+      activeGroups: groups.where((g) => g.status == GroupStatus.active).length,
+      activeCarnets: carnets
+          .where((c) => c.clientId != null && !c.isComplete)
+          .length,
+    );
   }
 
   // ------------------------------------------------------ Preuves (images)

@@ -69,9 +69,29 @@ String commissionLabel(Group g) => g.commissionType == CommissionType.percent
 String groupStatusLabel(GroupStatus s) => switch (s) {
   GroupStatus.recruiting => 'Inscriptions',
   GroupStatus.drawing => 'Tirage au sort',
+  GroupStatus.ready => 'Prête à démarrer',
   GroupStatus.active => 'En cours',
   GroupStatus.finished => 'Terminée',
 };
+
+String methodLabel(PaymentMethod m) => switch (m) {
+  PaymentMethod.mobileMoney => 'Mobile Money',
+  PaymentMethod.cash => 'Espèces',
+};
+
+/// « du 1 nov. 2026 au 28 août 2027 »
+String periodLabel(DateTime from, DateTime to) =>
+    'du ${dateShort(from)} au ${dateShort(to)}';
+
+/// Opérateurs Mobile Money proposés pour les numéros de paiement.
+const mobileOperators = [
+  'MTN MoMo',
+  'Moov Money',
+  'Celtiis Cash',
+  'Wave',
+  'Orange Money',
+  'Autre',
+];
 
 String paymentStatusLabel(PaymentStatus s) => switch (s) {
   PaymentStatus.pending => 'En attente',

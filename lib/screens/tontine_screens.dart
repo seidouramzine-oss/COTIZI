@@ -6,6 +6,7 @@ import '../format.dart';
 import '../models.dart';
 import '../widgets/common.dart';
 import 'carnet_screens.dart';
+import 'group_form.dart';
 import 'group_screens.dart';
 import 'subscription_screens.dart';
 
@@ -189,7 +190,7 @@ class _TontineScreenState extends State<TontineScreen> {
 
   Future<void> _createGroup() async {
     if (await checkCanCreate(context) && mounted) {
-      await _open(CreateGroupScreen(tontine: widget.tontine));
+      await _open(GroupFormScreen(tontine: widget.tontine));
     }
   }
 

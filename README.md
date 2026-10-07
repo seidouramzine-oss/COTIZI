@@ -1,8 +1,10 @@
 # COTIZI
 
-Application de gestion de tontine : **tontines à cagnotte** (groupes, tirage au sort,
-déclaration des paiements avec preuve, validation par le tontinier) et
-**tontines à carnet** (carnets de 31 cases, la dernière case revenant au tontinier).
+Application de gestion de tontine pour les tontiniers : **tontines à cagnotte**
+(groupes, tirage au sort ou ordre fixé, bouton « Démarrer », paiements Mobile Money
+ou espèces, pénalités de retard, remises confirmées par le bénéficiaire) et
+**tontines à carnet** (carnets de 31 cases, la dernière case revenant au tontinier),
+avec profil pro, tableau des gains, historique des actions et relevés PDF.
 
 Les règles de fonctionnement sont décrites dans [docs/REGLES_METIER.md](docs/REGLES_METIER.md).
 
@@ -23,9 +25,11 @@ lib/
   api.dart               toutes les lectures / écritures Firebase
   models.dart            tontines, groupes, carnets, paiements (+ calculs)
   format.dart            montants FCFA, dates, numéros, messages d'erreur
+  reports.dart           relevés et bilans PDF
   screens/               écrans (connexion, accueil, tontines, groupes, carnets, paiements,
-                         abonnement, administration)
+                         profil pro, gains, abonnement, administration)
   widgets/common.dart    composants partagés
+assets/fonts/            police Roboto des relevés PDF
 firebase/
   firestore.rules        règles de sécurité (à publier dans la console Firebase)
   tests/                 scénario de test des règles sur l'émulateur Firestore

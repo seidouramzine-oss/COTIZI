@@ -12,6 +12,8 @@ Group _group({
   CommissionType commissionType = CommissionType.percent,
   double commissionValue = 5,
   GroupStatus status = GroupStatus.active,
+  int penalty = 0,
+  int grace = 0,
   List<GroupMember> members_ = const [],
 }) => Group(
   id: 'g',
@@ -26,6 +28,9 @@ Group _group({
   startDate: start ?? DateTime(2026, 1, 31),
   contributionsPerPot: perPot,
   firstPayoutDate: firstPayout ?? start ?? DateTime(2026, 1, 31),
+  orderMode: OrderMode.draw,
+  penaltyAmount: penalty,
+  penaltyGraceDays: grace,
   commissionType: commissionType,
   commissionValue: commissionValue,
   inviteCode: 'ABC123',
@@ -274,6 +279,66 @@ void main() {
     test('ajout de mois : le 31 devient le dernier jour du mois', () {
       expect(addMonths(DateTime(2026, 1, 31, 9), 1), DateTime(2026, 2, 28, 9));
       expect(addMonths(DateTime(2026, 10, 7), 12), DateTime(2027, 10, 7));
+    });
+  });
+
+  group('Version 2', () {
+    test('dates de début et de fin de la tontine', () {
+      final g = _group(
+        members: 10,
+        frequency: Frequency.daily,
+        start: DateTime(2026, 11, 1),
+        perPot: 30,
+        firstPayout: DateTime(2026, 11, 30),
+      );
+      expect(g.startDate, DateTime(2026, 11, 1));
+      expect(g.endDate, DateTime(2027, 8, 27));
+    });
+
+    test('pénalités : au-delà des jours de tolérance', () {
+      final g = _group(
+        frequency: Frequency.daily,
+        start: DateTime(2026, 10, 1),
+        perPot: 30,
+        penalty: 500,
+        grace: 2,
+      );
+      final today = DateTime(2026, 10, 10, 15);
+      // Cotisations du 1 au 7 octobre : plus de 2 jours de retard
+      expect(g.penaltyFor(1, 7, today), 7 * 500);
+      // 8 octobre (2 jours) et 9, 10 octobre : dans la tolérance
+      expect(g.penaltyFor(8, 3, today), 0);
+      expect(g.penaltyFor(6, 4, today), 2 * 500);
+      final s = g.standingOf(
+        GroupMember(
+          userId: 'a',
+          drawPosition: 1,
+          profile: const Profile(fullName: 'A', phone: '+22901000000'),
+          declaredCount: 5,
+          approvedCount: 5,
+        ),
+        today,
+      );
+      expect(s.late, 5);
+      expect(s.penaltyDue, 2 * 500);
+    });
+
+    test('sans pénalité : rien à payer en plus', () {
+      final g = _group(
+        frequency: Frequency.daily,
+        start: DateTime(2026, 10, 1),
+      );
+      expect(g.penaltyFor(1, 5, DateTime(2026, 12, 1)), 0);
+    });
+
+    test('place reprise : paiements des deux identifiants', () {
+      const m = GroupMember(
+        userId: 'uid1',
+        drawPosition: 2,
+        profile: Profile(fullName: 'Zoé', phone: '+22997000099'),
+        claimedFrom: 'p22997000099',
+      );
+      expect(m.paymentIds, ['uid1', 'p22997000099']);
     });
   });
 }

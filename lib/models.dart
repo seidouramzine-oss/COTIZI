@@ -8,7 +8,15 @@ enum Frequency { daily, weekly, biweekly, monthly }
 
 enum CommissionType { percent, fixed }
 
-enum GroupStatus { recruiting, drawing, active, finished }
+/// Déroulé d'un groupe : inscriptions, ordre des remises (tirage ou ordre
+/// fixé), prêt à démarrer, en cours, terminé.
+enum GroupStatus { recruiting, drawing, ready, active, finished }
+
+/// Ordre des remises : tirage au sort ou fixé par le tontinier.
+enum OrderMode { draw, manual }
+
+/// Mode de paiement d'une cotisation ou d'une case.
+enum PaymentMethod { mobileMoney, cash }
 
 enum PaymentStatus { pending, approved, rejected }
 
@@ -187,6 +195,10 @@ class Group {
     this.contributionsPerPot,
     this.firstPayoutDate,
     this.paidOutCount = 0,
+    this.orderMode,
+    this.penaltyAmount = 0,
+    this.penaltyGraceDays = 0,
+    this.startedAt,
     this.joinedCount = 0,
     this.drawnCount = 0,
     this.memberIds = const [],
@@ -228,14 +240,33 @@ class Group {
 
   /// Cagnottes déjà remises à leur bénéficiaire.
   final int paidOutCount;
+
+  /// Ordre des remises (null : groupe d'une version précédente).
+  final OrderMode? orderMode;
+
+  /// Pénalité par cotisation payée en retard (0 : pas de pénalité), au-delà
+  /// de [penaltyGraceDays] jours de tolérance. Elle revient au tontinier.
+  final int penaltyAmount;
+  final int penaltyGraceDays;
+
+  /// Démarrage par le tontinier : les dates sont alors figées.
+  final DateTime? startedAt;
   final int joinedCount;
   final int drawnCount;
   final List<String> memberIds;
   final List<GroupMember> members;
   final int pendingCount;
 
-  /// Groupe de l'ancienne version (une cotisation par tour) : consultation.
-  bool get isLegacy => contributionsPerPot == null;
+  /// Groupe d'une version précédente : consultation seulement.
+  bool get isLegacy => orderMode == null;
+
+  bool get isStarted =>
+      status == GroupStatus.active || status == GroupStatus.finished;
+
+  bool get hasPenalty => penaltyAmount > 0;
+
+  /// Date de fin : dernière remise.
+  DateTime get endDate => payoutDate(memberCount);
 
   int get perPot => contributionsPerPot ?? 1;
 
@@ -304,14 +335,32 @@ class Group {
   }
 
   /// Situation d'un participant à la date [today].
-  MemberStanding standingOf(GroupMember m, DateTime today) => MemberStanding(
-    due: status == GroupStatus.active || status == GroupStatus.finished
-        ? dueCount(today)
-        : 0,
-    declared: m.declaredCount,
-    approved: m.approvedCount,
-    total: totalContributions,
-  );
+  MemberStanding standingOf(GroupMember m, DateTime today) {
+    final due = isStarted && !isLegacy ? dueCount(today) : 0;
+    final late = max(0, due - m.declaredCount);
+    return MemberStanding(
+      due: due,
+      declared: m.declaredCount,
+      approved: m.approvedCount,
+      total: totalContributions,
+      penaltyDue: late > 0 ? penaltyFor(m.declaredCount + 1, late, today) : 0,
+      penaltyPaid: m.penaltyPaid,
+    );
+  }
+
+  /// Pénalités pour les cotisations n°[from] à n°[from] + [count] - 1
+  /// payées à la date [today] : une par cotisation dont l'échéance est
+  /// dépassée de plus de [penaltyGraceDays] jours.
+  int penaltyFor(int from, int count, DateTime today) {
+    if (!hasPenalty || isLegacy) return 0;
+    final day = DateTime(today.year, today.month, today.day);
+    var n = 0;
+    for (var i = from; i < from + count && i <= totalContributions; i++) {
+      final limit = contributionDate(i).add(Duration(days: penaltyGraceDays));
+      if (day.isAfter(DateTime(limit.year, limit.month, limit.day))) n++;
+    }
+    return n * penaltyAmount;
+  }
 
   /// Cagnotte en cours de collecte (la première pas encore remise).
   int get currentPot => min(paidOutCount + 1, memberCount);
@@ -359,6 +408,10 @@ class Group {
     contributionsPerPot: contributionsPerPot,
     firstPayoutDate: firstPayoutDate,
     paidOutCount: paidOutCount,
+    orderMode: orderMode,
+    penaltyAmount: penaltyAmount,
+    penaltyGraceDays: penaltyGraceDays,
+    startedAt: startedAt,
     joinedCount: joinedCount,
     drawnCount: drawnCount,
     memberIds: memberIds,
@@ -374,13 +427,29 @@ class Group {
         ? null
         : _int(json['contributionsPerPot']);
     final paidOut = _int(json['paidOutCount']);
-    final status = json['status'] == 'recruiting'
-        ? GroupStatus.recruiting
-        : drawnCount < memberCount
-        ? GroupStatus.drawing
-        : perPot != null && paidOut >= memberCount
-        ? GroupStatus.finished
-        : GroupStatus.active;
+    final orderMode = switch (json['orderMode']) {
+      'draw' => OrderMode.draw,
+      'manual' => OrderMode.manual,
+      _ => null,
+    };
+    final raw = json['status'];
+    final GroupStatus status;
+    if (raw == 'recruiting') {
+      status = GroupStatus.recruiting;
+    } else if (orderMode == null) {
+      // Versions précédentes : en cours dès que tout le monde a son numéro
+      status = drawnCount < memberCount
+          ? GroupStatus.drawing
+          : GroupStatus.active;
+    } else if (raw == 'active') {
+      status = paidOut >= memberCount
+          ? GroupStatus.finished
+          : GroupStatus.active;
+    } else {
+      status = drawnCount < memberCount
+          ? GroupStatus.drawing
+          : GroupStatus.ready;
+    }
     return Group(
       id: doc.id,
       tontineId: json['tontineId'] as String,
@@ -401,6 +470,12 @@ class Group {
           ? DateTime.parse(json['firstPayoutDate'] as String)
           : null,
       paidOutCount: paidOut,
+      orderMode: orderMode,
+      penaltyAmount: _int(json['penaltyAmount']),
+      penaltyGraceDays: _int(json['penaltyGraceDays']),
+      startedAt: json['startedAt'] is Timestamp
+          ? (json['startedAt'] as Timestamp).toDate()
+          : null,
       joinedCount: _int(json['joinedCount']),
       drawnCount: drawnCount,
       memberIds: List<String>.from(json['memberIds'] as List? ?? const []),
@@ -415,7 +490,15 @@ class MemberStanding {
     required this.declared,
     required this.approved,
     required this.total,
+    this.penaltyDue = 0,
+    this.penaltyPaid = 0,
   });
+
+  /// Pénalités si les cotisations en retard étaient payées aujourd'hui.
+  final int penaltyDue;
+
+  /// Pénalités déjà payées (validées).
+  final int penaltyPaid;
 
   /// Cotisations dont la date est arrivée.
   final int due;
@@ -440,7 +523,26 @@ class GroupMember {
     required this.profile,
     this.declaredCount = 0,
     this.approvedCount = 0,
+    this.penaltyPaid = 0,
+    this.managed = false,
+    this.claimedBy,
+    this.claimedFrom,
   });
+
+  /// Pénalités payées (validées).
+  final int penaltyPaid;
+
+  /// Participant sans application, géré par le tontinier.
+  final bool managed;
+
+  /// Place réservée reprise par son titulaire (compte [claimedBy]).
+  final String? claimedBy;
+
+  /// Compte qui a repris une place réservée (identifiant de la place).
+  final String? claimedFrom;
+
+  /// Identifiants de ses paiements : son compte et sa place réservée.
+  List<String> get paymentIds => [userId, ?claimedFrom];
 
   final String userId;
   final int? drawPosition;
@@ -464,6 +566,10 @@ class GroupMember {
       profile: Profile.fromJson(json),
       declaredCount: _int(json['declaredCount']),
       approvedCount: _int(json['approvedCount']),
+      penaltyPaid: _int(json['penaltyPaid']),
+      managed: json['managed'] == true,
+      claimedBy: json['claimedBy'] as String?,
+      claimedFrom: json['claimedFrom'] as String?,
     );
   }
 }
@@ -472,23 +578,40 @@ class GroupMember {
 class Payout {
   const Payout({
     required this.pot,
+    required this.beneficiaryId,
     required this.beneficiaryName,
     required this.amount,
     required this.paidAt,
+    this.receivedAt,
+    this.problem,
   });
 
   final int pot;
+  final String beneficiaryId;
   final String beneficiaryName;
   final int amount;
   final DateTime paidAt;
+
+  /// Réception confirmée par le bénéficiaire.
+  final DateTime? receivedAt;
+
+  /// Problème signalé par le bénéficiaire.
+  final String? problem;
+
+  bool get confirmed => receivedAt != null;
 
   factory Payout.fromDoc(DocumentSnapshot<Json> doc) {
     final json = doc.data()!;
     return Payout(
       pot: _int(json['tour']),
+      beneficiaryId: json['beneficiaryId'] as String? ?? '',
       beneficiaryName: json['beneficiaryName'] as String? ?? '',
       amount: _int(json['amount']),
       paidAt: _time(json['paidAt']),
+      receivedAt: json['receivedAt'] is Timestamp
+          ? (json['receivedAt'] as Timestamp).toDate()
+          : null,
+      problem: json['problem'] as String?,
     );
   }
 }
@@ -507,7 +630,21 @@ class Payment {
     this.tourNumber = 0,
     this.count = 0,
     this.caseCount = 0,
+    this.penalty = 0,
+    this.method = PaymentMethod.mobileMoney,
+    this.note,
+    this.recordedByOwner = false,
   });
+
+  /// Pénalités de retard comprises dans [amount].
+  final int penalty;
+  final PaymentMethod method;
+  final String? note;
+
+  /// Encaissé directement par le tontinier (validé d'office).
+  final bool recordedByOwner;
+
+  bool get isCash => method == PaymentMethod.cash;
 
   final String id;
   final String userId;
@@ -537,7 +674,7 @@ class Payment {
       id: doc.id,
       userId: json['userId'] as String,
       amount: _int(json['amount']),
-      proofId: json['proofId'] as String,
+      proofId: json['proofId'] as String? ?? '',
       status: _enum(PaymentStatus.values, json['status']),
       rejectionReason: json['rejectionReason'] as String?,
       declaredAt: _time(json['declaredAt']),
@@ -551,6 +688,12 @@ class Payment {
       tourNumber: _int(json['tourNumber']),
       count: _int(json['count']),
       caseCount: _int(json['caseCount']),
+      penalty: _int(json['penalty']),
+      method: json['method'] == 'cash'
+          ? PaymentMethod.cash
+          : PaymentMethod.mobileMoney,
+      note: json['note'] as String?,
+      recordedByOwner: json['recordedBy'] == 'owner',
     );
   }
 }
@@ -659,9 +802,13 @@ class MemberGroupStatus {
     required this.group,
     required this.payments,
     required this.standing,
+    this.payoutToConfirm,
   });
 
   final Group group;
+
+  /// Cagnotte remise par le tontinier, à confirmer par le participant.
+  final Payout? payoutToConfirm;
 
   /// Ses paiements dans ce groupe (les plus récents d'abord).
   final List<Payment> payments;
@@ -680,14 +827,164 @@ class MemberOverview {
   /// Cotisations en retard dans les cagnottes en cours.
   int get lateCount => active.fold(0, (n, s) => n + s.standing.late);
 
-  /// Montant total des cotisations en retard.
+  /// Montant total à régulariser : cotisations en retard et pénalités.
   int get lateAmount => active.fold(
     0,
-    (n, s) => n + s.standing.late * s.group.contributionAmount,
+    (n, s) =>
+        n +
+        s.standing.late * s.group.contributionAmount +
+        s.standing.penaltyDue,
   );
+
+  /// Pénalités comprises dans [lateAmount].
+  int get latePenalty => active.fold(0, (n, s) => n + s.standing.penaltyDue);
 
   /// Cagnottes en cours (nouvelle version).
   List<MemberGroupStatus> get active => groups
       .where((s) => !s.group.isLegacy && s.group.status == GroupStatus.active)
       .toList();
+}
+
+/// Numéro de paiement du tontinier (Mobile Money).
+class PaymentAccount {
+  const PaymentAccount({
+    required this.operator,
+    required this.number,
+    this.holder = '',
+  });
+
+  final String operator;
+  final String number;
+  final String holder;
+
+  Json toJson() => {'operator': operator, 'number': number, 'holder': holder};
+
+  factory PaymentAccount.fromJson(Map<dynamic, dynamic> json) => PaymentAccount(
+    operator: json['operator'] as String? ?? '',
+    number: json['number'] as String? ?? '',
+    holder: json['holder'] as String? ?? '',
+  );
+}
+
+/// Profil pro du tontinier : affiché à ses clients, sur les reçus et les
+/// relevés.
+class Business {
+  const Business({
+    required this.ownerId,
+    required this.name,
+    this.city = '',
+    this.contactPhone = '',
+    this.logo,
+    this.logoMime,
+    this.accounts = const [],
+  });
+
+  final String ownerId;
+  final String name;
+  final String city;
+  final String contactPhone;
+
+  /// Logo compressé (base64).
+  final String? logo;
+  final String? logoMime;
+  final List<PaymentAccount> accounts;
+
+  factory Business.fromDoc(DocumentSnapshot<Json> doc) {
+    final json = doc.data()!;
+    return Business(
+      ownerId: doc.id,
+      name: json['name'] as String? ?? '',
+      city: json['city'] as String? ?? '',
+      contactPhone: json['contactPhone'] as String? ?? '',
+      logo: json['logo'] as String?,
+      logoMime: json['logoMime'] as String?,
+      accounts: [
+        for (final a in json['accounts'] as List? ?? const [])
+          PaymentAccount.fromJson(a as Map),
+      ],
+    );
+  }
+}
+
+/// Ligne du journal d'un groupe.
+class GroupEvent {
+  const GroupEvent({
+    required this.type,
+    required this.text,
+    required this.actorName,
+    required this.at,
+  });
+
+  final String type;
+  final String text;
+  final String actorName;
+  final DateTime at;
+
+  factory GroupEvent.fromDoc(DocumentSnapshot<Json> doc) {
+    final json = doc.data()!;
+    return GroupEvent(
+      type: json['type'] as String? ?? '',
+      text: json['text'] as String? ?? '',
+      actorName: json['actorName'] as String? ?? '',
+      at: _time(json['at']),
+    );
+  }
+}
+
+/// Conditions d'un groupe saisies par le tontinier (création, modification).
+class GroupTerms {
+  const GroupTerms({
+    required this.name,
+    required this.memberCount,
+    required this.contributionAmount,
+    required this.frequency,
+    required this.startDate,
+    required this.contributionsPerPot,
+    required this.firstPayoutDate,
+    required this.orderMode,
+    required this.penaltyAmount,
+    required this.penaltyGraceDays,
+    required this.commissionType,
+    required this.commissionValue,
+  });
+
+  final String name;
+  final int memberCount;
+  final int contributionAmount;
+  final Frequency frequency;
+  final DateTime startDate;
+  final int contributionsPerPot;
+  final DateTime firstPayoutDate;
+  final OrderMode orderMode;
+  final int penaltyAmount;
+  final int penaltyGraceDays;
+  final CommissionType commissionType;
+  final double commissionValue;
+}
+
+/// Tableau de bord des gains du tontinier.
+class Gains {
+  const Gains({
+    required this.collectedThisMonth,
+    required this.commissionsEarned,
+    required this.commissionsUpcoming,
+    required this.penaltiesCollected,
+    required this.lateAmount,
+    required this.lateMembers,
+    required this.upcomingPayouts,
+    required this.activeGroups,
+    required this.activeCarnets,
+  });
+
+  final int collectedThisMonth;
+  final int commissionsEarned;
+  final int commissionsUpcoming;
+  final int penaltiesCollected;
+  final int lateAmount;
+  final int lateMembers;
+
+  /// Remises des 7 prochains jours : (groupe, n°, date).
+  final List<(Group, int, DateTime)> upcomingPayouts;
+  final int activeGroups;
+  final int activeCarnets;
 }

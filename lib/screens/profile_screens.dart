@@ -9,6 +9,7 @@ import '../invite_link.dart';
 import '../models.dart';
 import '../settings.dart';
 import '../widgets/common.dart';
+import 'business_screens.dart';
 import 'subscription_screens.dart';
 
 /// Onglet « Profil » : informations du compte et paramètres.
@@ -189,6 +190,24 @@ class _ProfilePageState extends State<ProfilePage> {
                 final status = AccessStatus(_p, isAdmin: snap.data ?? false);
                 return _Group(
                   children: [
+                    ListTile(
+                      leading: const Icon(Icons.storefront_outlined),
+                      title: const Text('Mon profil pro'),
+                      subtitle: const Text(
+                        'Nom de l\'activité, logo, numéros de paiement',
+                      ),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () => _push(const BusinessProfileScreen()),
+                    ),
+                    ListTile(
+                      leading: const Icon(Icons.insights_outlined),
+                      title: const Text('Mes gains'),
+                      subtitle: const Text(
+                        'Encaissements, commissions, pénalités, retards',
+                      ),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () => _push(const GainsScreen()),
+                    ),
                     ListTile(
                       leading: const Icon(Icons.workspace_premium_outlined),
                       title: const Text('Mon abonnement'),
@@ -502,7 +521,10 @@ class HelpScreen extends StatelessWidget {
               'reçoivent un lien : en appuyant dessus, ils installent COTIZI et '
               'rejoignent directement votre tontine. S\'ils ouvrent COTIZI sans '
               'le lien, ils choisissent « Client » à l\'inscription et entrent '
-              'le code d\'invitation.',
+              'le code d\'invitation. Un participant sans téléphone ? Dans un '
+              'groupe, « Ajouter un participant sans application » lui réserve '
+              'une place : vous encaissez pour lui, et il pourra la récupérer '
+              'plus tard avec son numéro.',
         ),
       if (!isMember)
         (
@@ -517,10 +539,12 @@ class HelpScreen extends StatelessWidget {
         Icons.casino_outlined,
         'Tontine à cagnotte',
         'Le tontinier fixe la cotisation (ex. 5 000 F chaque jour), la durée de '
-            'collecte (ex. 30 jours) et la date de remise. Pendant la collecte, '
-            'tous les participants cotisent pour la cagnotte en cours ; à la date '
-            'de remise, elle est donnée au bénéficiaire, moins la commission. '
-            'L\'ordre des bénéficiaires est fixé par le tirage au sort.',
+            'collecte (ex. 30 jours), l\'ordre des remises (tirage au sort ou '
+            'ordre fixé) et la date de début. Il démarre la tontine quand '
+            'l\'ordre est fixé : les dates de début et de fin sont alors '
+            'figées. Pendant la collecte, tous cotisent pour la cagnotte en '
+            'cours ; à la date de remise, elle est donnée au bénéficiaire, qui '
+            'confirme l\'avoir reçue.',
       ),
       (
         Icons.check_circle_outline,
@@ -539,9 +563,12 @@ class HelpScreen extends StatelessWidget {
       (
         Icons.receipt_long,
         'Déclarer un paiement',
-        'Après avoir payé (Mobile Money, virement…), appuyez sur « Déclarer » et '
-            'ajoutez la capture d\'écran de l\'envoi. Le paiement reste « En attente » '
-            'jusqu\'à ce que le tontinier le valide.',
+        'Appuyez sur « Payer », choisissez le nombre de cotisations puis le '
+            'mode : Mobile Money (les numéros du tontinier s\'affichent ; '
+            'ajoutez la capture de l\'envoi) ou espèces (remises en main '
+            'propre). Le paiement reste « En attente » jusqu\'à ce que le '
+            'tontinier le valide. En cas de retard, des pénalités peuvent '
+            's\'ajouter si le tontinier les a prévues.',
       ),
       (
         Icons.rule,

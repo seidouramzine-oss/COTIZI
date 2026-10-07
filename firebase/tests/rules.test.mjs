@@ -18,6 +18,8 @@ const people = {
   b: { phone: '+22901000002', name: 'Bob' },
   c: { phone: '+22901000003', name: 'Chloe' },
   d: { phone: '+22901000004', name: 'David' },
+  z: { phone: '+22997000099', name: 'Zoé' },
+  e: { phone: '+22997000098', name: 'Emma' },
 };
 
 let env;
@@ -61,6 +63,9 @@ async function createGroup(fs, tontineId, code, fields = {}) {
     contributionsPerPot: 3,
     firstPayoutDate: '2026-10-12',
     paidOutCount: 0,
+    orderMode: 'draw',
+    penaltyAmount: 500,
+    penaltyGraceDays: 0,
     commissionType: 'percent',
     commissionValue: 5,
     inviteCode: code,
@@ -68,6 +73,7 @@ async function createGroup(fs, tontineId, code, fields = {}) {
     joinedCount: 0,
     drawnCount: 0,
     memberIds: [],
+    startedAt: null,
     createdAt: now(),
     ...fields,
   });
@@ -94,6 +100,7 @@ async function joinGroup(id, groupId) {
     declaredCount: 0,
     approvedCount: 0,
     lastPaymentId: null,
+    penaltyPaid: 0,
   });
   await batch.commit();
 }
@@ -141,19 +148,26 @@ function proof(fs, owner, kind, targetId) {
 }
 
 // Déclare [count] cotisations : paiement + compteur du membre dans le même envoi
-async function declare(id, groupId, count, { amount, counter = true, payment = true } = {}) {
+async function declare(id, groupId, count,
+  { amount, counter = true, payment = true, method = 'mobile_money', penalty = 0, proofId } = {}) {
   const fs = db(id);
   const g = await adminGet(`groups/${groupId}`);
   const m = await adminGet(`groups/${groupId}/members/${id}`);
   const batch = fs.batch();
-  const [pRef, pData] = proof(fs, id, 'group', groupId);
-  batch.set(pRef, pData);
+  let proofRef = null;
+  if (method === 'mobile_money' && proofId === undefined) {
+    const [pRef, pData] = proof(fs, id, 'group', groupId);
+    batch.set(pRef, pData);
+    proofRef = pRef.id;
+  }
   const payRef = fs.collection(`groups/${groupId}/payments`).doc();
   if (payment) {
     batch.set(payRef, {
       userId: id, payerName: people[id].name, payerPhone: people[id].phone, count,
-      amount: amount ?? count * g.contributionAmount, proofId: pRef.id, status: 'pending',
-      rejectionReason: null, declaredAt: now(), reviewedAt: null,
+      amount: amount ?? count * g.contributionAmount + penalty, penalty, method,
+      note: method === 'cash' ? 'Remis au marché' : null,
+      proofId: proofId === undefined ? proofRef : proofId, status: 'pending',
+      rejectionReason: null, declaredAt: now(), reviewedAt: null, recordedBy: 'member',
     });
   }
   if (counter) {
@@ -176,7 +190,7 @@ async function review(groupId, paymentId, approve, { counters = true } = {}) {
     : { status: 'rejected', rejectionReason: 'Montant incorrect', reviewedAt: now() });
   if (counters) {
     batch.update(T.doc(`groups/${groupId}/members/${pay.userId}`), approve
-      ? { approvedCount: m.approvedCount + pay.count }
+      ? { approvedCount: m.approvedCount + pay.count, penaltyPaid: (m.penaltyPaid ?? 0) + (pay.penalty ?? 0) }
       : { declaredCount: m.declaredCount - pay.count });
   }
   await batch.commit();
@@ -314,6 +328,20 @@ test('scénario complet', async (t) => {
   if (positions.join() !== '1,2,3') throw new Error(`numéros ${positions}`);
   if (!posA) throw new Error('numéro de A manquant');
 
+  await t.test('déclarer avant le démarrage : refusé', () => assertFails(declare('a', groupId, 1)));
+  const start = (fs, fields = {}) => fs.doc(`groups/${groupId}`).update({
+    status: 'active', startDate: '2026-10-12', firstPayoutDate: '2026-10-26', startedAt: now(),
+    ...fields,
+  });
+  await t.test('un membre démarre la tontine : refusé', () => assertFails(start(db('a'))));
+  await t.test('démarrer avec une remise avant le début : refusé', () =>
+    assertFails(start(T, { firstPayoutDate: '2026-10-01' })));
+  await assertSucceeds(start(T));
+  await t.test('modifier le groupe une fois démarré : refusé', () =>
+    assertFails(T.doc(`groups/${groupId}`).update({ contributionAmount: 1 })));
+  await t.test('supprimer le groupe une fois démarré : refusé', () =>
+    assertFails(T.doc(`groups/${groupId}`).delete()));
+
   // Paiements : 3 cotisations par cagnotte, 3 cagnottes -> 9 cotisations chacun
   const pay1 = await assertSucceeds(declare('a', groupId, 2));
   let ma = await adminGet(`groups/${groupId}/members/a`);
@@ -391,7 +419,7 @@ test('scénario complet', async (t) => {
     const batch = fs.batch();
     batch.set(fs.doc(`groups/${groupId}/payouts/${pot}`), {
       tour: pot, beneficiaryId: beneficiary, beneficiaryName: people[beneficiary].name,
-      amount: 85500, paidAt: now(),
+      amount: 85500, paidAt: now(), receivedAt: null, problem: null,
     });
     batch.update(fs.doc(`groups/${groupId}`), { paidOutCount: pot });
     return batch.commit();
@@ -417,7 +445,8 @@ test('scénario complet', async (t) => {
       await fs.doc('groups/ancien').set({
         tontineId: tontine.id, tontineName: 'Tontine du marché', ownerId: 't', ownerName: 'Tontinier',
         name: 'Ancien', memberCount: 2, contributionAmount: 1000, frequency: 'weekly',
-        startDate: '2026-09-01', commissionType: 'percent', commissionValue: 0, inviteCode: 'OLD999',
+        startDate: '2026-09-01', contributionsPerPot: 2, firstPayoutDate: '2026-09-08',
+        paidOutCount: 0, commissionType: 'percent', commissionValue: 0, inviteCode: 'OLD999',
         status: 'drawing', joinedCount: 2, drawnCount: 2, memberIds: ['a', 'b'],
       });
       await fs.doc('groups/ancien/members/a').set({
@@ -539,7 +568,8 @@ test('abonnement des tontiniers et administration', async (t) => {
       tontineId: vieilleTontine, tontineName: 'Ancienne', ownerId: 'ancien', ownerName: 'Ancien',
       name: 'G', memberCount: 3, contributionAmount: 1000, frequency: 'weekly',
       startDate: '2026-10-10', contributionsPerPot: 1, firstPayoutDate: '2026-10-10',
-      paidOutCount: 0, commissionType: 'percent', commissionValue: 5,
+      paidOutCount: 0, orderMode: 'draw', penaltyAmount: 0, penaltyGraceDays: 0,
+      startedAt: null, commissionType: 'percent', commissionValue: 5,
       inviteCode: 'OLD234', status: 'recruiting', joinedCount: 0, drawnCount: 0,
       memberIds: [], createdAt: now(),
     });
@@ -606,3 +636,304 @@ test('abonnement des tontiniers et administration', async (t) => {
   await t.test('autre document de réglages : refusé', () =>
     assertFails(admin.doc('settings/autre').set(settings)));
 });
+
+// ------------------------------------------------------------ Version 2.0
+
+test('version 2 : ordre, places réservées, démarrage, espèces, encaissement, remises, journal', async (t) => {
+  const T = db('t');
+  const tontine = T.collection('tontines').doc();
+  await assertSucceeds(tontine.set({
+    ownerId: 't', ownerName: 'Tontinier', name: 'Tontine du marché', type: 'cagnotte', createdAt: now(),
+  }));
+
+  // --- Ordre fixé par le tontinier
+  const M = await createGroup(T, tontine.id, 'MAN234', { memberCount: 2, orderMode: 'manual' });
+  await assertSucceeds(joinGroup('a', M));
+  await assertSucceeds(joinGroup('b', M));
+  const setOrder = (fs, order) => {
+    const batch = fs.batch();
+    order.forEach((id, i) => batch.update(fs.doc(`groups/${M}/members/${id}`), { drawPosition: i + 1 }));
+    batch.update(fs.doc(`groups/${M}`), { status: 'drawing', drawnCount: 2 });
+    return batch.commit();
+  };
+  await t.test('un membre fixe l\'ordre : refusé', () => assertFails(setOrder(db('a'), ['a', 'b'])));
+  await assertSucceeds(setOrder(T, ['b', 'a']));
+  await t.test('le tontinier change l\'ordre avant le démarrage', () => assertSucceeds((async () => {
+    const batch = T.batch();
+    batch.update(T.doc(`groups/${M}/members/a`), { drawPosition: 1 });
+    batch.update(T.doc(`groups/${M}/members/b`), { drawPosition: 2 });
+    await batch.commit();
+  })()));
+
+  // --- Suppression d'un groupe pas encore démarré
+  await t.test('supprimer un groupe avant le démarrage', () => assertSucceeds((async () => {
+    const batch = T.batch();
+    batch.delete(T.doc(`groups/${M}/members/a`));
+    batch.delete(T.doc(`groups/${M}/members/b`));
+    batch.delete(T.doc(`groups/${M}`));
+    batch.delete(T.doc('invites/MAN234'));
+    await batch.commit();
+  })()));
+
+  // --- Modification et retrait pendant les inscriptions
+  const P = await createGroup(T, tontine.id, 'PLA234', { memberCount: 3 });
+  await assertSucceeds(joinGroup('a', P));
+  await t.test('modifier les conditions pendant les inscriptions', () =>
+    assertSucceeds(T.doc(`groups/${P}`).update({ contributionAmount: 2000, penaltyGraceDays: 2 })));
+  await t.test('moins de places que d\'inscrits : refusé', () =>
+    assertFails(T.doc(`groups/${P}`).update({ memberCount: 0 })));
+  await t.test('un membre modifie le groupe : refusé', () =>
+    assertFails(db('a').doc(`groups/${P}`).update({ contributionAmount: 1 })));
+  await t.test('retirer un participant pendant les inscriptions', () => assertSucceeds((async () => {
+    const batch = T.batch();
+    batch.delete(T.doc(`groups/${P}/members/a`));
+    batch.update(T.doc(`groups/${P}`), {
+      joinedCount: firebase.firestore.FieldValue.increment(-1),
+      memberIds: firebase.firestore.FieldValue.arrayRemove('a'),
+    });
+    await batch.commit();
+  })()));
+
+  // --- Participant sans application (place réservée à son numéro)
+  const addManaged = (fs, id, phone, fields = {}) => {
+    const batch = fs.batch();
+    batch.set(fs.doc(`groups/${P}/members/${id}`), {
+      fullName: 'Zoé Sans Appli', phone, joinedAt: now(), drawPosition: null, declaredCount: 0,
+      approvedCount: 0, lastPaymentId: null, penaltyPaid: 0, managed: true, claimedBy: null,
+      ...fields,
+    });
+    batch.update(fs.doc(`groups/${P}`), { joinedCount: firebase.firestore.FieldValue.increment(1) });
+    return batch.commit();
+  };
+  await t.test('place réservée avec un identifiant différent du numéro : refusé', () =>
+    assertFails(addManaged(T, 'p22900000000', people.z.phone)));
+  await t.test('place réservée avec des cotisations déjà payées : refusé', () =>
+    assertFails(addManaged(T, 'p22997000099', people.z.phone, { approvedCount: 3 })));
+  await t.test('un client réserve une place : refusé', () =>
+    assertFails(addManaged(db('a'), 'p22997000099', people.z.phone)));
+  await assertSucceeds(addManaged(T, 'p22997000099', people.z.phone));
+  await assertSucceeds(joinGroup('b', P));
+  await assertSucceeds(joinGroup('c', P));
+  await t.test('Zoé voit la place réservée à son numéro', () =>
+    assertSucceeds(db('z').doc(`groups/${P}/members/p22997000099`).get()));
+  await t.test('une autre personne ne voit pas cette place', () =>
+    assertFails(db('d').doc(`groups/${P}/members/p22997000099`).get()));
+
+  // Tirage : b tire, le tontinier tire pour c et la place réservée
+  await assertSucceeds(T.batch()
+    .update(T.doc(`groups/${P}`), { status: 'drawing' })
+    .set(T.doc(`groups/${P}/draws/b`), { position: 1 })
+    .set(T.doc(`groups/${P}/draws/c`), { position: 2 })
+    .set(T.doc(`groups/${P}/draws/p22997000099`), { position: 3 })
+    .commit());
+  await assertSucceeds(drawLot('b', P));
+  await assertSucceeds(T.batch()
+    .update(T.doc(`groups/${P}/members/c`), { drawPosition: 2 })
+    .update(T.doc(`groups/${P}/members/p22997000099`), { drawPosition: 3 })
+    .update(T.doc(`groups/${P}`), { drawnCount: 3 })
+    .commit());
+
+  // Zoé s'inscrit et reprend sa place (numéro déjà attribué : place conservée)
+  const claim = (id, from) => {
+    const fs = db(id);
+    const batch = fs.batch();
+    batch.set(fs.doc(`groups/${P}/members/${id}`), {
+      fullName: people[id].name, phone: people[id].phone, joinedAt: now(), drawPosition: 3,
+      declaredCount: 0, approvedCount: 0, lastPaymentId: null, penaltyPaid: 0, claimedFrom: from,
+    });
+    batch.update(fs.doc(`groups/${P}/members/${from}`), { claimedBy: id });
+    batch.update(fs.doc(`groups/${P}`), { memberIds: firebase.firestore.FieldValue.arrayUnion(id) });
+    return batch.commit();
+  };
+  await t.test('reprendre la place d\'un autre numéro : refusé', () =>
+    assertFails(claim('d', 'p22997000099')));
+  await t.test('reprendre sa place avec un autre numéro tiré : refusé', async () => {
+    const fs = db('z');
+    const batch = fs.batch();
+    batch.set(fs.doc(`groups/${P}/members/z`), {
+      fullName: 'Zoé', phone: people.z.phone, joinedAt: now(), drawPosition: 1,
+      declaredCount: 0, approvedCount: 0, lastPaymentId: null, penaltyPaid: 0, claimedFrom: 'p22997000099',
+    });
+    batch.update(fs.doc(`groups/${P}/members/p22997000099`), { claimedBy: 'z' });
+    batch.update(fs.doc(`groups/${P}`), { memberIds: firebase.firestore.FieldValue.arrayUnion('z') });
+    await assertFails(batch.commit());
+  });
+  await assertSucceeds(claim('z', 'p22997000099'));
+  let gP = await adminGet(`groups/${P}`);
+  if (gP.joinedCount !== 3 || !gP.memberIds.includes('z')) throw new Error(JSON.stringify(gP));
+
+  // Démarrage
+  await assertSucceeds(T.doc(`groups/${P}`).update({
+    status: 'active', startDate: '2026-10-12', firstPayoutDate: '2026-10-26', startedAt: now(),
+  }));
+
+  // --- Espèces et pénalités (2 000 F la cotisation, 500 F de pénalité)
+  await t.test('espèces avec une capture : refusé', async () => {
+    const fs = db('c');
+    const batch = fs.batch();
+    const [pRef, pData] = proof(fs, 'c', 'group', P);
+    batch.set(pRef, pData);
+    await batch.commit();
+    await assertFails(declare('c', P, 1, { method: 'cash', proofId: pRef.id }));
+  });
+  await t.test('Mobile Money sans capture : refusé', () =>
+    assertFails(declare('c', P, 1, { method: 'mobile_money', proofId: null })));
+  await t.test('pénalité supérieure au maximum : refusé', () =>
+    assertFails(declare('c', P, 1, { method: 'cash', penalty: 1000 })));
+  const cash = await assertSucceeds(declare('c', P, 1, { method: 'cash', penalty: 500 }));
+  const cashPay = await adminGet(`groups/${P}/payments/${cash}`);
+  if (cashPay.amount !== 2500) throw new Error(`montant ${cashPay.amount}`);
+  await assertSucceeds(review(P, cash, true));
+  const mc = await adminGet(`groups/${P}/members/c`);
+  if (mc.approvedCount !== 1 || mc.penaltyPaid !== 500) throw new Error(JSON.stringify(mc));
+
+  // --- Le tontinier encaisse lui-même
+  const record = (fs, memberId, count, fields = {}) => (async () => {
+    const m = await adminGet(`groups/${P}/members/${memberId}`);
+    const batch = fs.batch();
+    const ref = fs.collection(`groups/${P}/payments`).doc();
+    batch.set(ref, {
+      userId: memberId, payerName: m.fullName, payerPhone: m.phone, count,
+      amount: count * 2000, penalty: 0, method: 'cash', note: null, proofId: null,
+      status: 'approved', rejectionReason: null, declaredAt: now(), reviewedAt: now(),
+      recordedBy: 'owner', ...fields,
+    });
+    batch.update(fs.doc(`groups/${P}/members/${memberId}`), {
+      declaredCount: m.declaredCount + count, approvedCount: m.approvedCount + count,
+      penaltyPaid: (m.penaltyPaid ?? 0) + (fields.penalty ?? 0),
+    });
+    await batch.commit();
+    return ref.id;
+  })();
+  await t.test('un membre « encaisse » pour lui-même : refusé', () => assertFails(record(db('b'), 'b', 1)));
+  await t.test('encaisser sur une place déjà reprise : refusé', () =>
+    assertFails(record(T, 'p22997000099', 1)));
+  const rec = await assertSucceeds(record(T, 'z', 2));
+  await t.test('Zoé voit le paiement encaissé pour elle', () =>
+    assertSucceeds(db('z').doc(`groups/${P}/payments/${rec}`).get()));
+  await t.test('Zoé liste ses paiements (son compte et sa place réservée)', () =>
+    assertSucceeds(db('z').collection(`groups/${P}/payments`)
+      .where('userId', 'in', ['z', 'p22997000099']).get()));
+
+  // --- Remise confirmée par le tontinier puis par le bénéficiaire (rang 1 : b)
+  await assertSucceeds(T.batch()
+    .set(T.doc(`groups/${P}/payouts/1`), {
+      tour: 1, beneficiaryId: 'b', beneficiaryName: 'Bob', amount: 17100, paidAt: now(),
+      receivedAt: null, problem: null,
+    })
+    .update(T.doc(`groups/${P}`), { paidOutCount: 1 })
+    .commit());
+  await t.test('un autre participant confirme la réception : refusé', () =>
+    assertFails(db('c').doc(`groups/${P}/payouts/1`).update({ receivedAt: now(), problem: null })));
+  await t.test('le tontinier confirme à la place du bénéficiaire : refusé', () =>
+    assertFails(T.doc(`groups/${P}/payouts/1`).update({ receivedAt: now(), problem: null })));
+  await assertSucceeds(db('b').doc(`groups/${P}/payouts/1`).update({ receivedAt: now(), problem: null }));
+  await t.test('changer sa confirmation : refusé', () =>
+    assertFails(db('b').doc(`groups/${P}/payouts/1`).update({ receivedAt: null, problem: 'Non' })));
+
+  // --- Journal
+  const event = (fs, actor, fields = {}) => fs.collection(`groups/${P}/events`).doc().set({
+    type: 'payment', text: 'Paiement déclaré', actorId: actor, actorName: 'X', memberId: actor,
+    visibility: 'member', at: now(), ...fields,
+  });
+  await assertSucceeds(event(T, 't', { visibility: 'all', memberId: null, type: 'started', text: 'Tontine démarrée' }));
+  await assertSucceeds(event(db('c'), 'c'));
+  await t.test('écrire au nom d\'un autre : refusé', () => assertFails(event(db('c'), 'b')));
+  await t.test('une personne extérieure écrit dans le journal : refusé', () => assertFails(event(db('d'), 'd')));
+  await t.test('un membre lit les étapes du groupe', () =>
+    assertSucceeds(db('b').collection(`groups/${P}/events`).where('visibility', '==', 'all').get()));
+  await t.test('un membre lit ses propres actions', () =>
+    assertSucceeds(db('c').collection(`groups/${P}/events`).where('memberId', '==', 'c').get()));
+  await t.test('un membre lit tout le journal : refusé', () =>
+    assertFails(db('b').collection(`groups/${P}/events`).get()));
+  await t.test('le tontinier lit tout le journal', () =>
+    assertSucceeds(T.collection(`groups/${P}/events`).get()));
+  await t.test('modifier le journal : refusé', async () => {
+    const ev = (await T.collection(`groups/${P}/events`).get()).docs[0];
+    await assertFails(ev.ref.update({ text: 'autre' }));
+  });
+
+  // --- Profil pro
+  const biz = (fs, id, fields = {}) => fs.doc(`businesses/${id}`).set({
+    name: 'Tontines Mama Awa', city: 'Cotonou', contactPhone: '+229 01 97 00 00 00',
+    logo: null, logoMime: null,
+    accounts: [{ operator: 'MTN MoMo', number: '+229 01 97 00 00 00', holder: 'Awa' }],
+    updatedAt: now(), ...fields,
+  });
+  await assertSucceeds(biz(T, 't'));
+  await t.test('un client lit le profil pro du tontinier', () =>
+    assertSucceeds(db('c').doc('businesses/t').get()));
+  await t.test('modifier le profil pro d\'un autre : refusé', () => assertFails(biz(db('c'), 't')));
+  await t.test('plus de 3 numéros de paiement : refusé', () =>
+    assertFails(biz(T, 't', { accounts: [{}, {}, {}, {}] })));
+
+  // --- Place reprise pendant les inscriptions : la place réservée est remplacée
+  const Q = await createGroup(T, tontine.id, 'QQQ234', { memberCount: 2 });
+  await assertSucceeds(T.batch()
+    .set(T.doc(`groups/${Q}/members/p22997000098`), {
+      fullName: 'Emma Sans Appli', phone: people.e.phone, joinedAt: now(), drawPosition: null,
+      declaredCount: 0, approvedCount: 0, lastPaymentId: null, penaltyPaid: 0, managed: true,
+      claimedBy: null,
+    })
+    .update(T.doc(`groups/${Q}`), { joinedCount: firebase.firestore.FieldValue.increment(1) })
+    .commit());
+  await t.test('reprendre sa place pendant les inscriptions', () => assertSucceeds((async () => {
+    const fs = db('e');
+    const batch = fs.batch();
+    batch.set(fs.doc(`groups/${Q}/members/e`), {
+      fullName: 'Emma', phone: people.e.phone, joinedAt: now(), drawPosition: null,
+      declaredCount: 0, approvedCount: 0, lastPaymentId: null, penaltyPaid: 0,
+      claimedFrom: 'p22997000098',
+    });
+    batch.delete(fs.doc(`groups/${Q}/members/p22997000098`));
+    batch.update(fs.doc(`groups/${Q}`), { memberIds: firebase.firestore.FieldValue.arrayUnion('e') });
+    await batch.commit();
+  })()));
+  const gQ = await adminGet(`groups/${Q}`);
+  if (gQ.joinedCount !== 1 || !gQ.memberIds.includes('e')) throw new Error(JSON.stringify(gQ));
+
+  // --- Carnet : espèces et encaissement
+  const carnetTontine = T.collection('tontines').doc();
+  await assertSucceeds(carnetTontine.set({
+    ownerId: 't', ownerName: 'Tontinier', name: 'Carnets', type: 'carnet', createdAt: now(),
+  }));
+  const cRef = T.collection('carnets').doc();
+  await assertSucceeds(T.batch().set(cRef, {
+    tontineId: carnetTontine.id, tontineName: 'Carnets', ownerId: 't', ownerName: 'Tontinier',
+    label: 'Carnet n°2', caseAmount: 500, caseCount: 31, clientId: null, clientName: null,
+    clientPhone: null, inviteCode: 'CAR345', usedCases: 0, approvedCases: 0,
+    lastPaymentId: null, createdAt: now(),
+  }).set(T.collection('invites').doc('CAR345'), { kind: 'carnet', targetId: cRef.id, ownerId: 't' }).commit());
+  await assertSucceeds(db('e').doc(`carnets/${cRef.id}`).update({
+    clientId: 'e', clientName: 'Emma', clientPhone: people.e.phone,
+  }));
+  const fsE = db('e');
+  await t.test('le client déclare des cases en espèces (sans capture)', () =>
+    assertSucceeds(fsE.runTransaction(async (tx) => {
+      const fs = fsE;
+      const c = (await tx.get(fs.doc(`carnets/${cRef.id}`))).data();
+      const payRef = fs.collection(`carnets/${cRef.id}/payments`).doc();
+      tx.set(payRef, {
+        userId: 'e', payerName: 'Emma', payerPhone: people.e.phone, caseCount: 2, amount: 1000,
+        method: 'cash', note: null, proofId: null, status: 'pending', rejectionReason: null,
+        declaredAt: now(), reviewedAt: null, recordedBy: 'member',
+      });
+      tx.update(fs.doc(`carnets/${cRef.id}`), { usedCases: c.usedCases + 2, lastPaymentId: payRef.id });
+    })));
+  const recordCases = (fs) => (async () => {
+    const c = await adminGet(`carnets/${cRef.id}`);
+    const batch = fs.batch();
+    batch.set(fs.collection(`carnets/${cRef.id}/payments`).doc(), {
+      userId: 'e', payerName: 'Emma', payerPhone: people.e.phone, caseCount: 3, amount: 1500,
+      method: 'cash', note: 'Au marché', proofId: null, status: 'approved', rejectionReason: null,
+      declaredAt: now(), reviewedAt: now(), recordedBy: 'owner',
+    });
+    batch.update(fs.doc(`carnets/${cRef.id}`), {
+      usedCases: c.usedCases + 3, approvedCases: c.approvedCases + 3,
+    });
+    await batch.commit();
+  })();
+  await t.test('le client « encaisse » lui-même : refusé', () => assertFails(recordCases(db('e'))));
+  await t.test('le tontinier encaisse des cases', () => assertSucceeds(recordCases(T)));
+});
+

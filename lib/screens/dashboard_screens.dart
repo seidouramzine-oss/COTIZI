@@ -7,6 +7,7 @@ import '../widgets/common.dart';
 import 'carnet_screens.dart';
 import 'group_screens.dart';
 import 'home_screen.dart';
+import 'business_screens.dart';
 import 'subscription_screens.dart';
 import 'tontine_screens.dart';
 
@@ -145,10 +146,53 @@ class _OwnerDashboardState extends State<OwnerDashboard> with Reloadable {
     },
   );
 
-  void _review(PendingReview r) => open(
-    r.group != null
-        ? groupPaymentScreen(r.group!, r.payment, canReview: true)
-        : carnetPaymentScreen(r.carnet!, r.payment, canReview: true),
+  Future<void> _review(PendingReview r) async {
+    final b = await Api.business(Api.uid);
+    await open(
+      r.group != null
+          ? groupPaymentScreen(
+              r.group!,
+              r.payment,
+              canReview: true,
+              business: b,
+            )
+          : carnetPaymentScreen(
+              r.carnet!,
+              r.payment,
+              canReview: true,
+              business: b,
+            ),
+    );
+  }
+
+  /// Accès au tableau de bord des gains et au profil pro.
+  Widget _shortcuts() => Row(
+    children: [
+      Expanded(
+        child: Card(
+          child: ListTile(
+            leading: const Icon(Icons.insights_outlined),
+            title: const Text(
+              'Mes gains',
+              style: TextStyle(fontWeight: FontWeight.w600),
+            ),
+            onTap: () => open(const GainsScreen()),
+          ),
+        ),
+      ),
+      Expanded(
+        child: Card(
+          child: ListTile(
+            leading: const Icon(Icons.storefront_outlined),
+            title: const Text(
+              'Profil pro',
+              style: TextStyle(fontWeight: FontWeight.w600),
+            ),
+            onTap: () => open(const BusinessProfileScreen()),
+          ),
+        ),
+      ),
+    ],
   );
 
   @override
@@ -192,6 +236,7 @@ class _OwnerDashboardState extends State<OwnerDashboard> with Reloadable {
     final pendingColor = paymentStatusColor(PaymentStatus.pending);
     return [
       _accessBanner(),
+      _shortcuts(),
       o.pending.isEmpty
           ? _Banner(
               icon: Icons.verified_outlined,
@@ -461,6 +506,13 @@ class _MemberDashboardState extends State<MemberDashboard> with Reloadable {
     );
   }
 
+  Future<void> _pay(MemberGroupStatus s) async {
+    final me = s.group.memberById(Api.uid);
+    if (me == null) return;
+    final b = await Api.business(s.group.ownerId);
+    await open(payContributionsScreen(s.group, me, s.standing, business: b));
+  }
+
   List<Widget> _content(MemberOverview o) {
     final uid = Api.uid;
     final good = paymentStatusColor(PaymentStatus.approved);
@@ -482,6 +534,17 @@ class _MemberDashboardState extends State<MemberDashboard> with Reloadable {
           (s.group, p),
     ];
     return [
+      // ------------------------------------------- Cagnottes à confirmer
+      for (final s in o.groups.where((s) => s.payoutToConfirm != null))
+        StatusCard(
+          icon: Icons.savings,
+          color: pendingColor,
+          title: 'Avez-vous reçu votre cagnotte ?',
+          message:
+              '${s.group.name} : le tontinier indique vous avoir remis '
+              '${money(s.payoutToConfirm!.amount)}. Confirmez la réception.',
+          onTap: () => open(GroupScreen(groupId: s.group.id)),
+        ),
       // ------------------------------------------------- Situation générale
       if (o.active.isNotEmpty)
         o.lateCount > 0
@@ -490,8 +553,9 @@ class _MemberDashboardState extends State<MemberDashboard> with Reloadable {
                 color: bad,
                 title: '${contributionsLabel(o.lateCount)} en retard',
                 message:
-                    'Montant à régulariser : ${money(o.lateAmount)}. Payez puis '
-                    'déclarez votre paiement avec la capture d\'écran.',
+                    'Montant à régulariser : ${money(o.lateAmount)}'
+                    '${o.latePenalty > 0 ? ' (dont ${money(o.latePenalty)} de pénalités)' : ''}. Payez par '
+                    'Mobile Money ou en espèces, puis déclarez votre paiement.',
               )
             : StatusCard(
                 icon: Icons.check_circle,
@@ -640,15 +704,15 @@ class _MemberDashboardState extends State<MemberDashboard> with Reloadable {
                   alignment: Alignment.centerRight,
                   child: st.upToDate
                       ? OutlinedButton.icon(
-                          onPressed: () => open(payContributionsScreen(g, st)),
+                          onPressed: () => _pay(s),
                           icon: const Icon(Icons.upload),
                           label: const Text('Payer d\'avance'),
                         )
                       : FilledButton.icon(
-                          onPressed: () => open(payContributionsScreen(g, st)),
+                          onPressed: () => _pay(s),
                           icon: const Icon(Icons.upload),
                           label: Text(
-                            'Payer ${money(st.late * g.contributionAmount)}',
+                            'Payer ${money(st.late * g.contributionAmount + st.penaltyDue)}',
                           ),
                         ),
                 ),

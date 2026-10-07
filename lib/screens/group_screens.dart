@@ -1,478 +1,96 @@
+import 'dart:convert';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../api.dart';
 import '../format.dart';
 import '../invite_link.dart';
 import '../models.dart';
+import '../reports.dart';
 import '../widgets/common.dart';
+import 'group_actions.dart';
+import 'group_form.dart';
 import 'payment_screens.dart';
 
-// ====================================================== Création du groupe
-
-class CreateGroupScreen extends StatefulWidget {
-  const CreateGroupScreen({super.key, required this.tontine});
-
-  final Tontine tontine;
-
-  @override
-  State<CreateGroupScreen> createState() => _CreateGroupScreenState();
-}
-
-class _CreateGroupScreenState extends State<CreateGroupScreen> {
-  final _form = GlobalKey<FormState>();
-  final _name = TextEditingController();
-  final _members = TextEditingController();
-  final _amount = TextEditingController();
-  final _duration = TextEditingController(text: '30');
-  final _commission = TextEditingController(text: '0');
-  Frequency _frequency = Frequency.daily;
-  CommissionType _commissionType = CommissionType.percent;
-  DateTime _start = DateUtils.dateOnly(DateTime.now());
-
-  /// Date de 1re remise choisie par le tontinier (sinon : fin de collecte).
-  DateTime? _payout;
-  bool _busy = false;
-
-  @override
-  void dispose() {
-    _name.dispose();
-    _members.dispose();
-    _amount.dispose();
-    _duration.dispose();
-    _commission.dispose();
-    super.dispose();
-  }
-
-  int get _memberCount => int.tryParse(_members.text) ?? 0;
-  int get _contribution => parseAmount(_amount.text) ?? 0;
-  int get _perPot => int.tryParse(_duration.text) ?? 0;
-  double get _commissionValue =>
-      double.tryParse(
-        _commission.text.replaceAll(',', '.').replaceAll(' ', ''),
-      ) ??
-      0;
-
-  Group _preview({DateTime? payout}) {
-    final draft = Group(
-      id: '',
-      tontineId: widget.tontine.id,
-      tontineName: widget.tontine.name,
-      ownerId: '',
-      ownerName: '',
-      name: _name.text,
-      memberCount: max(_memberCount, 1),
-      contributionAmount: _contribution,
-      frequency: _frequency,
-      startDate: _start,
-      contributionsPerPot: max(_perPot, 1),
-      firstPayoutDate: payout ?? _start,
-      commissionType: _commissionType,
-      commissionValue: _commissionValue,
-      inviteCode: '',
-      status: GroupStatus.recruiting,
-    );
-    return payout != null
-        ? draft
-        : _preview(payout: _payout ?? draft.collectEnd(1));
-  }
-
-  Future<void> _pickStart() async {
-    final d = await showDatePicker(
-      context: context,
-      helpText: 'Date de la première cotisation',
-      initialDate: _start,
-      firstDate: DateTime.now().subtract(const Duration(days: 365)),
-      lastDate: DateTime.now().add(const Duration(days: 365 * 3)),
-    );
-    if (d != null) {
-      setState(() {
-        _start = d;
-        _payout = null;
-      });
-    }
-  }
-
-  Future<void> _pickPayout() async {
-    final g = _preview();
-    final earliest = g.collectEnd(1);
-    final d = await showDatePicker(
-      context: context,
-      helpText: 'Date de la 1re remise',
-      initialDate: g.firstPayoutDate!,
-      firstDate: earliest,
-      lastDate: earliest.add(const Duration(days: 365 * 2)),
-    );
-    if (d != null) setState(() => _payout = d);
-  }
-
-  Future<void> _submit() async {
-    if (!_form.currentState!.validate()) return;
-    final g = _preview();
-    setState(() => _busy = true);
-    try {
-      await Api.createGroup(
-        tontine: widget.tontine,
-        name: _name.text,
-        memberCount: _memberCount,
-        contributionAmount: _contribution,
-        frequency: _frequency,
-        startDate: _start,
-        contributionsPerPot: _perPot,
-        firstPayoutDate: g.firstPayoutDate!,
-        commissionType: _commissionType,
-        commissionValue: _commissionValue,
-      );
-      if (mounted) Navigator.pop(context, true);
-    } catch (e) {
-      if (mounted) showError(context, e);
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final ready = _memberCount >= 2 && _contribution > 0 && _perPot >= 1;
-    final g = _preview();
-    final theme = Theme.of(context);
-    return Scaffold(
-      appBar: AppBar(title: const Text('Nouveau groupe')),
-      body: Form(
-        key: _form,
-        onChanged: () => setState(() {}),
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
-          children: [
-            const _Step(1, 'Le groupe'),
-            TextFormField(
-              controller: _name,
-              textCapitalization: TextCapitalization.sentences,
-              decoration: const InputDecoration(
-                labelText: 'Nom du groupe',
-                hintText: 'Ex. Groupe du marché',
-              ),
-              validator: (v) =>
-                  (v ?? '').trim().isEmpty ? 'Donnez un nom au groupe' : null,
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _members,
-              keyboardType: TextInputType.number,
-              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-              decoration: const InputDecoration(
-                labelText: 'Nombre de participants',
-                helperText:
-                    'Chacun reçoit la cagnotte une fois : il y aura autant '
-                    'de remises que de participants.',
-                helperMaxLines: 2,
-              ),
-              validator: (v) {
-                final n = int.tryParse(v ?? '') ?? 0;
-                return n < 2 || n > 100 ? 'Entre 2 et 100 participants' : null;
-              },
-            ),
-            const _Step(2, 'Les cotisations'),
-            TextFormField(
-              controller: _amount,
-              keyboardType: TextInputType.number,
-              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-              decoration: const InputDecoration(
-                labelText: 'Montant d\'une cotisation',
-                suffixText: 'FCFA',
-              ),
-              validator: (v) => (parseAmount(v ?? '') ?? 0) <= 0
-                  ? 'Indiquez le montant de la cotisation'
-                  : null,
-            ),
-            const SizedBox(height: 12),
-            Text(
-              'Fréquence des cotisations',
-              style: theme.textTheme.bodyMedium,
-            ),
-            const SizedBox(height: 6),
-            Wrap(
-              spacing: 8,
-              runSpacing: 4,
-              children: [
-                for (final f in Frequency.values)
-                  ChoiceChip(
-                    label: Text(frequencyLabel(f)),
-                    selected: _frequency == f,
-                    onSelected: (_) => setState(() {
-                      _frequency = f;
-                      _payout = null;
-                    }),
-                  ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            _DateField(
-              label: 'Première cotisation le',
-              date: _start,
-              onTap: _pickStart,
-            ),
-            const _Step(3, 'La remise de la cagnotte'),
-            TextFormField(
-              controller: _duration,
-              keyboardType: TextInputType.number,
-              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-              decoration: InputDecoration(
-                labelText: 'Durée de collecte avant chaque remise',
-                suffixText: durationUnit(_frequency),
-                helperText: _perPot >= 1
-                    ? 'Soit ${contributionsLabel(_perPot)} par participant '
-                          'pour chaque cagnotte'
-                    : null,
-              ),
-              validator: (v) {
-                final n = int.tryParse(v ?? '') ?? 0;
-                return n < 1 || n > 366 ? 'Entre 1 et 366' : null;
-              },
-              onChanged: (_) => _payout = null,
-            ),
-            const SizedBox(height: 12),
-            _DateField(
-              label: 'Date de la 1re remise au bénéficiaire',
-              date: g.firstPayoutDate!,
-              helper: ready
-                  ? 'Collecte du ${dateShort(g.collectStart(1))} au '
-                        '${dateShort(g.collectEnd(1))}. Remises suivantes : '
-                        'tous les ${durationLabel(_frequency, g.perPot)}.'
-                  : null,
-              onTap: ready ? _pickPayout : null,
-            ),
-            const _Step(4, 'Commission du tontinier'),
-            SegmentedButton<CommissionType>(
-              segments: const [
-                ButtonSegment(
-                  value: CommissionType.percent,
-                  label: Text('Pourcentage'),
-                ),
-                ButtonSegment(
-                  value: CommissionType.fixed,
-                  label: Text('Montant fixe'),
-                ),
-              ],
-              selected: {_commissionType},
-              onSelectionChanged: (s) =>
-                  setState(() => _commissionType = s.first),
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _commission,
-              keyboardType: const TextInputType.numberWithOptions(
-                decimal: true,
-              ),
-              decoration: InputDecoration(
-                labelText: 'Commission sur chaque cagnotte',
-                suffixText: _commissionType == CommissionType.percent
-                    ? '%'
-                    : 'FCFA',
-                helperText: 'Retenue sur la cagnotte remise au bénéficiaire',
-              ),
-              validator: (_) {
-                final v = _commissionValue;
-                if (v < 0) return 'Commission invalide';
-                if (_commissionType == CommissionType.percent && v > 100) {
-                  return 'Maximum 100 %';
-                }
-                if (_commissionType == CommissionType.fixed &&
-                    ready &&
-                    v > g.grossPot) {
-                  return 'Supérieure à la cagnotte';
-                }
-                return null;
-              },
-            ),
-            if (ready) ...[const SectionTitle('Résumé'), _Summary(g)],
-            const SizedBox(height: 24),
-            FilledButton.icon(
-              onPressed: _busy ? null : _submit,
-              icon: const Icon(Icons.check),
-              label: const Text('Créer le groupe'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _Step extends StatelessWidget {
-  const _Step(this.number, this.title);
-
-  final int number;
-  final String title;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(0, 24, 0, 12),
-      child: Row(
-        children: [
-          CircleAvatar(
-            radius: 13,
-            backgroundColor: scheme.primary,
-            foregroundColor: scheme.onPrimary,
-            child: Text(
-              '$number',
-              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
-            ),
-          ),
-          const SizedBox(width: 10),
-          Text(
-            title,
-            style: Theme.of(context).textTheme.titleMedium
-                ?.copyWith(fontWeight: FontWeight.w700),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _DateField extends StatelessWidget {
-  const _DateField({
-    required this.label,
-    required this.date,
-    required this.onTap,
-    this.helper,
-  });
-
-  final String label;
-  final DateTime date;
-  final VoidCallback? onTap;
-  final String? helper;
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
-      child: InputDecorator(
-        decoration: InputDecoration(
-          labelText: label,
-          helperText: helper,
-          helperMaxLines: 3,
-          suffixIcon: const Icon(Icons.calendar_today),
-        ),
-        child: Text(dateLong(date)),
-      ),
-    );
-  }
-}
-
-/// Résumé du groupe avant création : ce que chacun verse et reçoit.
-class _Summary extends StatelessWidget {
-  const _Summary(this.g);
-
-  final Group g;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Chaque participant cotise ${money(g.contributionAmount)} '
-              '${frequencyLower(g.frequency)}, soit ${money(g.perMemberPerPot)} '
-              'par cagnotte.',
-              style: theme.textTheme.bodyMedium,
-            ),
-            const Divider(height: 24),
-            InfoRow(
-              'Cagnotte',
-              '${g.memberCount} × ${money(g.perMemberPerPot)} = '
-                  '${money(g.grossPot)}',
-            ),
-            InfoRow('Commission', commissionLabel(g)),
-            InfoRow('Le bénéficiaire reçoit', money(g.netPot), bold: true),
-            const Divider(height: 24),
-            InfoRow('1re remise', dateLong(g.payoutDate(1))),
-            InfoRow(
-              'Remises suivantes',
-              'tous les ${durationLabel(g.frequency, g.perPot)}',
-            ),
-            InfoRow('Dernière remise', dateLong(g.payoutDate(g.memberCount))),
-            InfoRow(
-              'Total versé par participant',
-              money(g.totalContributions * g.contributionAmount),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-// ======================================================= Écran du groupe
+/// Nom affiché du tontinier : son activité s'il l'a renseignée.
+String ownerLabel(Group g, Business? b) => b?.name ?? g.ownerName;
 
 /// Paiement d'un groupe ouvert par le tontinier (validation) ou par le
 /// participant (consultation, reçu).
-Widget groupPaymentScreen(Group g, Payment p, {required bool canReview}) =>
-    ReviewPaymentScreen(
-      payment: p,
-      canReview: canReview,
-      details: [
-        ('Groupe', g.name),
-        (
-          'Cotisations',
-          '${contributionsLabel(p.count)} × ${money(g.contributionAmount)}',
-        ),
-      ],
-      onReview: (approve, reason) =>
-          Api.reviewContributions(g.id, p, approve, reason),
-      receipt: receiptText(
-        p,
-        tontine: g.tontineName,
-        item: 'Groupe : ${g.name}',
-        owner: g.ownerName,
-        detail:
-            '${contributionsLabel(p.count)} × ${money(g.contributionAmount)}',
-      ),
-    );
+Widget groupPaymentScreen(
+  Group g,
+  Payment p, {
+  required bool canReview,
+  Business? business,
+}) => ReviewPaymentScreen(
+  payment: p,
+  canReview: canReview,
+  details: [
+    ('Groupe', g.name),
+    (
+      'Cotisations',
+      '${contributionsLabel(p.count)} × ${money(g.contributionAmount)}',
+    ),
+  ],
+  onReview: (approve, reason) =>
+      Api.reviewContributions(g.id, p, approve, reason),
+  receipt: groupReceipt(g, p, business),
+);
+
+String groupReceipt(Group g, Payment p, Business? business) => receiptText(
+  p,
+  tontine: g.tontineName,
+  item: 'Groupe : ${g.name}',
+  owner: ownerLabel(g, business),
+  detail: '${contributionsLabel(p.count)} × ${money(g.contributionAmount)}',
+);
 
 /// Paiement de cotisations par le participant (une ou plusieurs à la fois).
-Widget payContributionsScreen(Group g, MemberStanding s) =>
-    DeclarePaymentScreen(
-      title: 'Payer mes cotisations',
-      unitAmount: g.contributionAmount,
-      maxUnits: s.remaining,
-      initialUnits: max(1, s.late),
-      unitsLabel: 'Nombre de cotisations payées',
-      note: s.late > 0
-          ? 'Vous avez ${contributionsLabel(s.late)} en retard '
-                '(${money(s.late * g.contributionAmount)}).'
-          : 'Vous êtes à jour. Vous pouvez aussi payer d\'avance.',
-      details: [
-        ('Groupe', g.name),
-        (
-          'Cotisation',
-          '${money(g.contributionAmount)} · ${frequencyLower(g.frequency)}',
-        ),
-        ('Déjà payées', '${s.declared} / ${s.total}'),
-      ],
-      onSubmit: (proof, mime, count) => Api.declareContributions(
-        group: g,
-        count: count,
-        proof: proof,
-        mime: mime,
-      ),
-    );
+Widget payContributionsScreen(
+  Group g,
+  GroupMember me,
+  MemberStanding s, {
+  Business? business,
+}) => DeclarePaymentScreen(
+  title: 'Payer mes cotisations',
+  unitAmount: g.contributionAmount,
+  maxUnits: s.remaining,
+  initialUnits: max(1, s.late),
+  unitsLabel: 'Nombre de cotisations payées',
+  ownerName: ownerLabel(g, business),
+  accounts: business?.accounts ?? const [],
+  penaltyFor: (n) => g.penaltyFor(me.declaredCount + 1, n, DateTime.now()),
+  note: s.late > 0
+      ? 'Vous avez ${contributionsLabel(s.late)} en retard '
+            '(${money(s.late * g.contributionAmount)}'
+            '${s.penaltyDue > 0 ? ' + ${money(s.penaltyDue)} de pénalités' : ''}).'
+      : 'Vous êtes à jour. Vous pouvez aussi payer d\'avance.',
+  details: [
+    ('Groupe', g.name),
+    (
+      'Cotisation',
+      '${money(g.contributionAmount)} · ${frequencyLower(g.frequency)}',
+    ),
+    ('Déjà payées', '${s.declared} / ${s.total}'),
+  ],
+  onSubmit: (count, method, proof, mime, note) => Api.declareContributions(
+    group: g,
+    count: count,
+    method: method,
+    proof: proof,
+    mime: mime,
+    note: note,
+  ),
+);
 
 /// Message de relance d'un participant en retard.
-String reminderText(Group g, GroupMember m, MemberStanding s) =>
+String reminderText(Group g, GroupMember m, MemberStanding s, String owner) =>
     'Bonjour ${m.name}, petit rappel pour le groupe « ${g.name} » '
     '(${g.tontineName}) : vous avez ${contributionsLabel(s.late)} en retard, '
-    'soit ${money(s.late * g.contributionAmount)}. Merci de payer puis de '
-    'déclarer votre paiement dans COTIZI. — ${g.ownerName}';
+    'soit ${money(s.late * g.contributionAmount + s.penaltyDue)}'
+    '${s.penaltyDue > 0 ? ' pénalités comprises' : ''}. Merci de régulariser '
+    'et de déclarer votre paiement dans COTIZI. — $owner';
 
 /// Détail d'un groupe, vu par le tontinier ou par un participant.
 class GroupScreen extends StatefulWidget {
@@ -484,31 +102,52 @@ class GroupScreen extends StatefulWidget {
   State<GroupScreen> createState() => _GroupScreenState();
 }
 
-typedef _GroupData = (Group, List<Payment>, Map<int, Payout>);
+class _GroupData {
+  const _GroupData(this.group, this.payments, this.payouts, this.business);
+
+  final Group group;
+  final List<Payment> payments;
+  final Map<int, Payout> payouts;
+
+  /// Profil pro du tontinier.
+  final Business? business;
+}
 
 class _GroupScreenState extends State<GroupScreen> {
-  late Future<_GroupData> _data = _load();
+  late Future<_GroupData> _data = _fetch();
+  _GroupData? _last;
   bool _busy = false;
+
+  /// Charge puis redessine aussi la barre d'actions (qui dépend des données).
+  Future<_GroupData> _fetch() => _load().then((d) {
+    if (mounted) setState(() {});
+    return d;
+  });
 
   Future<_GroupData> _load() async {
     final group = await Api.group(widget.groupId);
-    final started =
-        !group.isLegacy &&
-        (group.status == GroupStatus.active ||
-            group.status == GroupStatus.finished);
     final results = await Future.wait([
       Api.groupPayments(group),
-      started ? Api.payouts(group.id) : Future.value(<int, Payout>{}),
+      group.isStarted && !group.isLegacy
+          ? Api.payouts(group.id)
+          : Future.value(<int, Payout>{}),
+      Api.business(group.ownerId),
     ]);
-    return (group, results[0] as List<Payment>, results[1] as Map<int, Payout>);
+    return _last = _GroupData(
+      group,
+      results[0] as List<Payment>,
+      results[1] as Map<int, Payout>,
+      results[2] as Business?,
+    );
   }
 
-  void _reload() => setState(() => _data = _load());
+  void _reload() => setState(() => _data = _fetch());
 
-  Future<void> _run(Future<void> Function() action) async {
+  Future<void> _run(Future<void> Function() action, {String? done}) async {
     setState(() => _busy = true);
     try {
       await action();
+      if (done != null && mounted) showInfo(context, done);
     } catch (e) {
       if (mounted) showError(context, e);
     } finally {
@@ -525,6 +164,57 @@ class _GroupScreenState extends State<GroupScreen> {
     if (changed == true && mounted) _reload();
   }
 
+  Tontine _tontineOf(Group g) => Tontine(
+    id: g.tontineId,
+    ownerId: g.ownerId,
+    name: g.tontineName,
+    type: TontineType.cagnotte,
+  );
+
+  Future<void> _delete(Group g) async {
+    if (!await confirm(
+      context,
+      title: 'Supprimer le groupe',
+      message:
+          'Le groupe « ${g.name} » et ses ${g.joinedCount} inscription(s) '
+          'seront supprimés. Son lien d\'invitation ne marchera plus.',
+      confirmLabel: 'Supprimer',
+    )) {
+      return;
+    }
+    try {
+      await Api.deleteGroup(g);
+      if (!mounted) return;
+      showInfo(context, 'Groupe supprimé');
+      Navigator.pop(context, true);
+    } catch (e) {
+      if (mounted) showError(context, e);
+    }
+  }
+
+  Future<void> _addManaged(Group g) async {
+    final result = await showDialog<(String, String)>(
+      context: context,
+      builder: (_) => const AddManagedMemberDialog(),
+    );
+    if (result == null) return;
+    await _run(
+      () => Api.addManagedMember(g, result.$1, result.$2),
+      done: '${result.$1} ajouté au groupe',
+    );
+  }
+
+  Future<void> _remove(Group g, GroupMember m) async {
+    if (await confirm(
+      context,
+      title: 'Retirer ${m.name}',
+      message: 'Sa place sera libérée pour quelqu\'un d\'autre.',
+      confirmLabel: 'Retirer',
+    )) {
+      await _run(() => Api.removeMember(g, m), done: '${m.name} retiré');
+    }
+  }
+
   Future<void> _drawLot(Group g) => _run(() async {
     final position = await Api.drawLot(g.id);
     if (!mounted) return;
@@ -535,7 +225,8 @@ class _GroupScreenState extends State<GroupScreen> {
         title: Text('Vous avez tiré le n°$position'),
         content: Text(
           'Vous recevrez la cagnotte n°$position de ${money(g.netPot)} '
-          'le ${dateLong(g.payoutDate(position))}.',
+          '(prévue le ${dateLong(g.payoutDate(position))} si la tontine '
+          'démarre à la date prévue).',
         ),
         actions: [
           FilledButton(
@@ -546,8 +237,6 @@ class _GroupScreenState extends State<GroupScreen> {
       ),
     );
   });
-
-  void _pay(Group g, MemberStanding s) => _push(payContributionsScreen(g, s));
 
   Future<void> _confirmPayout(Group g) async {
     final pot = g.currentPot;
@@ -560,56 +249,250 @@ class _GroupScreenState extends State<GroupScreen> {
       message:
           'Avez-vous remis ${money(g.netPot)} à ${b.name} pour la cagnotte '
           'n°$pot ?${collected < g.grossPot ? '\n\nAttention : la collecte n\'est pas terminée (${money(collected)} validés sur ${money(g.grossPot)}).' : ''}'
-          '\n\nCette confirmation est définitive et visible par les '
-          'participants.',
+          '\n\n${b.managed ? 'Cette confirmation est définitive.' : '${b.name} devra confirmer la réception.'}',
       confirmLabel: 'Oui, c\'est remis',
     )) {
-      await _run(() => Api.confirmPayout(g));
-      if (mounted) showInfo(context, 'Remise de la cagnotte n°$pot confirmée');
+      await _run(
+        () => Api.confirmPayout(g),
+        done: 'Remise de la cagnotte n°$pot confirmée',
+      );
+    }
+  }
+
+  Future<void> _answerPayout(Group g, Payout p, {required bool ok}) async {
+    if (ok) {
+      if (await confirm(
+        context,
+        title: 'Cagnotte reçue',
+        message: 'Confirmez-vous avoir reçu ${money(p.amount)} ?',
+        confirmLabel: 'Oui, j\'ai reçu',
+      )) {
+        await _run(
+          () => Api.answerPayout(g.id, p),
+          done: 'Réception confirmée',
+        );
+      }
+      return;
+    }
+    final problem = await showDialog<String>(
+      context: context,
+      builder: (_) => const _ProblemDialog(),
+    );
+    if (problem != null) {
+      await _run(
+        () => Api.answerPayout(g.id, p, problem: problem),
+        done: 'Problème signalé au tontinier',
+      );
+    }
+  }
+
+  void _record(Group g, GroupMember m, Business? b) {
+    final s = g.standingOf(m, DateTime.now());
+    _push(
+      RecordPaymentScreen(
+        payerName: m.name,
+        details: [
+          ('Participant', m.name),
+          ('Groupe', g.name),
+          ('Déjà payées', '${s.declared} / ${s.total}'),
+          if (s.late > 0) ('En retard', contributionsLabel(s.late)),
+        ],
+        unitAmount: g.contributionAmount,
+        maxUnits: s.remaining,
+        initialUnits: max(1, s.late),
+        unitsLabel: 'Nombre de cotisations',
+        penaltyFor: (n) => g.penaltyFor(m.declaredCount + 1, n, DateTime.now()),
+        onSubmit: (count, method, penalty, note) async {
+          final p = await Api.recordPayment(
+            group: g,
+            member: m,
+            count: count,
+            method: method,
+            penalty: penalty,
+            note: note,
+          );
+          return groupReceipt(g, p, b);
+        },
+      ),
+    );
+  }
+
+  Future<void> _statement(_GroupData d, GroupMember m) => _run(
+    () => shareMemberStatement(
+      group: d.group,
+      member: m,
+      payments: d.payments,
+      payouts: d.payouts,
+      business: d.business,
+    ),
+  );
+
+  /// Fiche d'un participant (tontinier) : encaisser, relancer, relevé.
+  Future<void> _memberSheet(_GroupData d, GroupMember m) async {
+    final g = d.group;
+    final s = g.standingOf(m, DateTime.now());
+    final owner = ownerLabel(g, d.business);
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            ListTile(
+              title: Text(
+                m.name,
+                style: Theme.of(context).textTheme.titleLarge
+                    ?.copyWith(fontWeight: FontWeight.w700),
+              ),
+              subtitle: Text(
+                '${m.profile.phone}${m.managed ? ' · sans application' : ''}\n'
+                '${s.approved} / ${s.total} validées'
+                '${s.late > 0 ? ' · ${s.late} en retard' : ' · à jour'}'
+                '${m.penaltyPaid > 0 ? ' · pénalités ${money(m.penaltyPaid)}' : ''}',
+              ),
+              isThreeLine: true,
+            ),
+            const Divider(),
+            if (g.status == GroupStatus.active && s.remaining > 0)
+              ListTile(
+                leading: const Icon(Icons.point_of_sale),
+                title: const Text('Encaisser un paiement'),
+                subtitle: const Text('Espèces ou Mobile Money reçus'),
+                onTap: () => Navigator.pop(context, 'record'),
+              ),
+            if (s.late > 0)
+              ListTile(
+                leading: const Icon(Icons.campaign_outlined),
+                title: const Text('Relancer sur WhatsApp'),
+                onTap: () => Navigator.pop(context, 'remind'),
+              ),
+            ListTile(
+              leading: const Icon(Icons.picture_as_pdf_outlined),
+              title: const Text('Relevé PDF'),
+              onTap: () => Navigator.pop(context, 'pdf'),
+            ),
+            if (m.managed)
+              ListTile(
+                leading: const Icon(Icons.install_mobile),
+                title: const Text('Inviter à utiliser COTIZI'),
+                subtitle: const Text('Il retrouvera sa place avec ce lien'),
+                onTap: () => Navigator.pop(context, 'invite'),
+              ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+    if (!mounted || action == null) return;
+    switch (action) {
+      case 'record':
+        _record(g, m, d.business);
+      case 'remind':
+        await openWhatsApp(
+          context,
+          m.profile.phone,
+          reminderText(g, m, s, owner),
+        );
+      case 'pdf':
+        await _statement(d, m);
+      case 'invite':
+        await openWhatsApp(
+          context,
+          m.profile.phone,
+          inviteMessage(
+            'Bonjour ${m.name}, suivez vos cotisations du groupe « ${g.name} » '
+            'sur COTIZI. Inscrivez-vous comme « Client » avec ce numéro '
+            '(${m.profile.phone}) : vous retrouverez votre place.',
+            g.inviteCode,
+          ),
+        );
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final d = _last;
+    final g = d?.group;
+    final isOwner = g?.ownerId == Api.uid;
     return Scaffold(
-      appBar: AppBar(title: const Text('Groupe')),
+      appBar: AppBar(
+        title: const Text('Groupe'),
+        actions: [
+          if (g != null && !g.isLegacy) ...[
+            IconButton(
+              tooltip: 'Historique',
+              icon: const Icon(Icons.history),
+              onPressed: () => _push(GroupEventsScreen(group: g)),
+            ),
+            if (isOwner)
+              PopupMenuButton<String>(
+                tooltip: 'Plus d\'actions',
+                onSelected: (v) => switch (v) {
+                  'edit' => _push(
+                    GroupFormScreen(tontine: _tontineOf(g), group: g),
+                  ),
+                  'pdf' => _run(
+                    () => shareGroupReport(
+                      group: g,
+                      payments: d!.payments,
+                      payouts: d.payouts,
+                      business: d.business,
+                    ),
+                  ),
+                  'delete' => _delete(g),
+                  _ => null,
+                },
+                itemBuilder: (context) => [
+                  if (g.status == GroupStatus.recruiting)
+                    const PopupMenuItem(
+                      value: 'edit',
+                      child: Text('Modifier le groupe'),
+                    ),
+                  const PopupMenuItem(
+                    value: 'pdf',
+                    child: Text('Bilan PDF du groupe'),
+                  ),
+                  if (!g.isStarted)
+                    const PopupMenuItem(
+                      value: 'delete',
+                      child: Text('Supprimer le groupe'),
+                    ),
+                ],
+              )
+            else if (g.memberById(Api.uid) != null)
+              IconButton(
+                tooltip: 'Mon relevé PDF',
+                icon: const Icon(Icons.picture_as_pdf_outlined),
+                onPressed: () => _statement(d!, g.memberById(Api.uid)!),
+              ),
+          ],
+        ],
+      ),
       body: RefreshIndicator(
         onRefresh: () async => _reload(),
         child: FutureView<_GroupData>(
           future: _data,
           onRetry: _reload,
-          builder: (context, data) {
-            final (g, payments, payouts) = data;
+          builder: (context, d) {
+            final g = d.group;
             final isOwner = g.ownerId == Api.uid;
-            final started =
-                g.status == GroupStatus.active ||
-                g.status == GroupStatus.finished;
             return ListView(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
               children: [
-                _header(g),
+                _header(g, d.business, isOwner),
                 if (g.isLegacy) ...[
                   _legacyNotice(),
-                  ..._membersSection(g),
-                ] else ...[
-                  ..._statusSection(g, isOwner),
-                  if (started) ...[
-                    if (g.status == GroupStatus.active) _currentPot(g, isOwner),
-                    if (g.status == GroupStatus.finished)
-                      StatusCard(
-                        icon: Icons.verified_outlined,
-                        title: 'Tontine terminée',
-                        message:
-                            'Les ${g.memberCount} cagnottes ont été remises.',
-                        color: paymentStatusColor(PaymentStatus.approved),
-                      ),
-                    if (!isOwner) ..._mySituation(g, payments),
-                    if (isOwner) ..._pendingSection(g, payments),
-                    if (isOwner) ..._trackingSection(g),
-                    ..._calendarSection(g, payouts),
-                  ] else
-                    ..._membersSection(g),
-                ],
+                  ..._membersSection(g, isOwner: false),
+                ] else
+                  ...switch (g.status) {
+                    GroupStatus.recruiting => _recruiting(g, isOwner),
+                    GroupStatus.drawing => _drawing(g, isOwner),
+                    GroupStatus.ready => _ready(g, isOwner),
+                    GroupStatus.active ||
+                    GroupStatus.finished => _started(d, isOwner),
+                  },
               ],
             );
           },
@@ -618,14 +501,42 @@ class _GroupScreenState extends State<GroupScreen> {
     );
   }
 
-  Widget _header(Group g) {
+  Widget _header(Group g, Business? b, bool isOwner) {
     final theme = Theme.of(context);
+    final logo = b?.logo;
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            if (b != null && !isOwner) ...[
+              Row(
+                children: [
+                  CircleAvatar(
+                    radius: 16,
+                    backgroundColor: theme.colorScheme.primaryContainer,
+                    backgroundImage: logo == null
+                        ? null
+                        : MemoryImage(base64.decode(logo)),
+                    child: logo == null
+                        ? const Icon(Icons.storefront, size: 18)
+                        : null,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      b.name,
+                      style: theme.textTheme.labelLarge?.copyWith(
+                        fontWeight: FontWeight.w700,
+                        color: theme.colorScheme.primary,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+            ],
             Row(
               children: [
                 Expanded(
@@ -648,6 +559,28 @@ class _GroupScreenState extends State<GroupScreen> {
               '${g.tontineName} · Tontinier : ${g.ownerName}',
               style: theme.textTheme.bodySmall,
             ),
+            if (!g.isLegacy) ...[
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Icon(
+                    Icons.date_range,
+                    size: 18,
+                    color: theme.colorScheme.primary,
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      g.isStarted
+                          ? 'Du ${dateLong(g.startDate)} au ${dateLong(g.endDate)}'
+                          : 'Début prévu le ${dateShort(g.startDate)} · fin '
+                                'prévue le ${dateShort(g.endDate)}',
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                ],
+              ),
+            ],
             const Divider(height: 24),
             FigureGrid([
               Figure(
@@ -671,7 +604,9 @@ class _GroupScreenState extends State<GroupScreen> {
               Figure(
                 'Participants',
                 '${g.joinedCount} / ${g.memberCount}',
-                caption: 'commission ${commissionLabel(g)}',
+                caption: g.hasPenalty
+                    ? 'pénalité ${money(g.penaltyAmount)}'
+                    : 'commission ${commissionLabel(g)}',
               ),
             ]),
           ],
@@ -690,140 +625,281 @@ class _GroupScreenState extends State<GroupScreen> {
     ),
   );
 
-  // --------------------------------------------- Inscriptions et tirage
+  // ------------------------------------------------------- Inscriptions
 
-  List<Widget> _statusSection(Group g, bool isOwner) {
-    final joined = g.members.length;
-    final me = g.memberById(Api.uid);
-    switch (g.status) {
-      case GroupStatus.recruiting:
-        if (isOwner) {
-          return [
-            const SizedBox(height: 4),
-            InviteCodeCard(
-              code: g.inviteCode,
-              hint:
-                  'Appuyez sur Partager : vos participants recevront un lien '
-                  'pour rejoindre le groupe.',
-              shareText: inviteMessage(
-                'Rejoins le groupe « ${g.name} » de ma tontine sur COTIZI. '
-                'Cotisation : ${money(g.contributionAmount)} '
-                '${frequencyLower(g.frequency)}, cagnotte de '
-                '${money(g.netPot)} remise tous les '
-                '${durationLabel(g.frequency, g.perPot)}.',
-                g.inviteCode,
-              ),
-            ),
-            const SizedBox(height: 8),
-            FilledButton.icon(
-              onPressed: joined < g.memberCount || _busy
-                  ? null
-                  : () async {
-                      if (await confirm(
-                        context,
-                        title: 'Lancer le tirage au sort',
-                        message:
-                            'Plus personne ne pourra rejoindre le groupe. '
-                            'Chaque participant tirera son numéro : c\'est '
-                            'l\'ordre des remises.',
-                        confirmLabel: 'Lancer',
-                      )) {
-                        await _run(() => Api.startDraw(g));
-                      }
-                    },
-              icon: const Icon(Icons.casino_outlined),
-              label: Text(
-                joined < g.memberCount
-                    ? 'Tirage possible quand le groupe est complet ($joined / ${g.memberCount})'
-                    : 'Lancer le tirage au sort',
-              ),
-            ),
-          ];
-        }
-        return [
-          _Notice(
-            icon: Icons.hourglass_top,
-            text: joined < g.memberCount
-                ? 'En attente des autres participants ($joined / '
-                      '${g.memberCount}). Le tontinier lancera ensuite le '
-                      'tirage au sort.'
-                : 'Le groupe est complet. Le tontinier va lancer le tirage '
-                      'au sort.',
-          ),
-        ];
-      case GroupStatus.drawing:
-        final drawn = g.members.where((m) => m.drawPosition != null).length;
-        if (isOwner) {
-          return [
-            _Notice(
-              icon: Icons.casino_outlined,
-              text:
-                  'Tirage au sort en cours : $drawn / ${g.memberCount} '
-                  'participants ont tiré leur numéro.',
-            ),
-            OutlinedButton.icon(
-              onPressed: _busy
-                  ? null
-                  : () async {
-                      if (await confirm(
-                        context,
-                        title: 'Terminer le tirage',
-                        message:
-                            'Les participants qui n\'ont pas encore tiré '
-                            'recevront un numéro au hasard.',
-                        confirmLabel: 'Tirer pour eux',
-                      )) {
-                        await _run(() => Api.finishDraw(g));
-                      }
-                    },
-              icon: const Icon(Icons.shuffle),
-              label: const Text('Tirer pour les participants restants'),
-            ),
-          ];
-        }
-        if (me != null && me.drawPosition == null) {
-          return [
-            const SizedBox(height: 4),
-            Card(
-              color: Theme.of(context).colorScheme.primaryContainer,
-              child: Padding(
-                padding: const EdgeInsets.all(20),
-                child: Column(
-                  children: [
-                    const Icon(Icons.casino, size: 48),
-                    const SizedBox(height: 8),
-                    const Text(
-                      'Le tirage au sort est ouvert ! Tirez votre numéro pour '
-                      'savoir quand vous recevrez la cagnotte.',
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 16),
-                    FilledButton.icon(
-                      onPressed: _busy ? null : () => _drawLot(g),
-                      icon: const Icon(Icons.casino_outlined),
-                      label: const Text('Tirer mon numéro'),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ];
-        }
-        return [
-          _Notice(
-            icon: Icons.casino_outlined,
-            text:
-                'Vous avez tiré le n°${me?.drawPosition}. En attente des '
-                'autres participants ($drawn / ${g.memberCount}).',
-          ),
-        ];
-      case GroupStatus.active:
-      case GroupStatus.finished:
-        return const [];
+  List<Widget> _recruiting(Group g, bool isOwner) {
+    final full = g.joinedCount >= g.memberCount;
+    if (!isOwner) {
+      return [
+        _Notice(
+          icon: Icons.hourglass_top,
+          text: full
+              ? 'Le groupe est complet. Le tontinier va fixer l\'ordre des '
+                    'remises puis démarrer la tontine.'
+              : 'En attente des autres participants (${g.joinedCount} / '
+                    '${g.memberCount}).',
+        ),
+        ..._membersSection(g, isOwner: false),
+      ];
     }
+    return [
+      const SizedBox(height: 4),
+      InviteCodeCard(
+        code: g.inviteCode,
+        hint:
+            'Appuyez sur Partager : vos participants recevront un lien pour '
+            'rejoindre le groupe.',
+        shareText: inviteMessage(
+          'Rejoins le groupe « ${g.name} » de ma tontine sur COTIZI. '
+          'Cotisation : ${money(g.contributionAmount)} '
+          '${frequencyLower(g.frequency)}, cagnotte de ${money(g.netPot)} '
+          'remise tous les ${durationLabel(g.frequency, g.perPot)}.',
+          g.inviteCode,
+        ),
+      ),
+      const SizedBox(height: 8),
+      if (!full)
+        OutlinedButton.icon(
+          onPressed: _busy ? null : () => _addManaged(g),
+          icon: const Icon(Icons.person_add_alt),
+          label: const Text('Ajouter un participant sans application'),
+        ),
+      const SizedBox(height: 8),
+      FilledButton.icon(
+        onPressed: !full || _busy
+            ? null
+            : g.orderMode == OrderMode.manual
+            ? () => _push(OrderScreen(group: g))
+            : () async {
+                if (await confirm(
+                  context,
+                  title: 'Lancer le tirage au sort',
+                  message:
+                      'Plus personne ne pourra rejoindre le groupe. Chaque '
+                      'participant tirera son numéro : c\'est l\'ordre des '
+                      'remises.',
+                  confirmLabel: 'Lancer',
+                )) {
+                  await _run(() => Api.startDraw(g));
+                }
+              },
+        icon: Icon(
+          g.orderMode == OrderMode.manual
+              ? Icons.format_list_numbered
+              : Icons.casino_outlined,
+        ),
+        label: Text(
+          !full
+              ? 'Groupe incomplet (${g.joinedCount} / ${g.memberCount})'
+              : g.orderMode == OrderMode.manual
+              ? 'Fixer l\'ordre des remises'
+              : 'Lancer le tirage au sort',
+        ),
+      ),
+      ..._membersSection(g, isOwner: true),
+    ];
   }
 
-  // ------------------------------------------------- Cagnotte en cours
+  // ------------------------------------------------------ Tirage au sort
+
+  List<Widget> _drawing(Group g, bool isOwner) {
+    final drawn = g.members.where((m) => m.drawPosition != null).length;
+    final me = g.memberById(Api.uid);
+    if (isOwner) {
+      return [
+        _Notice(
+          icon: Icons.casino_outlined,
+          text:
+              'Tirage au sort en cours : $drawn / ${g.memberCount} numéros '
+              'tirés.',
+        ),
+        OutlinedButton.icon(
+          onPressed: _busy
+              ? null
+              : () async {
+                  if (await confirm(
+                    context,
+                    title: 'Terminer le tirage',
+                    message:
+                        'Les participants qui n\'ont pas encore tiré (et ceux '
+                        'sans application) reçoivent un numéro au hasard.',
+                    confirmLabel: 'Tirer pour eux',
+                  )) {
+                    await _run(() => Api.finishDraw(g));
+                  }
+                },
+          icon: const Icon(Icons.shuffle),
+          label: const Text('Tirer pour les participants restants'),
+        ),
+        ..._membersSection(g, isOwner: false),
+      ];
+    }
+    if (me != null && me.drawPosition == null) {
+      return [
+        const SizedBox(height: 4),
+        Card(
+          color: Theme.of(context).colorScheme.primaryContainer,
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              children: [
+                const Icon(Icons.casino, size: 48),
+                const SizedBox(height: 8),
+                const Text(
+                  'Le tirage au sort est ouvert ! Tirez votre numéro pour '
+                  'savoir quand vous recevrez la cagnotte.',
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 16),
+                FilledButton.icon(
+                  onPressed: _busy ? null : () => _drawLot(g),
+                  icon: const Icon(Icons.casino_outlined),
+                  label: const Text('Tirer mon numéro'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ];
+    }
+    return [
+      _Notice(
+        icon: Icons.casino_outlined,
+        text:
+            'Vous avez tiré le n°${me?.drawPosition}. En attente des autres '
+            'participants ($drawn / ${g.memberCount}).',
+      ),
+    ];
+  }
+
+  // ------------------------------------------------- Prête à démarrer
+
+  List<Widget> _ready(Group g, bool isOwner) {
+    final me = g.memberById(Api.uid);
+    return [
+      if (isOwner) ...[
+        StatusCard(
+          icon: Icons.flag_outlined,
+          title: 'Prête à démarrer',
+          message:
+              'L\'ordre des remises est fixé. Démarrez la tontine pour figer '
+              'les dates et ouvrir les paiements.',
+          color: Theme.of(context).colorScheme.primary,
+          children: [
+            const SizedBox(height: 12),
+            FilledButton.icon(
+              onPressed: _busy ? null : () => _push(StartGroupScreen(group: g)),
+              icon: const Icon(Icons.play_arrow),
+              label: const Text('Démarrer la tontine'),
+            ),
+            if (g.orderMode == OrderMode.manual) ...[
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                onPressed: _busy ? null : () => _push(OrderScreen(group: g)),
+                icon: const Icon(Icons.format_list_numbered),
+                label: const Text('Modifier l\'ordre'),
+              ),
+            ],
+          ],
+        ),
+      ] else
+        _Notice(
+          icon: Icons.flag_outlined,
+          text:
+              'L\'ordre des remises est fixé${me?.drawPosition == null ? '' : ' : vous recevez la cagnotte n°${me!.drawPosition}'}. '
+              'Le tontinier va démarrer la tontine.',
+        ),
+      const SectionTitle('Ordre des remises (prévisionnel)'),
+      Card(
+        child: Column(
+          children: [
+            for (var pot = 1; pot <= g.memberCount; pot++)
+              ListTile(
+                leading: CircleAvatar(
+                  radius: 16,
+                  child: Text(
+                    '$pot',
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                ),
+                title: Text(_nameOf(g.beneficiaryOf(pot))),
+                trailing: Text(dateShort(g.payoutDate(pot))),
+              ),
+          ],
+        ),
+      ),
+    ];
+  }
+
+  String _nameOf(GroupMember? m) => m == null
+      ? '—'
+      : m.userId == Api.uid
+      ? '${m.name} (vous)'
+      : m.name;
+
+  // ------------------------------------------- En cours ou terminée
+
+  List<Widget> _started(_GroupData d, bool isOwner) {
+    final g = d.group;
+    final me = g.memberById(Api.uid);
+    final myIds = me?.paymentIds ?? const <String>[];
+    final toConfirm = [
+      for (final p in d.payouts.values)
+        if (myIds.contains(p.beneficiaryId) &&
+            !p.confirmed &&
+            p.problem == null)
+          p,
+    ];
+    return [
+      for (final p in toConfirm)
+        StatusCard(
+          icon: Icons.savings,
+          title: 'Avez-vous reçu votre cagnotte ?',
+          message:
+              'Le tontinier indique vous avoir remis ${money(p.amount)} le '
+              '${dateLong(p.paidAt)} (cagnotte n°${p.pot}).',
+          color: paymentStatusColor(PaymentStatus.pending),
+          children: [
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: _busy
+                        ? null
+                        : () => _answerPayout(g, p, ok: false),
+                    child: const Text('Signaler un problème'),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: FilledButton(
+                    onPressed: _busy
+                        ? null
+                        : () => _answerPayout(g, p, ok: true),
+                    child: const Text('Oui, reçue'),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      if (g.status == GroupStatus.active) _currentPot(g, isOwner),
+      if (g.status == GroupStatus.finished)
+        StatusCard(
+          icon: Icons.verified_outlined,
+          title: 'Tontine terminée',
+          message:
+              'Les ${g.memberCount} cagnottes ont été remises '
+              '(${periodLabel(g.startDate, g.endDate)}).',
+          color: paymentStatusColor(PaymentStatus.approved),
+        ),
+      if (!isOwner && me != null) ..._mySituation(d, me),
+      if (isOwner) ..._pendingSection(d),
+      if (isOwner) ..._trackingSection(d),
+      ..._calendarSection(g, d.payouts),
+    ];
+  }
 
   Widget _currentPot(Group g, bool isOwner) {
     final theme = Theme.of(context);
@@ -881,17 +957,25 @@ class _GroupScreenState extends State<GroupScreen> {
             ),
             const SizedBox(height: 4),
             Text(
-              'Collecte du ${dateShort(g.collectStart(pot))} au '
-              '${dateShort(g.collectEnd(pot))}',
+              'Collecte ${periodLabel(g.collectStart(pot), g.collectEnd(pot))}',
               style: theme.textTheme.bodySmall,
             ),
             if (isOwner && b != null) ...[
               const SizedBox(height: 12),
-              FilledButton.icon(
-                onPressed: _busy ? null : () => _confirmPayout(g),
-                icon: const Icon(Icons.payments_outlined),
-                label: Text('Confirmer la remise à ${b.name}'),
-              ),
+              // Bouton principal le jour de la remise ou quand la collecte
+              // est complète ; discret avant.
+              if (validated >= g.grossPot || !date.isAfter(DateTime.now()))
+                FilledButton.icon(
+                  onPressed: _busy ? null : () => _confirmPayout(g),
+                  icon: const Icon(Icons.payments_outlined),
+                  label: Text('Confirmer la remise à ${b.name}'),
+                )
+              else
+                OutlinedButton.icon(
+                  onPressed: _busy ? null : () => _confirmPayout(g),
+                  icon: const Icon(Icons.payments_outlined),
+                  label: Text('Confirmer la remise à ${b.name}'),
+                ),
               if (overdue)
                 Padding(
                   padding: const EdgeInsets.only(top: 6),
@@ -910,16 +994,16 @@ class _GroupScreenState extends State<GroupScreen> {
     );
   }
 
-  // --------------------------------------------- Situation du participant
-
-  List<Widget> _mySituation(Group g, List<Payment> payments) {
-    final me = g.memberById(Api.uid);
-    if (me == null) return const [];
+  List<Widget> _mySituation(_GroupData d, GroupMember me) {
+    final g = d.group;
     final s = g.standingOf(me, DateTime.now());
     final good = paymentStatusColor(PaymentStatus.approved);
     final bad = paymentStatusColor(PaymentStatus.rejected);
-    final mine = payments.where((p) => p.userId == Api.uid).toList();
+    final mine = d.payments
+        .where((p) => me.paymentIds.contains(p.userId))
+        .toList();
     final pos = me.drawPosition;
+    final payout = pos == null ? null : d.payouts[pos];
     return [
       const SectionTitle('Ma situation'),
       StatusCard(
@@ -944,7 +1028,8 @@ class _GroupScreenState extends State<GroupScreen> {
                   'Prochaine cotisation : '
                       '${dateLong(g.contributionDate(s.declared + 1))}.',
               ].join(' ')
-            : 'Montant à régulariser : ${money(s.late * g.contributionAmount)}.',
+            : 'À régulariser : ${money(s.late * g.contributionAmount)}'
+                  '${s.penaltyDue > 0 ? ' + ${money(s.penaltyDue)} de pénalités' : ''}.',
         children: [
           const SizedBox(height: 12),
           ProgressLine(
@@ -952,12 +1037,14 @@ class _GroupScreenState extends State<GroupScreen> {
             color: good,
             label:
                 '${s.approved} / ${s.total} cotisations validées'
-                '${s.pending > 0 ? ' · ${s.pending} en attente' : ''}',
+                '${s.pending > 0 ? ' · ${s.pending} en attente' : ''}'
+                '${me.penaltyPaid > 0 ? ' · pénalités payées ${money(me.penaltyPaid)}' : ''}',
           ),
           if (s.remaining > 0 && g.status == GroupStatus.active) ...[
             const SizedBox(height: 12),
             FilledButton.icon(
-              onPressed: () => _pay(g, s),
+              onPressed: () =>
+                  _push(payContributionsScreen(g, me, s, business: d.business)),
               icon: const Icon(Icons.upload),
               label: Text(
                 s.late > 0 ? 'Payer mes cotisations en retard' : 'Payer',
@@ -969,15 +1056,23 @@ class _GroupScreenState extends State<GroupScreen> {
       if (pos != null)
         Card(
           child: ListTile(
-            leading: const Icon(Icons.emoji_events_outlined),
+            leading: Icon(
+              payout?.confirmed == true
+                  ? Icons.done_all
+                  : Icons.emoji_events_outlined,
+              color: payout?.confirmed == true ? good : null,
+            ),
             title: Text(
-              pos <= g.paidOutCount
-                  ? 'Vous avez reçu la cagnotte n°$pos'
+              payout != null
+                  ? 'Cagnotte n°$pos reçue'
                   : 'Vous recevez la cagnotte n°$pos',
               style: const TextStyle(fontWeight: FontWeight.w600),
             ),
             subtitle: Text(
-              '${money(g.netPot)} · ${dateLong(g.payoutDate(pos))}',
+              payout != null
+                  ? '${money(payout.amount)} le ${dateLong(payout.paidAt)}'
+                        '${payout.confirmed ? ' · réception confirmée' : ''}'
+                  : '${money(g.netPot)} · le ${dateLong(g.payoutDate(pos))}',
             ),
           ),
         ),
@@ -986,27 +1081,34 @@ class _GroupScreenState extends State<GroupScreen> {
         for (final p in mine)
           Card(
             child: ListTile(
-              leading: const Icon(Icons.receipt_long_outlined),
+              leading: Icon(
+                p.isCash ? Icons.payments_outlined : Icons.phone_android,
+              ),
               title: Text(
                 '${contributionsLabel(p.count)} · ${money(p.amount)}',
               ),
               subtitle: Text(
                 p.status == PaymentStatus.rejected
                     ? 'Refusé : ${p.rejectionReason ?? ''}'
-                    : 'Déclaré le ${dateTime(p.declaredAt)}',
+                    : '${methodLabel(p.method)} · ${dateTime(p.declaredAt)}',
               ),
               trailing: StatusChip.payment(p.status),
-              onTap: () => _push(groupPaymentScreen(g, p, canReview: false)),
+              onTap: () => _push(
+                groupPaymentScreen(
+                  g,
+                  p,
+                  canReview: false,
+                  business: d.business,
+                ),
+              ),
             ),
           ),
       ],
     ];
   }
 
-  // ------------------------------------------------------- Tontinier
-
-  List<Widget> _pendingSection(Group g, List<Payment> payments) {
-    final pending = payments
+  List<Widget> _pendingSection(_GroupData d) {
+    final pending = d.payments
         .where((p) => p.status == PaymentStatus.pending)
         .toList();
     if (pending.isEmpty) return const [];
@@ -1019,24 +1121,36 @@ class _GroupScreenState extends State<GroupScreen> {
             leading: CircleAvatar(
               backgroundColor: color.withValues(alpha: 0.15),
               foregroundColor: color,
-              child: const Icon(Icons.receipt_long),
+              child: Icon(
+                p.isCash ? Icons.payments_outlined : Icons.receipt_long,
+              ),
             ),
             title: Text(p.payer.fullName),
             subtitle: Text(
-              '${contributionsLabel(p.count)} · ${dateTime(p.declaredAt)}',
+              '${contributionsLabel(p.count)} · ${methodLabel(p.method)} · '
+              '${dateTime(p.declaredAt)}',
             ),
             trailing: Text(
               money(p.amount),
               style: const TextStyle(fontWeight: FontWeight.w700),
             ),
-            onTap: () => _push(groupPaymentScreen(g, p, canReview: true)),
+            onTap: () => _push(
+              groupPaymentScreen(
+                d.group,
+                p,
+                canReview: true,
+                business: d.business,
+              ),
+            ),
           ),
         ),
     ];
   }
 
-  /// Suivi des participants : à jour ou en retard, avec relance.
-  List<Widget> _trackingSection(Group g) {
+  /// Suivi des participants : à jour ou en retard ; fiche avec encaissement,
+  /// relance et relevé.
+  List<Widget> _trackingSection(_GroupData d) {
+    final g = d.group;
     final today = DateTime.now();
     final standings = [for (final m in g.members) (m, g.standingOf(m, today))];
     final lateCount = standings.where((e) => !e.$2.upToDate).length;
@@ -1062,32 +1176,30 @@ class _GroupScreenState extends State<GroupScreen> {
                 style: const TextStyle(fontWeight: FontWeight.w700),
               ),
             ),
-            title: Text(m.name),
+            title: Text(m.managed ? '${m.name} (sans appli)' : m.name),
             subtitle: Text(
               s.upToDate
                   ? '${s.approved} / ${s.total} validées'
                         '${s.pending > 0 ? ' · ${s.pending} en attente' : ''}'
                   : '${contributionsLabel(s.late)} en retard · '
-                        '${money(s.late * g.contributionAmount)}',
+                        '${money(s.late * g.contributionAmount + s.penaltyDue)}',
               style: TextStyle(color: s.upToDate ? null : bad),
             ),
             trailing: s.upToDate
                 ? StatusChip('À jour', good)
-                : IconButton.filledTonal(
-                    tooltip: 'Relancer ${m.name} sur WhatsApp',
-                    onPressed: () => openWhatsApp(
-                      context,
-                      m.profile.phone,
-                      reminderText(g, m, s),
-                    ),
-                    icon: const Icon(Icons.campaign_outlined),
-                  ),
+                : StatusChip('Retard', bad),
+            onTap: () => _memberSheet(d, m),
           ),
         ),
+      Padding(
+        padding: const EdgeInsets.only(top: 4),
+        child: Text(
+          'Touchez un participant pour encaisser, relancer ou voir son relevé.',
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
+      ),
     ];
   }
-
-  // ------------------------------------------------ Calendrier des remises
 
   List<Widget> _calendarSection(Group g, Map<int, Payout> payouts) {
     final theme = Theme.of(context);
@@ -1118,7 +1230,7 @@ class _GroupScreenState extends State<GroupScreen> {
                           : null,
                       foregroundColor: done != null ? good : null,
                       child: done != null
-                          ? const Icon(Icons.check)
+                          ? Icon(done.confirmed ? Icons.done_all : Icons.check)
                           : Text(
                               '$pot',
                               style: const TextStyle(
@@ -1127,7 +1239,7 @@ class _GroupScreenState extends State<GroupScreen> {
                             ),
                     ),
                     title: Text(
-                      mine ? '${b!.name} (vous)' : (b?.name ?? 'À tirer'),
+                      _nameOf(b),
                       style: TextStyle(
                         fontWeight: current || mine
                             ? FontWeight.w700
@@ -1138,10 +1250,20 @@ class _GroupScreenState extends State<GroupScreen> {
                       done != null
                           ? 'Remise le ${dateShort(done.paidAt)} · '
                                 '${money(done.amount)}'
+                                '${done.confirmed
+                                    ? ' · reçue ✔✔'
+                                    : done.problem != null
+                                    ? ' · problème signalé'
+                                    : ''}'
                           : 'Remise prévue le ${dateShort(g.payoutDate(pot))}',
                     ),
                     trailing: done != null
-                        ? StatusChip('Remise', good)
+                        ? StatusChip(
+                            done.problem != null ? 'Problème' : 'Remise',
+                            done.problem != null
+                                ? paymentStatusColor(PaymentStatus.rejected)
+                                : good,
+                          )
                         : current
                         ? StatusChip(
                             'En cours',
@@ -1157,7 +1279,7 @@ class _GroupScreenState extends State<GroupScreen> {
     ];
   }
 
-  List<Widget> _membersSection(Group g) {
+  List<Widget> _membersSection(Group g, {required bool isOwner}) {
     return [
       SectionTitle('Participants (${g.members.length} / ${g.memberCount})'),
       if (g.members.isEmpty)
@@ -1171,9 +1293,19 @@ class _GroupScreenState extends State<GroupScreen> {
             leading: CircleAvatar(
               child: Text(m.name.isEmpty ? '?' : m.name[0].toUpperCase()),
             ),
-            title: Text(m.userId == Api.uid ? '${m.name} (vous)' : m.name),
-            subtitle: Text(m.profile.phone),
-            trailing: m.drawPosition == null
+            title: Text(_nameOf(m)),
+            subtitle: Text(
+              m.managed
+                  ? '${m.profile.phone} · sans application'
+                  : m.profile.phone,
+            ),
+            trailing: isOwner && g.status == GroupStatus.recruiting
+                ? IconButton(
+                    tooltip: 'Retirer ${m.name}',
+                    icon: const Icon(Icons.person_remove_outlined),
+                    onPressed: _busy ? null : () => _remove(g, m),
+                  )
+                : m.drawPosition == null
                 ? null
                 : StatusChip(
                     'N° ${m.drawPosition}',
@@ -1182,6 +1314,54 @@ class _GroupScreenState extends State<GroupScreen> {
           ),
         ),
     ];
+  }
+}
+
+class _ProblemDialog extends StatefulWidget {
+  const _ProblemDialog();
+
+  @override
+  State<_ProblemDialog> createState() => _ProblemDialogState();
+}
+
+class _ProblemDialogState extends State<_ProblemDialog> {
+  final _text = TextEditingController();
+
+  @override
+  void dispose() {
+    _text.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Signaler un problème'),
+      content: TextField(
+        controller: _text,
+        autofocus: true,
+        maxLines: 3,
+        maxLength: 300,
+        textCapitalization: TextCapitalization.sentences,
+        decoration: const InputDecoration(
+          labelText: 'Que s\'est-il passé ?',
+          hintText: 'Ex. Je n\'ai reçu que 100 000 F',
+        ),
+        onChanged: (_) => setState(() {}),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Annuler'),
+        ),
+        FilledButton(
+          onPressed: _text.text.trim().isEmpty
+              ? null
+              : () => Navigator.pop(context, _text.text.trim()),
+          child: const Text('Envoyer'),
+        ),
+      ],
+    );
   }
 }
 
