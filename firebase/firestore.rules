@@ -140,6 +140,38 @@ service cloud.firestore {
             && g.commissionValue <= g.memberCount * g.contributionsPerPot * g.contributionAmount));
     }
 
+    // Niveau d'un participant : nombre de cagnottes dont il a payé (validé)
+    // toutes ses cotisations. Le groupe compte les participants de chaque
+    // niveau (levels : {"niveau": nombre}) ; la cagnotte n ne peut être
+    // remise que lorsque tous ont atteint le niveau n (collecte complète).
+    function levelOf(g, approved) {
+      return string(approved / g.contributionsPerPot);
+    }
+
+    // Niveaux n à 100 (100 participants au plus)
+    function levelsFrom(n) {
+      return ['0','1','2','3','4','5','6','7','8','9','10','11','12','13','14','15','16','17','18','19','20','21','22','23','24','25','26','27','28','29','30','31','32','33','34','35','36','37','38','39','40','41','42','43','44','45','46','47','48','49','50','51','52','53','54','55','56','57','58','59','60','61','62','63','64','65','66','67','68','69','70','71','72','73','74','75','76','77','78','79','80','81','82','83','84','85','86','87','88','89','90','91','92','93','94','95','96','97','98','99','100'][n:101];
+    }
+
+    // [ga] = groupe après le passage d'un participant de [from] à [to]
+    // cotisations validées
+    function levelsMoved(g, ga, from, to) {
+      let a = levelOf(g, from);
+      let b = levelOf(g, to);
+      return (a == b && ga.levels == g.levels)
+        || (a != b
+          && g.levels.diff(ga.levels).affectedKeys().hasOnly([a, b])
+          && ga.levels.get(b, 0) == g.levels.get(b, 0) + 1
+          && ((g.levels.get(a, 0) == 1 && !(a in ga.levels))
+            || (g.levels.get(a, 0) > 1 && ga.levels.get(a, 0) == g.levels.get(a, 0) - 1)));
+    }
+
+    // Collecte de la cagnotte [pot] complète (groupes démarrés en 2.0 :
+    // pas de niveaux, vérification faite par l'application)
+    function collectionComplete(g, pot) {
+      return !('levels' in g) || g.levels.keys().hasOnly(levelsFrom(pot));
+    }
+
     function validNote() {
       return incoming().get('note', null) == null
         || (incoming().note is string && incoming().note.size() <= 200);
@@ -353,12 +385,22 @@ service cloud.firestore {
         || (existing().ownerId == uid()
           && existing().status == 'drawing'
           && existing().drawnCount == existing().memberCount
-          && changedOnly(['status', 'startDate', 'firstPayoutDate', 'startedAt'])
+          && changedOnly(['status', 'startDate', 'firstPayoutDate', 'startedAt', 'levels'])
           && incoming().status == 'active'
           && incoming().startedAt == request.time
+          && incoming().levels == {'0': existing().memberCount}
           && isDate(incoming().startDate)
           && isDate(incoming().firstPayoutDate)
           && incoming().firstPayoutDate >= incoming().startDate)
+        // Niveaux mis à jour avec les cotisations validées d'un participant
+        || (existing().ownerId == uid()
+          && existing().status == 'active'
+          && 'levels' in existing()
+          && changedOnly(['levels', 'levelsMember'])
+          && incoming().levelsMember is string
+          && levelsMoved(existing(), incoming(),
+              get(memberPath(groupId, incoming().levelsMember)).data.get('approvedCount', 0),
+              getAfter(memberPath(groupId, incoming().levelsMember)).data.get('approvedCount', 0)))
         // Le tontinier confirme la remise de la cagnotte suivante
         || (existing().ownerId == uid()
           && existing().status == 'active'
@@ -514,7 +556,13 @@ service cloud.firestore {
           && incoming().get('penaltyPaid', 0) >= 0
           && incoming().approvedCount >= 0
           && incoming().approvedCount <= incoming().declaredCount
-          && incoming().declaredCount <= totalOf(groupData(groupId));
+          && incoming().declaredCount <= totalOf(groupData(groupId))
+          && (!('levels' in groupData(groupId))
+            || (levelsMoved(groupData(groupId), groupAfter(groupId),
+                  existing().get('approvedCount', 0), incoming().approvedCount)
+              && (levelOf(groupData(groupId), existing().get('approvedCount', 0))
+                  == levelOf(groupData(groupId), incoming().approvedCount)
+                || groupAfter(groupId).levelsMember == memberId)));
 
         // Retrait d'un participant, ou suppression du groupe, avant le démarrage
         allow delete: if signedIn() && isGroupOwner(groupId)
@@ -619,10 +667,12 @@ service cloud.firestore {
         allow create: if signedIn() && isGroupOwner(groupId)
           && isStarted(groupData(groupId))
           && incoming().keys().hasOnly(['tour', 'beneficiaryId', 'beneficiaryName', 'amount',
-              'paidAt', 'receivedAt', 'problem'])
+              'method', 'paidAt', 'receivedAt', 'problem'])
           && incoming().tour is int
           && pot == string(incoming().tour)
           && incoming().tour == groupData(groupId).paidOutCount + 1
+          && collectionComplete(groupData(groupId), incoming().tour)
+          && incoming().get('method', 'cash') in ['cash', 'mobile_money']
           && groupAfter(groupId).paidOutCount == incoming().tour
           && get(memberPath(groupId, incoming().beneficiaryId)).data.drawPosition == incoming().tour
           && isText(incoming().beneficiaryName, 1, 60)

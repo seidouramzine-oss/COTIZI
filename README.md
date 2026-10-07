@@ -2,9 +2,11 @@
 
 Application de gestion de tontine pour les tontiniers : **tontines à cagnotte**
 (groupes, tirage au sort ou ordre fixé, bouton « Démarrer », paiements Mobile Money
-ou espèces, pénalités de retard, remises confirmées par le bénéficiaire) et
+ou espèces, pénalités de retard, remise seulement quand la collecte est complète,
+remises confirmées par le bénéficiaire) et
 **tontines à carnet** (carnets de 31 cases, la dernière case revenant au tontinier),
-avec profil pro, tableau des gains, historique des actions et relevés PDF.
+avec profil pro, tableau des gains, historique des actions, relevés PDF et
+rappels sur le téléphone.
 
 Les règles de fonctionnement sont décrites dans [docs/REGLES_METIER.md](docs/REGLES_METIER.md).
 
@@ -26,10 +28,11 @@ lib/
   models.dart            tontines, groupes, carnets, paiements (+ calculs)
   format.dart            montants FCFA, dates, numéros, messages d'erreur
   reports.dart           relevés et bilans PDF
+  reminders.dart         rappels programmés sur le téléphone
   screens/               écrans (connexion, accueil, tontines, groupes, carnets, paiements,
                          profil pro, gains, abonnement, administration)
   widgets/common.dart    composants partagés
-assets/fonts/            police Roboto des relevés PDF
+assets/fonts/            polices : Plus Jakarta Sans (application), Roboto (relevés PDF)
 firebase/
   firestore.rules        règles de sécurité (à publier dans la console Firebase)
   tests/                 scénario de test des règles sur l'émulateur Firestore

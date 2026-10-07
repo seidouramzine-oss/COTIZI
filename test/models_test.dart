@@ -1,6 +1,8 @@
 import 'package:cotizi/format.dart';
 import 'package:cotizi/models.dart';
+import 'package:cotizi/reminders.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:intl/date_symbol_data_local.dart';
 
 Group _group({
   int members = 10,
@@ -339,6 +341,93 @@ void main() {
         claimedFrom: 'p22997000099',
       );
       expect(m.paymentIds, ['uid1', 'p22997000099']);
+    });
+  });
+
+  group('Version 2.1 : remise seulement quand la collecte est complète', () {
+    // 3 participants, 2 cotisations de 1 000 F par cagnotte
+    Group g(List<GroupMember> m) => _group(
+      members: 3,
+      contribution: 1000,
+      frequency: Frequency.daily,
+      start: DateTime(2026, 10, 1),
+      perPot: 2,
+      firstPayout: DateTime(2026, 10, 2),
+      members_: m,
+    );
+
+    test('collecte incomplète : il manque des cotisations', () {
+      final grp = g([
+        _member('a', pos: 1, declared: 2, approved: 2),
+        _member('b', pos: 2, declared: 2, approved: 1),
+        _member('c', pos: 3),
+      ]);
+      expect(grp.isPotComplete(1), isFalse);
+      expect(grp.missingFor(1), 3000);
+      final short = grp.shortfallsFor(1);
+      expect(short.map((f) => f.member.userId), ['c', 'b']);
+      expect(short.first.missing, 2);
+      expect(short.first.amount, 2000);
+      expect(short.last.pending, 1);
+    });
+
+    test('collecte complète : remise possible', () {
+      final grp = g([
+        _member('a', pos: 1, declared: 4, approved: 4),
+        _member('b', pos: 2, declared: 2, approved: 2),
+        _member('c', pos: 3, declared: 2, approved: 2),
+      ]);
+      expect(grp.isPotComplete(1), isTrue);
+      expect(grp.shortfallsFor(1), isEmpty);
+      // Cagnotte 2 : seul A a payé d'avance
+      expect(grp.isPotComplete(2), isFalse);
+      expect(grp.missingFor(2), 4000);
+    });
+  });
+
+  group('Rappels', () {
+    setUpAll(() => initializeDateFormatting('fr'));
+    final g = _group(
+      members: 2,
+      contribution: 1000,
+      frequency: Frequency.daily,
+      start: DateTime(2026, 10, 1),
+      perPot: 30,
+      firstPayout: DateTime(2026, 10, 30),
+      members_: [
+        _member('me', pos: 1, declared: 5, approved: 5),
+        _member('b', pos: 2),
+      ],
+    );
+    final status = MemberGroupStatus(
+      group: g,
+      payments: const [],
+      standing: g.standingOf(g.members.first, DateTime(2026, 10, 7)),
+    );
+
+    test('la veille de chaque cotisation à payer, avec le retard', () {
+      final plan = planReminders(
+        member: [status],
+        now: DateTime(2026, 10, 7, 10),
+      );
+      // 2 cotisations en retard (6 et 7 oct.) : rappel le lendemain à 9 h
+      final late = plan.firstWhere((r) => r.title.contains('en retard'));
+      expect(late.at, DateTime(2026, 10, 8, 9));
+      expect(late.body, contains('2 cotisations en retard'));
+      // Cotisation du 8 oct. : rappel le 7 à 18 h
+      final eve = plan.firstWhere((r) => r.title.startsWith('Cotisation demain'));
+      expect(eve.at, DateTime(2026, 10, 7, 18));
+      expect(eve.body, contains('aussi 2 cotisations en retard'));
+      expect(plan.where((r) => r.title.startsWith('Cotisation demain')).length, 10);
+    });
+
+    test('le tontinier : matin de chaque remise', () {
+      final plan = planReminders(owned: [g], now: DateTime(2026, 10, 7));
+      expect(plan.map((r) => r.at), [
+        DateTime(2026, 10, 30, 8),
+        DateTime(2026, 11, 29, 8),
+      ]);
+      expect(plan.first.body, contains('collecte est complète'));
     });
   });
 }

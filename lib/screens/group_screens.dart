@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../api.dart';
 import '../format.dart';
@@ -61,6 +62,10 @@ Widget payContributionsScreen(
   ownerName: ownerLabel(g, business),
   accounts: business?.accounts ?? const [],
   penaltyFor: (n) => g.penaltyFor(me.declaredCount + 1, n, DateTime.now()),
+  unitsCaption: (n) => n == 1
+      ? 'Cotisation du ${dateShort(g.contributionDate(me.declaredCount + 1))}'
+      : 'Cotisations du ${dateShort(g.contributionDate(me.declaredCount + 1))} '
+            'au ${dateShort(g.contributionDate(me.declaredCount + n))}',
   note: s.late > 0
       ? 'Vous avez ${contributionsLabel(s.late)} en retard '
             '(${money(s.late * g.contributionAmount)}'
@@ -91,6 +96,39 @@ String reminderText(Group g, GroupMember m, MemberStanding s, String owner) =>
     'soit ${money(s.late * g.contributionAmount + s.penaltyDue)}'
     '${s.penaltyDue > 0 ? ' pénalités comprises' : ''}. Merci de régulariser '
     'et de déclarer votre paiement dans COTIZI. — $owner';
+
+/// Relance d'un participant pour la cagnotte en cours (collecte incomplète).
+String shortfallText(Group g, PotShortfall f, String owner) =>
+    'Bonjour ${f.member.name}, la cagnotte n°${g.currentPot} du groupe '
+    '« ${g.name} » ne peut être remise que lorsque tout le monde a payé. '
+    'Il vous reste ${contributionsLabel(f.missing)} à régler '
+    '(${money(f.amount)})${f.pending > 0 ? ', dont ${f.pending} en attente de validation' : ''}. '
+    'Merci de payer et de déclarer votre paiement dans COTIZI. — $owner';
+
+/// Message pour tout le groupe (à envoyer dans le groupe WhatsApp).
+String shortfallGroupText(Group g, List<PotShortfall> list, String owner) => [
+  'Groupe « ${g.name} » : la cagnotte n°${g.currentPot} '
+      '(${money(g.netPot)}) sera remise dès que la collecte est complète. '
+      'Il manque encore ${money(g.missingFor(g.currentPot))} :',
+  for (final f in list)
+    '• ${f.member.name} : ${contributionsLabel(f.missing)} (${money(f.amount)})',
+  'Merci de régulariser rapidement. — $owner',
+].join('\n');
+
+/// Reçu de remise d'une cagnotte.
+String payoutReceipt(Group g, Payout p, String owner) => [
+  'REÇU DE REMISE — COTIZI',
+  'Tontine : ${g.tontineName}',
+  'Groupe : ${g.name}',
+  'Cagnotte n°${p.pot} sur ${g.memberCount}',
+  'Bénéficiaire : ${p.beneficiaryName}',
+  'Collecte : ${money(g.grossPot)}',
+  'Commission : ${money(g.commission)}',
+  'Montant remis : ${money(p.amount)}',
+  'Remise le ${dateTime(p.paidAt)}'
+      '${p.method == null ? '' : ' (${methodLabel(p.method!).toLowerCase()})'}',
+  'Tontinier : $owner',
+].join('\n');
 
 /// Détail d'un groupe, vu par le tontinier ou par un participant.
 class GroupScreen extends StatefulWidget {
@@ -241,22 +279,18 @@ class _GroupScreenState extends State<GroupScreen> {
   Future<void> _confirmPayout(Group g) async {
     final pot = g.currentPot;
     final b = g.beneficiaryOf(pot);
-    if (b == null) return;
-    final collected = g.collectedFor(pot);
-    if (await confirm(
-      context,
-      title: 'Confirmer la remise',
-      message:
-          'Avez-vous remis ${money(g.netPot)} à ${b.name} pour la cagnotte '
-          'n°$pot ?${collected < g.grossPot ? '\n\nAttention : la collecte n\'est pas terminée (${money(collected)} validés sur ${money(g.grossPot)}).' : ''}'
-          '\n\n${b.managed ? 'Cette confirmation est définitive.' : '${b.name} devra confirmer la réception.'}',
-      confirmLabel: 'Oui, c\'est remis',
-    )) {
-      await _run(
-        () => Api.confirmPayout(g),
-        done: 'Remise de la cagnotte n°$pot confirmée',
-      );
-    }
+    if (b == null || !g.isPotComplete(pot)) return;
+    final method = await showModalBottomSheet<PaymentMethod>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (_) => PayoutSheet(group: g, beneficiary: b),
+    );
+    if (method == null) return;
+    await _run(
+      () => Api.confirmPayout(g, method),
+      done: 'Remise de la cagnotte n°$pot enregistrée',
+    );
   }
 
   Future<void> _answerPayout(Group g, Payout p, {required bool ok}) async {
@@ -850,40 +884,16 @@ class _GroupScreenState extends State<GroupScreen> {
             p.problem == null)
           p,
     ];
+    final last = d.payouts[g.paidOutCount];
     return [
-      for (final p in toConfirm)
-        StatusCard(
-          icon: Icons.savings,
-          title: 'Avez-vous reçu votre cagnotte ?',
-          message:
-              'Le tontinier indique vous avoir remis ${money(p.amount)} le '
-              '${dateLong(p.paidAt)} (cagnotte n°${p.pot}).',
-          color: paymentStatusColor(PaymentStatus.pending),
-          children: [
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: _busy
-                        ? null
-                        : () => _answerPayout(g, p, ok: false),
-                    child: const Text('Signaler un problème'),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: FilledButton(
-                    onPressed: _busy
-                        ? null
-                        : () => _answerPayout(g, p, ok: true),
-                    child: const Text('Oui, reçue'),
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
+      for (final p in toConfirm) _receptionCard(d, p),
+      // Suivi de la dernière remise tant que le bénéficiaire (avec l'appli)
+      // n'a pas confirmé l'avoir reçue
+      if (isOwner &&
+          last != null &&
+          !last.confirmed &&
+          !(g.beneficiaryOf(last.pot)?.managed ?? true))
+        _payoutFollowUp(d, last),
       if (g.status == GroupStatus.active) _currentPot(g, isOwner),
       if (g.status == GroupStatus.finished)
         StatusCard(
@@ -894,11 +904,138 @@ class _GroupScreenState extends State<GroupScreen> {
               '(${periodLabel(g.startDate, g.endDate)}).',
           color: paymentStatusColor(PaymentStatus.approved),
         ),
+      if (isOwner && g.status == GroupStatus.active) ..._shortfallSection(d),
       if (!isOwner && me != null) ..._mySituation(d, me),
       if (isOwner) ..._pendingSection(d),
       if (isOwner) ..._trackingSection(d),
       ..._calendarSection(g, d.payouts),
     ];
+  }
+
+  /// Le bénéficiaire confirme avoir reçu sa cagnotte.
+  Widget _receptionCard(_GroupData d, Payout p) {
+    final g = d.group;
+    final theme = Theme.of(context);
+    return StatusCard(
+      icon: Icons.savings,
+      title: 'Avez-vous reçu votre cagnotte ?',
+      message:
+          '${ownerLabel(g, d.business)} indique vous avoir remis '
+          '${money(p.amount)} le ${dateTime(p.paidAt)}'
+          '${p.method == null ? '' : ', ${p.method == PaymentMethod.cash ? 'en espèces' : 'par Mobile Money'}'}'
+          ' (cagnotte n°${p.pot}).',
+      color: paymentStatusColor(PaymentStatus.pending),
+      children: [
+        const SizedBox(height: 12),
+        InfoRow('Collecte', money(g.grossPot)),
+        InfoRow('Commission', '− ${money(g.commission)}'),
+        InfoRow('Vous recevez', money(p.amount), bold: true),
+        const SizedBox(height: 12),
+        FilledButton(
+          onPressed: _busy ? null : () => _answerPayout(g, p, ok: true),
+          child: const Text('Oui, j\'ai reçu l\'argent'),
+        ),
+        const SizedBox(height: 8),
+        OutlinedButton(
+          onPressed: _busy ? null : () => _answerPayout(g, p, ok: false),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: theme.colorScheme.error,
+          ),
+          child: const Text('Non, signaler un problème'),
+        ),
+      ],
+    );
+  }
+
+  /// Suivi de la dernière remise : collecte complète, remise faite,
+  /// réception confirmée par le bénéficiaire.
+  Widget _payoutFollowUp(_GroupData d, Payout p) {
+    final g = d.group;
+    final theme = Theme.of(context);
+    final b = g.beneficiaryOf(p.pot);
+    final managed = b?.managed ?? false;
+    final owner = ownerLabel(g, d.business);
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Cagnotte n°${p.pot} · ${p.beneficiaryName}',
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                Text(
+                  money(p.amount),
+                  style: TextStyle(
+                    fontWeight: FontWeight.w800,
+                    color: theme.colorScheme.primary,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            const StepLine(
+              title: 'Collecte complète',
+              subtitle: 'Toutes les cotisations validées',
+              state: StepState.complete,
+            ),
+            StepLine(
+              title: 'Remise faite par vous',
+              subtitle:
+                  '${p.method == null ? '' : '${methodLabel(p.method!)} · '}'
+                  '${dateTime(p.paidAt)}',
+              state: StepState.complete,
+            ),
+            if (!managed)
+              StepLine(
+                title: p.problem != null
+                    ? 'Problème signalé par ${p.beneficiaryName}'
+                    : 'Réception confirmée par ${p.beneficiaryName}',
+                subtitle: p.problem ?? 'En attente de sa réponse',
+                state: p.problem != null ? StepState.error : StepState.indexed,
+                last: true,
+              ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: () => SharePlus.instance.share(
+                      ShareParams(text: payoutReceipt(g, p, owner)),
+                    ),
+                    icon: const Icon(Icons.share_outlined),
+                    label: const Text('Reçu'),
+                  ),
+                ),
+                if (!managed && b != null) ...[
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () => openWhatsApp(
+                        context,
+                        b.profile.phone,
+                        'Bonjour ${b.name}, je vous ai remis ${money(p.amount)} '
+                        '(cagnotte n°${p.pot}, groupe « ${g.name} »). Merci de '
+                        'confirmer la réception dans COTIZI. — $owner',
+                      ),
+                      icon: const Icon(Icons.chat_outlined),
+                      label: Text('Rappeler ${b.name.split(' ').first}'),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Widget _currentPot(Group g, bool isOwner) {
@@ -908,11 +1045,16 @@ class _GroupScreenState extends State<GroupScreen> {
     final isMine = b?.userId == Api.uid;
     final validated = g.collectedFor(pot);
     final declared = g.collectedFor(pot, withPending: true);
+    final complete = g.isPotComplete(pot);
+    final missing = g.missingFor(pot);
     final percent = g.grossPot == 0
         ? 0
-        : (100 * validated / g.grossPot).round();
+        : (100 * validated / g.grossPot).floor();
     final date = g.payoutDate(pot);
-    final overdue = date.isBefore(DateUtils.dateOnly(DateTime.now()));
+    final reached = !date.isAfter(DateUtils.dateOnly(DateTime.now()));
+    final good = paymentStatusColor(PaymentStatus.approved);
+    final wait = paymentStatusColor(PaymentStatus.pending);
+    final bad = paymentStatusColor(PaymentStatus.rejected);
     return Card(
       color: isMine ? theme.colorScheme.primaryContainer : null,
       child: Padding(
@@ -933,8 +1075,8 @@ class _GroupScreenState extends State<GroupScreen> {
                   ),
                 ),
                 StatusChip(
-                  'En cours de collecte',
-                  paymentStatusColor(PaymentStatus.pending),
+                  complete ? 'Collecte complète' : 'Collecte en cours',
+                  complete ? good : wait,
                 ),
               ],
             ),
@@ -945,11 +1087,16 @@ class _GroupScreenState extends State<GroupScreen> {
                 isMine ? 'Vous !' : (b?.name ?? '—'),
                 caption: 'reçoit ${money(g.netPot)}',
               ),
-              Figure('Remise', dateShort(date), caption: countdownLabel(date)),
+              Figure(
+                'Remise prévue',
+                dateShort(date),
+                caption: countdownLabel(date),
+              ),
             ]),
             const SizedBox(height: 16),
             ProgressLine(
               value: g.grossPot == 0 ? 0 : validated / g.grossPot,
+              color: complete ? good : null,
               label:
                   '${money(validated)} validés sur ${money(g.grossPot)} '
                   '($percent %)'
@@ -962,36 +1109,110 @@ class _GroupScreenState extends State<GroupScreen> {
             ),
             if (isOwner && b != null) ...[
               const SizedBox(height: 12),
-              // Bouton principal le jour de la remise ou quand la collecte
-              // est complète ; discret avant.
-              if (validated >= g.grossPot || !date.isAfter(DateTime.now()))
+              if (complete)
                 FilledButton.icon(
                   onPressed: _busy ? null : () => _confirmPayout(g),
                   icon: const Icon(Icons.payments_outlined),
-                  label: Text('Confirmer la remise à ${b.name}'),
+                  label: Text('Remettre la cagnotte à ${b.name}'),
                 )
-              else
-                OutlinedButton.icon(
-                  onPressed: _busy ? null : () => _confirmPayout(g),
-                  icon: const Icon(Icons.payments_outlined),
-                  label: Text('Confirmer la remise à ${b.name}'),
+              else ...[
+                LockNotice(
+                  color: bad,
+                  title: 'Remise impossible pour l\'instant',
+                  text:
+                      'Il manque ${money(missing)}. La remise se débloque dès '
+                      'que toute la collecte est validée.'
+                      '${reached ? ' La date de remise est atteinte : relancez les retardataires.' : ''}',
                 ),
-              if (overdue)
-                Padding(
-                  padding: const EdgeInsets.only(top: 6),
-                  child: Text(
-                    'La date de remise est passée : confirmez la remise dès '
-                    'que la cagnotte est donnée.',
-                    style: TextStyle(
-                      color: paymentStatusColor(PaymentStatus.pending),
-                    ),
-                  ),
+                const SizedBox(height: 8),
+                FilledButton.icon(
+                  onPressed: null,
+                  icon: const Icon(Icons.lock_outline),
+                  label: const Text('Remettre la cagnotte'),
                 ),
+              ],
+            ] else if (!complete) ...[
+              const SizedBox(height: 10),
+              Text(
+                isMine
+                    ? 'Elle vous sera remise dès que toute la collecte est '
+                          'payée : il manque encore ${money(missing)}.'
+                    : 'La cagnotte est remise dès que toute la collecte est '
+                          'payée (il manque ${money(missing)}).',
+                style: theme.textTheme.bodyMedium,
+              ),
             ],
           ],
         ),
       ),
     );
+  }
+
+  /// Ce qui manque pour remettre la cagnotte en cours, avec relance.
+  List<Widget> _shortfallSection(_GroupData d) {
+    final g = d.group;
+    final pot = g.currentPot;
+    if (g.isPotComplete(pot)) return const [];
+    final list = g.shortfallsFor(pot);
+    final owner = ownerLabel(g, d.business);
+    final bad = paymentStatusColor(PaymentStatus.rejected);
+    final reachable = list.where((f) => !f.member.managed).toList();
+    return [
+      SectionTitle(
+        'Ce qui manque',
+        trailing: Text(
+          '${list.length} participant${list.length > 1 ? 's' : ''}',
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
+      ),
+      Card(
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          children: [
+            for (final f in list)
+              ListTile(
+                leading: CircleAvatar(
+                  backgroundColor: bad.withValues(alpha: 0.12),
+                  foregroundColor: bad,
+                  child: Text(
+                    initials(f.member.name),
+                    style: const TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                ),
+                title: Text(f.member.name),
+                subtitle: Text(
+                  '${contributionsLabel(f.missing)} · ${money(f.amount)}'
+                  '${f.pending > 0 ? ' · ${f.pending} à valider' : ''}'
+                  '${f.member.managed ? ' · sans appli' : ''}',
+                  style: TextStyle(color: bad, fontWeight: FontWeight.w600),
+                ),
+                trailing: f.member.managed
+                    ? OutlinedButton(
+                        onPressed: () => _record(g, f.member, d.business),
+                        child: const Text('Encaisser'),
+                      )
+                    : OutlinedButton(
+                        onPressed: () => openWhatsApp(
+                          context,
+                          f.member.profile.phone,
+                          shortfallText(g, f, owner),
+                        ),
+                        child: const Text('Relancer'),
+                      ),
+                onTap: () => _memberSheet(d, f.member),
+              ),
+          ],
+        ),
+      ),
+      if (reachable.length > 1)
+        FilledButton.icon(
+          onPressed: () => SharePlus.instance.share(
+            ShareParams(text: shortfallGroupText(g, list, owner)),
+          ),
+          icon: const Icon(Icons.campaign_outlined),
+          label: const Text('Relancer tout le monde (groupe WhatsApp)'),
+        ),
+    ];
   }
 
   List<Widget> _mySituation(_GroupData d, GroupMember me) {

@@ -959,6 +959,7 @@ class Api {
             'startDate': dateKey(start),
             'firstPayoutDate': dateKey(firstPayout),
             'startedAt': _now,
+            'levels': {'0': g.memberCount},
           })
           ..set(eventRef, eventData))
         .commit();
@@ -1037,6 +1038,26 @@ class Api {
   static String _methodKey(PaymentMethod m) =>
       m == PaymentMethod.cash ? 'cash' : 'mobile_money';
 
+  /// Niveaux du groupe quand un participant passe de [from] à [to]
+  /// cotisations validées (null : rien à changer). Le niveau est le nombre
+  /// de cagnottes qu'il a entièrement payées ; le serveur s'en sert pour
+  /// refuser une remise avant la fin de la collecte.
+  static Json? _levelsPatch(Json group, String memberId, int from, int to) {
+    final raw = group['levels'];
+    if (raw is! Map) return null;
+    final perPot = (group['contributionsPerPot'] as num).toInt();
+    final a = '${from ~/ perPot}';
+    final b = '${to ~/ perPot}';
+    if (a == b) return null;
+    final levels = {
+      for (final e in raw.entries) e.key as String: (e.value as num).toInt(),
+    };
+    levels[a] = (levels[a] ?? 0) - 1;
+    if (levels[a]! <= 0) levels.remove(a);
+    levels[b] = (levels[b] ?? 0) + 1;
+    return {'levels': levels, 'levelsMember': memberId};
+  }
+
   static String? _cleanNote(String? note) {
     final n = note?.trim() ?? '';
     return n.isEmpty ? null : (n.length > 200 ? n.substring(0, 200) : n);
@@ -1052,8 +1073,19 @@ class Api {
   ) async {
     final me = await _requireMe();
     final memberRef = _db.doc('groups/$groupId/members/${p.userId}');
+    final groupRef = _db.doc('groups/$groupId');
     await _db.runTransaction((tx) async {
+      final group = (await tx.get(groupRef)).data()!;
       final member = GroupMember.fromDoc(await tx.get(memberRef));
+      final levels = approve
+          ? _levelsPatch(
+              group,
+              p.userId,
+              member.approvedCount,
+              member.approvedCount + p.count,
+            )
+          : null;
+      if (levels != null) tx.update(groupRef, levels);
       tx
         ..update(
           _db.doc('groups/$groupId/payments/${p.id}'),
@@ -1094,11 +1126,20 @@ class Api {
     final memberRef = _db.doc('groups/${group.id}/members/${member.userId}');
     final payRef = _db.collection('groups/${group.id}/payments').doc();
     final amount = count * group.contributionAmount + penalty;
+    final groupRef = _db.doc('groups/${group.id}');
     await _db.runTransaction((tx) async {
+      final groupData = (await tx.get(groupRef)).data()!;
       final fresh = GroupMember.fromDoc(await tx.get(memberRef));
       if (count > group.totalContributions - fresh.declaredCount) {
         throw const AppException('Plus que les cotisations restantes');
       }
+      final levels = _levelsPatch(
+        groupData,
+        member.userId,
+        fresh.approvedCount,
+        fresh.approvedCount + count,
+      );
+      if (levels != null) tx.update(groupRef, levels);
       tx
         ..set(payRef, {
           'userId': member.userId,
@@ -1144,18 +1185,26 @@ class Api {
   }
 
   /// Le tontinier confirme avoir remis la cagnotte en cours.
-  static Future<void> confirmPayout(Group g) async {
+  /// La remise n'est possible que lorsque la collecte est complète (le
+  /// serveur le vérifie aussi).
+  static Future<void> confirmPayout(Group g, PaymentMethod method) async {
     final me = await _requireMe();
     final pot = g.paidOutCount + 1;
     final beneficiary = g.beneficiaryOf(pot);
     if (beneficiary == null) {
       throw const AppException('Bénéficiaire introuvable');
     }
+    if (!g.isPotComplete(pot)) {
+      throw AppException(
+        'La collecte n\'est pas complète : il manque ${money(g.missingFor(pot))}.',
+      );
+    }
     final (eventRef, eventData) = _eventDoc(
       g.id,
       me,
       'payout_confirmed',
-      'Cagnotte n°$pot remise à ${beneficiary.name} : ${money(g.netPot)}',
+      'Cagnotte n°$pot remise à ${beneficiary.name} : ${money(g.netPot)} '
+          '(${method == PaymentMethod.cash ? 'espèces' : 'Mobile Money'})',
     );
     await (_db.batch()
           ..set(_db.doc('groups/${g.id}/payouts/$pot'), {
@@ -1163,6 +1212,7 @@ class Api {
             'beneficiaryId': beneficiary.userId,
             'beneficiaryName': beneficiary.name,
             'amount': g.netPot,
+            'method': _methodKey(method),
             'paidAt': _now,
             'receivedAt': null,
             'problem': null,

@@ -99,10 +99,12 @@ String paymentStatusLabel(PaymentStatus s) => switch (s) {
   PaymentStatus.rejected => 'Refusé',
 };
 
+/// Couleurs d'état (lisibles en texte sur fond clair) : orange = en
+/// attente, vert = validé / à jour, rouge = refusé / bloqué.
 Color paymentStatusColor(PaymentStatus s) => switch (s) {
-  PaymentStatus.pending => const Color(0xFFE08600),
-  PaymentStatus.approved => const Color(0xFF1B8A4B),
-  PaymentStatus.rejected => const Color(0xFFC62828),
+  PaymentStatus.pending => const Color(0xFFA85A00),
+  PaymentStatus.approved => const Color(0xFF177A45),
+  PaymentStatus.rejected => const Color(0xFFB3261E),
 };
 
 /// Indicatifs proposés à l'inscription et à la connexion.

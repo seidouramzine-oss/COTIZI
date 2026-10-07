@@ -532,3 +532,146 @@ Future<void> openWhatsApp(
     showError(context, const AppException('Impossible d\'ouvrir WhatsApp'));
   }
 }
+
+/// Initiales d'un nom (« Awa Cliente » → « AC »).
+String initials(String name) {
+  final parts = name.trim().split(RegExp(r'\s+')).where((p) => p.isNotEmpty);
+  final letters = parts.take(2).map((p) => p[0].toUpperCase()).join();
+  return letters.isEmpty ? '?' : letters;
+}
+
+/// Encadré d'une action bloquée (cadenas) avec son explication.
+class LockNotice extends StatelessWidget {
+  const LockNotice({
+    super.key,
+    required this.title,
+    required this.text,
+    required this.color,
+  });
+
+  final String title;
+  final String text;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.lock_outline, color: color, size: 20),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    color: color,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(text, style: theme.textTheme.bodyMedium),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Une étape d'un suivi vertical (fait, en attente, problème).
+class StepLine extends StatelessWidget {
+  const StepLine({
+    super.key,
+    required this.title,
+    required this.subtitle,
+    required this.state,
+    this.last = false,
+  });
+
+  final String title;
+  final String subtitle;
+  final StepState state;
+  final bool last;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final done = state == StepState.complete;
+    final error = state == StepState.error;
+    final color = done
+        ? paymentStatusColor(PaymentStatus.approved)
+        : error
+        ? paymentStatusColor(PaymentStatus.rejected)
+        : paymentStatusColor(PaymentStatus.pending);
+    return IntrinsicHeight(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Column(
+            children: [
+              Container(
+                width: 28,
+                height: 28,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: done ? color : color.withValues(alpha: 0.12),
+                  border: done ? null : Border.all(color: color, width: 2),
+                ),
+                child: Icon(
+                  done
+                      ? Icons.check
+                      : error
+                      ? Icons.priority_high
+                      : Icons.schedule,
+                  size: 16,
+                  color: done ? Colors.white : color,
+                ),
+              ),
+              if (!last)
+                Expanded(
+                  child: Container(
+                    width: 2,
+                    margin: const EdgeInsets.symmetric(vertical: 2),
+                    color: done ? color : theme.colorScheme.outlineVariant,
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Padding(
+              padding: EdgeInsets.only(top: 3, bottom: last ? 0 : 14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                  Text(
+                    subtitle,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: done ? null : color,
+                      fontWeight: done ? null : FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}

@@ -70,7 +70,8 @@ tirage au sort (impossible de choisir son numéro) ou ordre fixé par le tontini
 modification et suppression avant le démarrage, bouton « Démarrer », paiement de
 plusieurs cotisations (Mobile Money avec preuve ou espèces) avec pénalités de
 retard, refus motivé, validation, encaissement par le tontinier, participants
-sans application et récupération de leur place, remises confirmées par le
-bénéficiaire, historique des actions, profil pro, anciens groupes en lecture
+sans application et récupération de leur place, remise refusée tant que la collecte
+n'est pas complète (niveaux des participants tenus à jour par le groupe),
+remises confirmées par le bénéficiaire, historique des actions, profil pro, anciens groupes en lecture
 seule, carnet de 31 cases, confidentialité des données, essai gratuit et
 abonnement des tontiniers, administration.

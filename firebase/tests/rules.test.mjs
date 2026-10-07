@@ -179,12 +179,31 @@ async function declare(id, groupId, count,
   return payRef.id;
 }
 
+// Niveaux du groupe après le passage d'un participant de [from] à [to]
+// cotisations validées (null : niveau inchangé)
+function levelsPatch(g, memberId, from, to) {
+  if (!g.levels) return null;
+  const a = String(Math.floor(from / g.contributionsPerPot));
+  const b = String(Math.floor(to / g.contributionsPerPot));
+  if (a === b) return null;
+  const levels = { ...g.levels };
+  levels[a] -= 1;
+  if (levels[a] === 0) delete levels[a];
+  levels[b] = (levels[b] ?? 0) + 1;
+  return { levels, levelsMember: memberId };
+}
+
 // Validation / refus par le tontinier : paiement + compteurs du membre
-async function review(groupId, paymentId, approve, { counters = true } = {}) {
+// (+ niveaux du groupe)
+async function review(groupId, paymentId, approve, { counters = true, levels = true } = {}) {
   const T = db('t');
   const pay = await adminGet(`groups/${groupId}/payments/${paymentId}`);
   const m = await adminGet(`groups/${groupId}/members/${pay.userId}`);
+  const g = await adminGet(`groups/${groupId}`);
   const batch = T.batch();
+  const patch = approve
+    ? levelsPatch(g, pay.userId, m.approvedCount, m.approvedCount + pay.count) : null;
+  if (patch && levels) batch.update(T.doc(`groups/${groupId}`), patch);
   batch.update(T.doc(`groups/${groupId}/payments/${paymentId}`), approve
     ? { status: 'approved', rejectionReason: null, reviewedAt: now() }
     : { status: 'rejected', rejectionReason: 'Montant incorrect', reviewedAt: now() });
@@ -331,9 +350,13 @@ test('scénario complet', async (t) => {
   await t.test('déclarer avant le démarrage : refusé', () => assertFails(declare('a', groupId, 1)));
   const start = (fs, fields = {}) => fs.doc(`groups/${groupId}`).update({
     status: 'active', startDate: '2026-10-12', firstPayoutDate: '2026-10-26', startedAt: now(),
-    ...fields,
+    levels: { 0: 3 }, ...fields,
   });
   await t.test('un membre démarre la tontine : refusé', () => assertFails(start(db('a'))));
+  await t.test('démarrer sans les niveaux : refusé', () =>
+    assertFails(start(T, { levels: { 0: 2 } })));
+  await t.test('démarrer avec des participants déjà « à jour » : refusé', () =>
+    assertFails(start(T, { levels: { 1: 3 } })));
   await t.test('démarrer avec une remise avant le début : refusé', () =>
     assertFails(start(T, { firstPayoutDate: '2026-10-01' })));
   await assertSucceeds(start(T));
@@ -402,7 +425,13 @@ test('scénario complet', async (t) => {
   if (ma.declaredCount !== 0) throw new Error(`après refus : ${ma.declaredCount}`);
 
   const pay2 = await assertSucceeds(declare('a', groupId, 3));
+  await t.test('valider sans mettre à jour les niveaux du groupe : refusé', () =>
+    assertFails(review(groupId, pay2, true, { levels: false })));
+  await t.test('niveaux modifiés sans paiement validé : refusé', () =>
+    assertFails(T.doc(`groups/${groupId}`).update({ levels: { 0: 2, 1: 1 }, levelsMember: 'b' })));
   await assertSucceeds(review(groupId, pay2, true));
+  const gl = await adminGet(`groups/${groupId}`);
+  if (JSON.stringify(gl.levels) !== JSON.stringify({ 0: 2, 1: 1 })) throw new Error(JSON.stringify(gl.levels));
   ma = await adminGet(`groups/${groupId}/members/a`);
   if (ma.approvedCount !== 3 || ma.declaredCount !== 3) throw new Error(JSON.stringify(ma));
   await t.test('modifier un paiement validé : refusé', () =>
@@ -430,6 +459,23 @@ test('scénario complet', async (t) => {
     assertFails(payout(T, 1, byPos[2])));
   await t.test('remise de la cagnotte 2 avant la 1 : refusé', () =>
     assertFails(payout(T, 2, byPos[2])));
+  await t.test('remise avant la fin de la collecte : refusé', () =>
+    assertFails(payout(T, 1, byPos[1])));
+  for (const id of ['b', 'c']) {
+    await assertSucceeds(review(groupId, await declare(id, groupId, 2), true));
+    await t.test(`collecte presque complète (${id}) : remise refusée`, () =>
+      assertFails(payout(T, 1, byPos[1])));
+    await assertSucceeds(review(groupId, await declare(id, groupId, 1), true));
+  }
+  await t.test('remise avec un mode inconnu : refusé', () => assertFails((() => {
+    const batch = T.batch();
+    batch.set(T.doc(`groups/${groupId}/payouts/1`), {
+      tour: 1, beneficiaryId: byPos[1], beneficiaryName: people[byPos[1]].name,
+      amount: 85500, method: 'cheque', paidAt: now(), receivedAt: null, problem: null,
+    });
+    batch.update(T.doc(`groups/${groupId}`), { paidOutCount: 1 });
+    return batch.commit();
+  })()));
   await assertSucceeds(payout(T, 1, byPos[1]));
   await t.test('remise confirmée deux fois : refusé', () =>
     assertFails(payout(T, 1, byPos[1])));
@@ -765,6 +811,7 @@ test('version 2 : ordre, places réservées, démarrage, espèces, encaissement,
   // Démarrage
   await assertSucceeds(T.doc(`groups/${P}`).update({
     status: 'active', startDate: '2026-10-12', firstPayoutDate: '2026-10-26', startedAt: now(),
+    levels: { 0: 3 },
   }));
 
   // --- Espèces et pénalités (2 000 F la cotisation, 500 F de pénalité)
@@ -802,6 +849,9 @@ test('version 2 : ordre, places réservées, démarrage, espèces, encaissement,
       declaredCount: m.declaredCount + count, approvedCount: m.approvedCount + count,
       penaltyPaid: (m.penaltyPaid ?? 0) + (fields.penalty ?? 0),
     });
+    const patch = levelsPatch(await adminGet(`groups/${P}`), memberId, m.approvedCount,
+      m.approvedCount + count);
+    if (patch) batch.update(fs.doc(`groups/${P}`), patch);
     await batch.commit();
     return ref.id;
   })();
@@ -816,13 +866,19 @@ test('version 2 : ordre, places réservées, démarrage, espèces, encaissement,
       .where('userId', 'in', ['z', 'p22997000099']).get()));
 
   // --- Remise confirmée par le tontinier puis par le bénéficiaire (rang 1 : b)
-  await assertSucceeds(T.batch()
+  const payoutP = () => T.batch()
     .set(T.doc(`groups/${P}/payouts/1`), {
-      tour: 1, beneficiaryId: 'b', beneficiaryName: 'Bob', amount: 17100, paidAt: now(),
-      receivedAt: null, problem: null,
+      tour: 1, beneficiaryId: 'b', beneficiaryName: 'Bob', amount: 17100, method: 'mobile_money',
+      paidAt: now(), receivedAt: null, problem: null,
     })
     .update(T.doc(`groups/${P}`), { paidOutCount: 1 })
-    .commit());
+    .commit();
+  await t.test('remise : collecte incomplète, refusé', () => assertFails(payoutP()));
+  await assertSucceeds(record(T, 'b', 3));
+  await assertSucceeds(record(T, 'c', 2));
+  await t.test('remise : il manque une cotisation de Zoé, refusé', () => assertFails(payoutP()));
+  await assertSucceeds(record(T, 'z', 1));
+  await assertSucceeds(payoutP());
   await t.test('un autre participant confirme la réception : refusé', () =>
     assertFails(db('c').doc(`groups/${P}/payouts/1`).update({ receivedAt: now(), problem: null })));
   await t.test('le tontinier confirme à la place du bénéficiaire : refusé', () =>

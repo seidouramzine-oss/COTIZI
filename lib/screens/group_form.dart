@@ -9,8 +9,8 @@ import '../models.dart';
 import '../widgets/common.dart';
 
 /// Création (ou modification pendant les inscriptions) d'un groupe à
-/// cagnotte, en 5 étapes, avec un résumé : dates de début et de fin,
-/// montants, remises.
+/// cagnotte, en 4 étapes, avec le montant de la cagnotte toujours visible
+/// et un résumé final : dates de début et de fin, montants, remises.
 class GroupFormScreen extends StatefulWidget {
   const GroupFormScreen({super.key, required this.tontine, this.group});
 
@@ -175,277 +175,419 @@ class _GroupFormScreenState extends State<GroupFormScreen> {
     }
   }
 
+  static const _steps = ['Le groupe', 'Cotisations', 'Remises', 'Dates'];
+
+  /// Étape affichée (0 à 3). Seuls ses champs sont vérifiés pour continuer.
+  int _step = 0;
+
+  void _next() {
+    if (!_form.currentState!.validate()) return;
+    if (_step < _steps.length - 1) {
+      setState(() => _step++);
+    } else {
+      _submit();
+    }
+  }
+
+  List<Widget> _groupStep() => [
+    TextFormField(
+      controller: _name,
+      textCapitalization: TextCapitalization.sentences,
+      decoration: const InputDecoration(
+        labelText: 'Nom du groupe',
+        hintText: 'Ex. Groupe du marché',
+      ),
+      validator: (v) =>
+          (v ?? '').trim().isEmpty ? 'Donnez un nom au groupe' : null,
+    ),
+    const SizedBox(height: 16),
+    TextFormField(
+      controller: _members,
+      keyboardType: TextInputType.number,
+      inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+      decoration: const InputDecoration(
+        labelText: 'Nombre de participants',
+        helperText:
+            'Chacun reçoit la cagnotte une fois : il y aura autant de remises '
+            'que de participants.',
+        helperMaxLines: 2,
+      ),
+      validator: (v) {
+        final n = int.tryParse(v ?? '') ?? 0;
+        if (n < 2 || n > 100) return 'Entre 2 et 100 participants';
+        final joined = widget.group?.joinedCount ?? 0;
+        return n < joined ? 'Déjà $joined inscrits' : null;
+      },
+    ),
+  ];
+
+  List<Widget> _contributionStep(ThemeData theme) => [
+    TextFormField(
+      controller: _amount,
+      keyboardType: TextInputType.number,
+      inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+      decoration: const InputDecoration(
+        labelText: 'Montant d\'une cotisation',
+        suffixText: 'FCFA',
+      ),
+      validator: (v) => (parseAmount(v ?? '') ?? 0) <= 0
+          ? 'Indiquez le montant de la cotisation'
+          : null,
+    ),
+    const SizedBox(height: 16),
+    Text(
+      'Fréquence',
+      style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+    ),
+    const SizedBox(height: 8),
+    Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        for (final f in Frequency.values)
+          ChoiceChip(
+            label: Text(frequencyLabel(f)),
+            selected: _frequency == f,
+            onSelected: (_) => setState(() {
+              _frequency = f;
+              _payout = null;
+            }),
+          ),
+      ],
+    ),
+    const SizedBox(height: 16),
+    TextFormField(
+      controller: _duration,
+      keyboardType: TextInputType.number,
+      inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+      decoration: InputDecoration(
+        labelText: 'Durée de collecte avant chaque remise',
+        suffixText: durationUnit(_frequency),
+        helperText: _perPot >= 1
+            ? 'Soit ${contributionsLabel(_perPot)} par participant pour '
+                  'chaque cagnotte'
+            : null,
+      ),
+      validator: (v) {
+        final n = int.tryParse(v ?? '') ?? 0;
+        return n < 1 || n > 366 ? 'Entre 1 et 366' : null;
+      },
+      onChanged: (_) => _payout = null,
+    ),
+  ];
+
+  List<Widget> _payoutStep(ThemeData theme, Group g) => [
+    Text(
+      'Ordre des remises',
+      style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+    ),
+    const SizedBox(height: 8),
+    SegmentedButton<OrderMode>(
+      segments: const [
+        ButtonSegment(
+          value: OrderMode.draw,
+          icon: Icon(Icons.casino_outlined),
+          label: Text('Tirage au sort'),
+        ),
+        ButtonSegment(
+          value: OrderMode.manual,
+          icon: Icon(Icons.format_list_numbered),
+          label: Text('Fixé par moi'),
+        ),
+      ],
+      selected: {_orderMode},
+      onSelectionChanged: (s) => setState(() => _orderMode = s.first),
+    ),
+    const SizedBox(height: 4),
+    Text(
+      _orderMode == OrderMode.draw
+          ? 'Chaque participant tire son numéro quand le groupe est complet.'
+          : 'Vous classez vous-même les participants quand le groupe est complet.',
+      style: theme.textTheme.bodySmall,
+    ),
+    const SizedBox(height: 20),
+    Text(
+      'Votre commission',
+      style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+    ),
+    const SizedBox(height: 8),
+    SegmentedButton<CommissionType>(
+      segments: const [
+        ButtonSegment(
+          value: CommissionType.percent,
+          label: Text('Pourcentage'),
+        ),
+        ButtonSegment(value: CommissionType.fixed, label: Text('Montant fixe')),
+      ],
+      selected: {_commissionType},
+      onSelectionChanged: (s) => setState(() => _commissionType = s.first),
+    ),
+    const SizedBox(height: 12),
+    TextFormField(
+      controller: _commission,
+      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+      decoration: InputDecoration(
+        labelText: 'Commission sur chaque cagnotte',
+        suffixText: _commissionType == CommissionType.percent ? '%' : 'FCFA',
+        helperText: 'Retenue sur la cagnotte remise au bénéficiaire',
+      ),
+      validator: (_) {
+        final v = _commissionValue;
+        if (v < 0) return 'Commission invalide';
+        if (_commissionType == CommissionType.percent && v > 100) {
+          return 'Maximum 100 %';
+        }
+        if (_commissionType == CommissionType.fixed &&
+            _ready &&
+            v > g.grossPot) {
+          return 'Supérieure à la cagnotte';
+        }
+        return null;
+      },
+    ),
+    const SizedBox(height: 8),
+    SwitchListTile(
+      contentPadding: EdgeInsets.zero,
+      title: const Text('Pénalités de retard'),
+      subtitle: const Text(
+        'Ajoutées aux cotisations payées en retard. Elles vous reviennent.',
+      ),
+      value: _withPenalty,
+      onChanged: (v) => setState(() => _withPenalty = v),
+    ),
+    if (_withPenalty) ...[
+      TextFormField(
+        controller: _penalty,
+        keyboardType: TextInputType.number,
+        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+        decoration: const InputDecoration(
+          labelText: 'Pénalité par cotisation en retard',
+          suffixText: 'FCFA',
+        ),
+        validator: (v) {
+          final n = parseAmount(v ?? '') ?? 0;
+          return n <= 0 || n > 1000000 ? 'Indiquez un montant' : null;
+        },
+      ),
+      const SizedBox(height: 12),
+      TextFormField(
+        controller: _grace,
+        keyboardType: TextInputType.number,
+        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+        decoration: const InputDecoration(
+          labelText: 'Jours de tolérance',
+          suffixText: 'jours',
+          helperText:
+              'Pas de pénalité si la cotisation est payée dans ce délai.',
+        ),
+        validator: (v) {
+          final n = int.tryParse(v ?? '') ?? -1;
+          return n < 0 || n > 30 ? 'Entre 0 et 30 jours' : null;
+        },
+      ),
+    ],
+  ];
+
+  List<Widget> _datesStep(Group g) => [
+    _DateField(
+      label: 'Date de début prévue (1re cotisation)',
+      date: _start,
+      helper:
+          'Vous la confirmerez en démarrant la tontine, après l\'ordre des '
+          'remises.',
+      onTap: _pickStart,
+    ),
+    const SizedBox(height: 12),
+    _DateField(
+      label: 'Date de la 1re remise',
+      date: g.firstPayoutDate!,
+      helper: _ready
+          ? 'Collecte ${periodLabel(g.collectStart(1), g.collectEnd(1))}. '
+                'Remises suivantes : tous les '
+                '${durationLabel(_frequency, g.perPot)}.'
+          : null,
+      onTap: _ready ? _pickPayout : null,
+    ),
+    if (_ready) ...[const SectionTitle('Résumé'), GroupSummary(g)],
+  ];
+
   @override
   Widget build(BuildContext context) {
     final g = _preview();
     final theme = Theme.of(context);
     final editing = widget.group != null;
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(editing ? 'Modifier le groupe' : 'Nouveau groupe'),
-      ),
-      body: Form(
-        key: _form,
-        onChanged: () => setState(() {}),
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
-          children: [
-            const _Step(1, 'Le groupe'),
-            TextFormField(
-              controller: _name,
-              textCapitalization: TextCapitalization.sentences,
-              decoration: const InputDecoration(
-                labelText: 'Nom du groupe',
-                hintText: 'Ex. Groupe du marché',
-              ),
-              validator: (v) =>
-                  (v ?? '').trim().isEmpty ? 'Donnez un nom au groupe' : null,
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _members,
-              keyboardType: TextInputType.number,
-              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-              decoration: const InputDecoration(
-                labelText: 'Nombre de participants',
-                helperText:
-                    'Chacun reçoit la cagnotte une fois : il y aura autant '
-                    'de remises que de participants.',
-                helperMaxLines: 2,
-              ),
-              validator: (v) {
-                final n = int.tryParse(v ?? '') ?? 0;
-                if (n < 2 || n > 100) return 'Entre 2 et 100 participants';
-                final joined = widget.group?.joinedCount ?? 0;
-                return n < joined ? 'Déjà $joined inscrits' : null;
-              },
-            ),
-            const _Step(2, 'Les cotisations'),
-            TextFormField(
-              controller: _amount,
-              keyboardType: TextInputType.number,
-              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-              decoration: const InputDecoration(
-                labelText: 'Montant d\'une cotisation',
-                suffixText: 'FCFA',
-              ),
-              validator: (v) => (parseAmount(v ?? '') ?? 0) <= 0
-                  ? 'Indiquez le montant de la cotisation'
-                  : null,
-            ),
-            const SizedBox(height: 12),
-            Text(
-              'Fréquence des cotisations',
-              style: theme.textTheme.bodyMedium,
-            ),
-            const SizedBox(height: 6),
-            Wrap(
-              spacing: 8,
-              runSpacing: 4,
-              children: [
-                for (final f in Frequency.values)
-                  ChoiceChip(
-                    label: Text(frequencyLabel(f)),
-                    selected: _frequency == f,
-                    onSelected: (_) => setState(() {
-                      _frequency = f;
-                      _payout = null;
-                    }),
-                  ),
-              ],
-            ),
-            const _Step(3, 'Les remises'),
-            TextFormField(
-              controller: _duration,
-              keyboardType: TextInputType.number,
-              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-              decoration: InputDecoration(
-                labelText: 'Durée de collecte avant chaque remise',
-                suffixText: durationUnit(_frequency),
-                helperText: _perPot >= 1
-                    ? 'Soit ${contributionsLabel(_perPot)} par participant '
-                          'pour chaque cagnotte'
-                    : null,
-              ),
-              validator: (v) {
-                final n = int.tryParse(v ?? '') ?? 0;
-                return n < 1 || n > 366 ? 'Entre 1 et 366' : null;
-              },
-              onChanged: (_) => _payout = null,
-            ),
-            const SizedBox(height: 12),
-            Text('Ordre des remises', style: theme.textTheme.bodyMedium),
-            const SizedBox(height: 6),
-            SegmentedButton<OrderMode>(
-              segments: const [
-                ButtonSegment(
-                  value: OrderMode.draw,
-                  icon: Icon(Icons.casino_outlined),
-                  label: Text('Tirage au sort'),
-                ),
-                ButtonSegment(
-                  value: OrderMode.manual,
-                  icon: Icon(Icons.format_list_numbered),
-                  label: Text('Fixé par moi'),
-                ),
-              ],
-              selected: {_orderMode},
-              onSelectionChanged: (s) => setState(() => _orderMode = s.first),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              _orderMode == OrderMode.draw
-                  ? 'Chaque participant tire son numéro quand le groupe est complet.'
-                  : 'Vous classez vous-même les participants quand le groupe est complet.',
-              style: theme.textTheme.bodySmall,
-            ),
-            const _Step(4, 'Commission et pénalités'),
-            SegmentedButton<CommissionType>(
-              segments: const [
-                ButtonSegment(
-                  value: CommissionType.percent,
-                  label: Text('Pourcentage'),
-                ),
-                ButtonSegment(
-                  value: CommissionType.fixed,
-                  label: Text('Montant fixe'),
-                ),
-              ],
-              selected: {_commissionType},
-              onSelectionChanged: (s) =>
-                  setState(() => _commissionType = s.first),
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _commission,
-              keyboardType: const TextInputType.numberWithOptions(
-                decimal: true,
-              ),
-              decoration: InputDecoration(
-                labelText: 'Commission sur chaque cagnotte',
-                suffixText: _commissionType == CommissionType.percent
-                    ? '%'
-                    : 'FCFA',
-                helperText: 'Retenue sur la cagnotte remise au bénéficiaire',
-              ),
-              validator: (_) {
-                final v = _commissionValue;
-                if (v < 0) return 'Commission invalide';
-                if (_commissionType == CommissionType.percent && v > 100) {
-                  return 'Maximum 100 %';
-                }
-                if (_commissionType == CommissionType.fixed &&
-                    _ready &&
-                    v > g.grossPot) {
-                  return 'Supérieure à la cagnotte';
-                }
-                return null;
-              },
-            ),
-            const SizedBox(height: 8),
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              title: const Text('Pénalités de retard'),
-              subtitle: const Text(
-                'Ajoutées aux cotisations payées en retard. Elles vous reviennent.',
-              ),
-              value: _withPenalty,
-              onChanged: (v) => setState(() => _withPenalty = v),
-            ),
-            if (_withPenalty) ...[
-              TextFormField(
-                controller: _penalty,
-                keyboardType: TextInputType.number,
-                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                decoration: const InputDecoration(
-                  labelText: 'Pénalité par cotisation en retard',
-                  suffixText: 'FCFA',
-                ),
-                validator: (v) {
-                  final n = parseAmount(v ?? '') ?? 0;
-                  return n <= 0 || n > 1000000 ? 'Indiquez un montant' : null;
-                },
-              ),
-              const SizedBox(height: 12),
-              TextFormField(
-                controller: _grace,
-                keyboardType: TextInputType.number,
-                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                decoration: const InputDecoration(
-                  labelText: 'Jours de tolérance',
-                  suffixText: 'jours',
-                  helperText: 'Pas de pénalité si la cotisation est payée dans ce délai.',
-                ),
-                validator: (v) {
-                  final n = int.tryParse(v ?? '') ?? -1;
-                  return n < 0 || n > 30 ? 'Entre 0 et 30 jours' : null;
-                },
+    final last = _step == _steps.length - 1;
+    return PopScope(
+      canPop: _step == 0,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) setState(() => _step--);
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(editing ? 'Modifier le groupe' : 'Nouveau groupe'),
+              Text(
+                'Étape ${_step + 1} sur ${_steps.length} · ${_steps[_step]}',
+                style: theme.textTheme.bodySmall,
               ),
             ],
-            const _Step(5, 'Les dates'),
-            _DateField(
-              label: 'Date de début prévue (1re cotisation)',
-              date: _start,
-              helper:
-                  'Vous la confirmerez en démarrant la tontine, après '
-                  'l\'ordre des remises.',
-              onTap: _pickStart,
+          ),
+        ),
+        body: Form(
+          key: _form,
+          onChanged: () => setState(() {}),
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
+            children: [
+              _StepBar(steps: _steps, current: _step),
+              const SizedBox(height: 20),
+              ...switch (_step) {
+                0 => _groupStep(),
+                1 => _contributionStep(theme),
+                2 => _payoutStep(theme, g),
+                _ => _datesStep(g),
+              },
+            ],
+          ),
+        ),
+        bottomNavigationBar: SafeArea(
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+            decoration: BoxDecoration(
+              color: theme.cardTheme.color,
+              border: Border(
+                top: BorderSide(color: theme.colorScheme.outlineVariant),
+              ),
             ),
-            const SizedBox(height: 12),
-            _DateField(
-              label: 'Date de la 1re remise',
-              date: g.firstPayoutDate!,
-              helper: _ready
-                  ? 'Collecte ${periodLabel(g.collectStart(1), g.collectEnd(1))}. '
-                        'Remises suivantes : tous les '
-                        '${durationLabel(_frequency, g.perPot)}.'
-                  : null,
-              onTap: _ready ? _pickPayout : null,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (_ready) ...[
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 10,
+                    ),
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.primaryContainer,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            'Chaque cagnotte',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w700,
+                              color: theme.colorScheme.onPrimaryContainer,
+                            ),
+                          ),
+                        ),
+                        Text(
+                          money(g.grossPot),
+                          style: theme.textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.w800,
+                            color: theme.colorScheme.onPrimaryContainer,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                ],
+                Row(
+                  children: [
+                    if (_step > 0) ...[
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: _busy
+                              ? null
+                              : () => setState(() => _step--),
+                          style: OutlinedButton.styleFrom(
+                            minimumSize: const Size(0, 50),
+                          ),
+                          child: const Text('Retour'),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                    ],
+                    Expanded(
+                      child: FilledButton(
+                        onPressed: _busy ? null : _next,
+                        style: FilledButton.styleFrom(
+                          minimumSize: const Size(0, 50),
+                        ),
+                        child: Text(
+                          !last
+                              ? 'Continuer'
+                              : editing
+                              ? 'Enregistrer'
+                              : 'Créer le groupe',
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
             ),
-            if (_ready) ...[const SectionTitle('Résumé'), GroupSummary(g)],
-            const SizedBox(height: 24),
-            FilledButton.icon(
-              onPressed: _busy ? null : _submit,
-              icon: const Icon(Icons.check),
-              label: Text(editing ? 'Enregistrer' : 'Créer le groupe'),
-            ),
-          ],
+          ),
         ),
       ),
     );
   }
 }
 
-class _Step extends StatelessWidget {
-  const _Step(this.number, this.title);
+/// Barre d'avancement des étapes.
+class _StepBar extends StatelessWidget {
+  const _StepBar({required this.steps, required this.current});
 
-  final int number;
-  final String title;
+  final List<String> steps;
+  final int current;
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(0, 24, 0, 12),
-      child: Row(
-        children: [
-          CircleAvatar(
-            radius: 13,
-            backgroundColor: scheme.primary,
-            foregroundColor: scheme.onPrimary,
-            child: Text(
-              '$number',
-              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+    return Row(
+      children: [
+        for (var i = 0; i < steps.length; i++)
+          Expanded(
+            child: Padding(
+              padding: EdgeInsets.only(right: i < steps.length - 1 ? 6 : 0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: i <= current
+                          ? scheme.primary
+                          : scheme.outlineVariant,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    steps[i],
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: i == current
+                          ? FontWeight.w800
+                          : FontWeight.w600,
+                      color: i <= current
+                          ? scheme.onSurface
+                          : scheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
-          const SizedBox(width: 10),
-          Text(
-            title,
-            style: Theme.of(context).textTheme.titleMedium
-                ?.copyWith(fontWeight: FontWeight.w700),
-          ),
-        ],
-      ),
+      ],
     );
   }
 }

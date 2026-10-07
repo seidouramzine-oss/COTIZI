@@ -14,6 +14,7 @@ import 'screens/auth_screens.dart';
 import 'screens/home_screen.dart';
 import 'settings.dart';
 import 'widgets/common.dart';
+import 'reminders.dart';
 
 /// --dart-define=USE_EMULATOR=true : utilise les émulateurs Firebase locaux.
 const _useEmulator = bool.fromEnvironment('USE_EMULATOR');
@@ -23,6 +24,7 @@ Future<void> main() async {
   Intl.defaultLocale = 'fr';
   await initializeDateFormatting('fr');
   await loadSettings();
+  await Reminders.init();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   if (_useEmulator) {
     await FirebaseAuth.instance.useAuthEmulator('localhost', 9099);

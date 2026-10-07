@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../api.dart';
 import '../format.dart';
 import '../models.dart';
+import '../reminders.dart';
 import '../widgets/common.dart';
 import 'carnet_screens.dart';
 import 'group_screens.dart';
@@ -53,10 +54,19 @@ class _TodoTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final c = color ?? scheme.primary;
     return Card(
       child: ListTile(
-        leading: Icon(icon, color: color ?? scheme.primary),
-        title: Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
+        leading: Container(
+          width: 38,
+          height: 38,
+          decoration: BoxDecoration(
+            color: c.withValues(alpha: 0.12),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Icon(icon, color: c, size: 20),
+        ),
+        title: Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
         subtitle: Text(subtitle),
         trailing: const Icon(Icons.chevron_right),
         onTap: onTap,
@@ -64,6 +74,70 @@ class _TodoTile extends StatelessWidget {
     );
   }
 }
+
+/// Chiffre clé de l'accueil.
+class _Kpi extends StatelessWidget {
+  const _Kpi(this.label, this.value, this.caption, {this.color, this.onTap});
+
+  final String label;
+  final String value;
+  final String caption;
+  final Color? color;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      margin: const EdgeInsets.all(3),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.labelMedium?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 4),
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  value,
+                  style: theme.textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.w800,
+                    color: color,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
+              ),
+              Text(
+                caption,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.bodySmall,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Montant court : 2 340 000 → « 2,34 M », 85 000 → « 85 000 ».
+String _short(int amount) => amount >= 1000000
+    ? '${(amount / 1000000).toStringAsFixed(2).replaceAll('.', ',')} M'
+    : money(amount).replaceAll(' FCFA', '');
 
 /// Bandeau de synthèse coloré (à jour / à faire).
 class _Banner extends StatelessWidget {
@@ -117,8 +191,21 @@ class OwnerDashboard extends StatefulWidget {
 }
 
 class _OwnerDashboardState extends State<OwnerDashboard> with Reloadable {
-  late Future<OwnerOverview> _data = Api.ownerOverview();
+  late Future<OwnerOverview> _data = _loadOverview();
+
+  /// Charge l'accueil puis reprogramme les rappels (remises du tontinier et
+  /// cotisations des tontines auxquelles il participe).
+  static Future<OwnerOverview> _loadOverview() async {
+    final o = await Api.ownerOverview();
+    Api.memberOverview()
+        .then((m) => Reminders.update(owned: o.groups, member: m.groups))
+        .catchError((_) => Reminders.update(owned: o.groups));
+    return o;
+  }
+
   late Future<AccessStatus> _access = _loadAccess();
+  late Future<Gains> _gains = Api.gains();
+  late final Future<Business?> _business = Api.business(Api.uid);
 
   static Future<AccessStatus> _loadAccess() async {
     final results = await Future.wait([Api.reloadProfile(), Api.isAdmin()]);
@@ -127,8 +214,9 @@ class _OwnerDashboardState extends State<OwnerDashboard> with Reloadable {
 
   @override
   void reload() => setState(() {
-    _data = Api.ownerOverview();
+    _data = _loadOverview();
     _access = _loadAccess();
+    _gains = Api.gains();
   });
 
   /// Essai gratuit, fin d'abonnement proche ou terminée.
@@ -198,7 +286,13 @@ class _OwnerDashboardState extends State<OwnerDashboard> with Reloadable {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: _Greeting(widget.profile, 'Espace tontinier')),
+      appBar: AppBar(
+        title: FutureBuilder<Business?>(
+          future: _business,
+          builder: (context, snap) =>
+              _Greeting(widget.profile, snap.data?.name ?? 'Espace tontinier'),
+        ),
+      ),
       body: RefreshIndicator(
         onRefresh: () async {
           reload();
@@ -234,29 +328,47 @@ class _OwnerDashboardState extends State<OwnerDashboard> with Reloadable {
 
   List<Widget> _content(OwnerOverview o) {
     final pendingColor = paymentStatusColor(PaymentStatus.pending);
+    final bad = paymentStatusColor(PaymentStatus.rejected);
+    final today = DateUtils.dateOnly(DateTime.now());
+    final active = o.groups
+        .where((g) => g.status == GroupStatus.active && !g.isLegacy)
+        .toList();
+    final lateMembers = active.fold(
+      0,
+      (n, g) =>
+          n + g.members.where((m) => !g.standingOf(m, today).upToDate).length,
+    );
     return [
       _accessBanner(),
-      _shortcuts(),
-      o.pending.isEmpty
-          ? _Banner(
-              icon: Icons.verified_outlined,
-              text: 'Tout est à jour : aucun paiement à valider.',
-              color: paymentStatusColor(PaymentStatus.approved),
-            )
-          : _Banner(
-              icon: Icons.notifications_active_outlined,
-              text:
-                  '${o.pending.length} paiement${o.pending.length > 1 ? 's' : ''} '
-                  'à valider · ${money(o.pendingAmount)}',
-              color: pendingColor,
+      Row(
+        children: [
+          Expanded(
+            child: FutureBuilder<Gains>(
+              future: _gains,
+              builder: (context, snap) => _Kpi(
+                'Encaissé',
+                snap.hasData ? _short(snap.data!.collectedThisMonth) : '…',
+                'FCFA ce mois',
+                onTap: () => open(const GainsScreen()),
+              ),
             ),
-      const SizedBox(height: 4),
-      _StatsRow(
-        stats: [
-          ('Tontines', o.tontineCount),
-          ('Groupes', o.groups.length),
-          ('Carnets', o.carnets.length),
-          ('Membres', o.memberCount),
+          ),
+          Expanded(
+            child: _Kpi(
+              'À valider',
+              '${o.pending.length}',
+              o.pending.isEmpty ? 'paiement' : money(o.pendingAmount),
+              color: o.pending.isEmpty ? null : pendingColor,
+            ),
+          ),
+          Expanded(
+            child: _Kpi(
+              'En retard',
+              '$lateMembers',
+              'participant${lateMembers > 1 ? 's' : ''}',
+              color: lateMembers == 0 ? null : bad,
+            ),
+          ),
         ],
       ),
       if (o.pending.isNotEmpty) ...[
@@ -267,15 +379,19 @@ class _OwnerDashboardState extends State<OwnerDashboard> with Reloadable {
               leading: CircleAvatar(
                 backgroundColor: pendingColor.withValues(alpha: 0.15),
                 foregroundColor: pendingColor,
-                child: const Icon(Icons.receipt_long),
+                child: Icon(
+                  r.payment.isCash
+                      ? Icons.payments_outlined
+                      : Icons.receipt_long,
+                ),
               ),
               title: Text(
                 r.payment.payer.fullName,
-                style: const TextStyle(fontWeight: FontWeight.w600),
+                style: const TextStyle(fontWeight: FontWeight.w700),
               ),
               subtitle: Text(
                 '${r.group != null ? '${r.group!.name} · ${contributionsLabel(r.payment.count)}' : '${r.carnet!.label} · ${r.payment.caseCount} case(s)'}\n'
-                '${dateTime(r.payment.declaredAt)}',
+                '${methodLabel(r.payment.method)} · ${dateTime(r.payment.declaredAt)}',
               ),
               isThreeLine: true,
               trailing: Text(
@@ -285,9 +401,26 @@ class _OwnerDashboardState extends State<OwnerDashboard> with Reloadable {
               onTap: () => _review(r),
             ),
           ),
-      ],
+      ] else
+        _Banner(
+          icon: Icons.verified_outlined,
+          text: 'Aucun paiement à valider.',
+          color: paymentStatusColor(PaymentStatus.approved),
+        ),
       ..._todos(o),
-      const SizedBox(height: 12),
+      if (active.isNotEmpty) ...[
+        SectionTitle(
+          'Mes groupes en cours',
+          trailing: TextButton(
+            onPressed: widget.onShowTontines,
+            child: const Text('Tout voir'),
+          ),
+        ),
+        for (final g in active) _groupProgress(g, today),
+      ],
+      const SizedBox(height: 8),
+      _shortcuts(),
+      const SizedBox(height: 8),
       OutlinedButton.icon(
         onPressed: widget.onShowTontines,
         icon: const Icon(Icons.savings_outlined),
@@ -302,6 +435,69 @@ class _OwnerDashboardState extends State<OwnerDashboard> with Reloadable {
     ];
   }
 
+  /// Avancée de la cagnotte en cours d'un groupe.
+  Widget _groupProgress(Group g, DateTime today) {
+    final theme = Theme.of(context);
+    final pot = g.currentPot;
+    final complete = g.isPotComplete(pot);
+    final date = g.payoutDate(pot);
+    final reached = !date.isAfter(today);
+    final validated = g.collectedFor(pot);
+    final percent = g.grossPot == 0
+        ? 0
+        : (100 * validated / g.grossPot).floor();
+    final (label, color) = complete
+        ? ('Prête', paymentStatusColor(PaymentStatus.approved))
+        : reached
+        ? ('Bloquée', paymentStatusColor(PaymentStatus.rejected))
+        : ('En collecte', paymentStatusColor(PaymentStatus.pending));
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: () => open(GroupScreen(groupId: g.id)),
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          g.name,
+                          style: const TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        Text(
+                          '${money(g.contributionAmount)} ${frequencyLower(g.frequency)} · '
+                          '${g.memberCount} participants',
+                          style: theme.textTheme.bodySmall,
+                        ),
+                      ],
+                    ),
+                  ),
+                  StatusChip(label, color),
+                ],
+              ),
+              const SizedBox(height: 10),
+              ProgressLine(
+                value: g.grossPot == 0 ? 0 : validated / g.grossPot,
+                label:
+                    'Cagnotte n°$pot sur ${g.memberCount} · $percent % collectés · '
+                    'remise ${reached ? countdownLabel(date) : 'le ${dateShort(date)}'}',
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   /// Actions à mener : remises, retards, tirage à lancer, places libres,
   /// carnets à remettre.
   List<Widget> _todos(OwnerOverview o) {
@@ -313,15 +509,28 @@ class _OwnerDashboardState extends State<OwnerDashboard> with Reloadable {
       final pot = g.currentPot;
       final date = g.payoutDate(pot);
       final b = g.beneficiaryOf(pot);
-      if (!date.isAfter(today) && b != null) {
+      if (b != null && g.isPotComplete(pot)) {
         items.add(
           _TodoTile(
             icon: Icons.payments_outlined,
-            title: 'Remise de la cagnotte n°$pot à ${b.name}',
+            title: 'Cagnotte prête · ${g.name}',
             subtitle:
-                'Prévue ${countdownLabel(date)} · ${money(g.netPot)} · '
-                'confirmez-la une fois remise',
-            color: paymentStatusColor(PaymentStatus.pending),
+                'Collecte complète · à remettre à ${b.name} '
+                '(${money(g.netPot)})',
+            color: paymentStatusColor(PaymentStatus.approved),
+            onTap: () => open(GroupScreen(groupId: g.id)),
+          ),
+        );
+      } else if (b != null && !date.isAfter(today)) {
+        final missing = g.shortfallsFor(pot);
+        items.add(
+          _TodoTile(
+            icon: Icons.lock_outline,
+            title: 'Remise bloquée · ${g.name}',
+            subtitle:
+                'Il manque ${money(g.missingFor(pot))} · '
+                '${missing.length} retardataire${missing.length > 1 ? 's' : ''}',
+            color: paymentStatusColor(PaymentStatus.rejected),
             onTap: () => open(GroupScreen(groupId: g.id)),
           ),
         );
@@ -399,52 +608,7 @@ class _OwnerDashboardState extends State<OwnerDashboard> with Reloadable {
       }
     }
     if (items.isEmpty) return const [];
-    return [const SectionTitle('À faire'), ...items];
-  }
-}
-
-class _StatsRow extends StatelessWidget {
-  const _StatsRow({required this.stats});
-
-  final List<(String, int)> stats;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Row(
-      children: [
-        for (final (label, value) in stats)
-          Expanded(
-            child: Card(
-              margin: const EdgeInsets.all(3),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  vertical: 12,
-                  horizontal: 4,
-                ),
-                child: Column(
-                  children: [
-                    Text(
-                      '$value',
-                      style: theme.textTheme.titleLarge?.copyWith(
-                        fontWeight: FontWeight.w800,
-                        color: theme.colorScheme.primary,
-                        fontFeatures: const [FontFeature.tabularFigures()],
-                      ),
-                    ),
-                    Text(
-                      label,
-                      style: theme.textTheme.bodySmall,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-      ],
-    );
+    return [const SectionTitle('À faire aujourd\'hui'), ...items];
   }
 }
 
@@ -465,10 +629,17 @@ class MemberDashboard extends StatefulWidget {
 }
 
 class _MemberDashboardState extends State<MemberDashboard> with Reloadable {
-  late Future<MemberOverview> _data = Api.memberOverview();
+  late Future<MemberOverview> _data = _loadOverview();
+
+  /// Charge l'accueil puis reprogramme les rappels de cotisation.
+  static Future<MemberOverview> _loadOverview() async {
+    final o = await Api.memberOverview();
+    Reminders.update(member: o.groups);
+    return o;
+  }
 
   @override
-  void reload() => setState(() => _data = Api.memberOverview());
+  void reload() => setState(() => _data = _loadOverview());
 
   @override
   Widget build(BuildContext context) {
@@ -556,13 +727,23 @@ class _MemberDashboardState extends State<MemberDashboard> with Reloadable {
                     'Montant à régulariser : ${money(o.lateAmount)}'
                     '${o.latePenalty > 0 ? ' (dont ${money(o.latePenalty)} de pénalités)' : ''}. Payez par '
                     'Mobile Money ou en espèces, puis déclarez votre paiement.',
+                children: [
+                  if (o.active.length == 1) ...[
+                    const SizedBox(height: 12),
+                    FilledButton.icon(
+                      onPressed: () => _pay(o.active.first),
+                      icon: const Icon(Icons.upload),
+                      label: Text('Payer ${money(o.lateAmount)}'),
+                    ),
+                  ],
+                ],
               )
-            : StatusCard(
-                icon: Icons.check_circle,
-                color: good,
-                title: 'Vous êtes à jour',
-                message: 'Toutes vos cotisations dues sont payées.',
-              ),
+            : _upToDateCard(o),
+      // ------------------------------------------------------ Ma cagnotte
+      for (final s in o.active)
+        if (s.myPosition(uid) == s.group.currentPot &&
+            s.group.paidOutCount < s.group.currentPot)
+          _myPotCard(s),
       // ------------------------------------------------------ Mes cagnottes
       if (current.isNotEmpty) const SectionTitle('Mes cagnottes'),
       for (final s in current) _groupCard(s, good, bad),
@@ -626,6 +807,139 @@ class _MemberDashboardState extends State<MemberDashboard> with Reloadable {
         label: const Text('Voir toutes mes tontines'),
       ),
     ];
+  }
+
+  /// « Vous êtes à jour » avec la prochaine cotisation.
+  Widget _upToDateCard(MemberOverview o) {
+    final theme = Theme.of(context);
+    MemberGroupStatus? next;
+    DateTime? nextDate;
+    for (final s in o.active) {
+      if (s.standing.remaining == 0) continue;
+      final d = s.group.contributionDate(s.standing.declared + 1);
+      if (nextDate == null || d.isBefore(nextDate)) {
+        nextDate = d;
+        next = s;
+      }
+    }
+    final onPrimary = theme.colorScheme.onPrimary;
+    return Card(
+      color: theme.colorScheme.primary,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                CircleAvatar(
+                  radius: 18,
+                  backgroundColor: onPrimary.withValues(alpha: 0.18),
+                  child: Icon(Icons.check, color: onPrimary),
+                ),
+                const SizedBox(width: 10),
+                Text(
+                  'Vous êtes à jour',
+                  style: theme.textTheme.titleLarge?.copyWith(
+                    color: onPrimary,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Text(
+              next == null
+                  ? 'Toutes vos cotisations sont payées.'
+                  : 'Prochaine cotisation : ${money(next.group.contributionAmount)} '
+                        '${countdownLabel(nextDate!)} (${dateShort(nextDate)})'
+                        '${o.active.length > 1 ? ' · ${next.group.name}' : ''}. '
+                        'Vous pouvez aussi payer d\'avance.',
+              style: TextStyle(color: onPrimary, height: 1.4),
+            ),
+            if (next != null && o.active.length == 1) ...[
+              const SizedBox(height: 12),
+              FilledButton(
+                onPressed: () => _pay(next!),
+                style: FilledButton.styleFrom(
+                  backgroundColor: onPrimary,
+                  foregroundColor: theme.colorScheme.primary,
+                ),
+                child: const Text('Payer d\'avance'),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// La cagnotte du participant est celle en cours de collecte.
+  Widget _myPotCard(MemberGroupStatus s) {
+    final g = s.group;
+    final theme = Theme.of(context);
+    final pot = g.currentPot;
+    final validated = g.collectedFor(pot);
+    final complete = g.isPotComplete(pot);
+    final percent = g.grossPot == 0
+        ? 0
+        : (100 * validated / g.grossPot).floor();
+    final good = paymentStatusColor(PaymentStatus.approved);
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: () => open(GroupScreen(groupId: g.id)),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Ma cagnotte · n°$pot',
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                  StatusChip(
+                    complete ? 'Collecte complète' : 'Collecte à $percent %',
+                    complete ? good : paymentStatusColor(PaymentStatus.pending),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Text(
+                money(g.netPot),
+                style: theme.textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.w800,
+                  color: theme.colorScheme.primary,
+                ),
+              ),
+              const SizedBox(height: 8),
+              ProgressLine(
+                value: g.grossPot == 0 ? 0 : validated / g.grossPot,
+                color: complete ? good : null,
+                label: '${g.name} · prévue le ${dateShort(g.payoutDate(pot))}',
+              ),
+              const SizedBox(height: 6),
+              Text(
+                complete
+                    ? 'La collecte est complète : votre tontinier peut vous '
+                          'remettre la cagnotte.'
+                    : 'Elle vous sera remise dès que toute la collecte est '
+                          'payée : il manque encore ${money(g.missingFor(pot))} '
+                          'd\'autres participants.',
+                style: theme.textTheme.bodyMedium,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   /// Une cagnotte du participant : sa situation, la remise en cours et la

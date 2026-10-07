@@ -149,10 +149,15 @@ class DeclarePaymentScreen extends StatefulWidget {
     this.initialUnits = 1,
     this.penaltyFor,
     this.note,
+    this.unitsCaption,
   });
 
   final String title;
   final List<(String, String)> details;
+
+  /// Ce que couvrent les unités payées (ex. « Cotisations du 31 oct. au
+  /// 1er nov. »).
+  final String Function(int units)? unitsCaption;
 
   /// Montant d'une cotisation (ou d'une case).
   final int unitAmount;
@@ -298,6 +303,14 @@ class _DeclarePaymentScreenState extends State<DeclarePaymentScreen> {
                     max: widget.maxUnits,
                     onChanged: (v) => setState(() => _units = v),
                   ),
+                  if (widget.unitsCaption != null)
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        widget.unitsCaption!(_units),
+                        style: theme.textTheme.bodySmall,
+                      ),
+                    ),
                   const Divider(height: 24),
                   InfoRow(
                     'Cotisations',
@@ -390,7 +403,7 @@ class _DeclarePaymentScreenState extends State<DeclarePaymentScreen> {
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
                 : const Icon(Icons.send),
-            label: const Text('Envoyer la déclaration'),
+            label: Text('Envoyer la déclaration · ${money(_amount)}'),
           ),
         ],
       ),

@@ -5,6 +5,7 @@ import '../format.dart';
 import '../models.dart';
 import '../widgets/common.dart';
 import 'auth_screens.dart' show PhoneField;
+import 'business_screens.dart';
 import 'group_form.dart';
 
 /// Ajout d'un participant sans application : nom et numéro.
@@ -181,6 +182,7 @@ class _StartGroupScreenState extends State<StartGroupScreen> {
   late DateTime _start = _defaultStart();
   DateTime? _payout;
   bool _busy = false;
+  late Future<Business?> _business = Api.business(Api.uid);
 
   DateTime _defaultStart() {
     final today = DateUtils.dateOnly(DateTime.now());
@@ -273,19 +275,99 @@ class _StartGroupScreenState extends State<StartGroupScreen> {
     }
   }
 
+  Widget _check(bool ok, String title, String subtitle, {Widget? action}) {
+    final color = ok
+        ? paymentStatusColor(PaymentStatus.approved)
+        : paymentStatusColor(PaymentStatus.pending);
+    return ListTile(
+      leading: CircleAvatar(
+        radius: 14,
+        backgroundColor: ok ? color : color.withValues(alpha: 0.15),
+        child: Icon(
+          ok ? Icons.check : Icons.priority_high,
+          size: 16,
+          color: ok ? Colors.white : color,
+        ),
+      ),
+      title: Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
+      subtitle: Text(subtitle),
+      trailing: action,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final g = _preview;
+    final managed = g.members.where((m) => m.managed).length;
     return Scaffold(
-      appBar: AppBar(title: const Text('Démarrer la tontine')),
+      appBar: AppBar(
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Démarrer la tontine'),
+            Text(
+              '${g.name} · ${g.memberCount} participants',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ],
+        ),
+      ),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
         children: [
-          const Text(
-            'Confirmez les dates. Dès le démarrage, les participants peuvent '
-            'payer et les retards sont comptés.',
+          const SectionTitle('Avant de démarrer'),
+          Card(
+            child: FutureBuilder<Business?>(
+              future: _business,
+              builder: (context, snap) {
+                final accounts = snap.data?.accounts ?? const [];
+                return Column(
+                  children: [
+                    _check(
+                      true,
+                      'Groupe complet',
+                      '${g.memberCount} / ${g.memberCount} participants'
+                          '${managed > 0 ? ', dont $managed sans appli' : ''}',
+                    ),
+                    _check(
+                      true,
+                      'Ordre des remises fixé',
+                      g.orderMode == OrderMode.manual
+                          ? 'Fixé par vous'
+                          : 'Par tirage au sort',
+                    ),
+                    _check(
+                      accounts.isNotEmpty,
+                      'Numéros de paiement',
+                      accounts.isNotEmpty
+                          ? [for (final a in accounts) a.operator].join(' et ')
+                          : 'Ajoutez vos numéros Mobile Money pour que vos '
+                                'clients sachent où payer',
+                      action: accounts.isNotEmpty
+                          ? null
+                          : TextButton(
+                              onPressed: () async {
+                                await Navigator.of(context).push(
+                                  MaterialPageRoute<bool>(
+                                    builder: (_) =>
+                                        const BusinessProfileScreen(),
+                                  ),
+                                );
+                                if (mounted) {
+                                  setState(
+                                    () => _business = Api.business(Api.uid),
+                                  );
+                                }
+                              },
+                              child: const Text('Ajouter'),
+                            ),
+                    ),
+                  ],
+                );
+              },
+            ),
           ),
-          const SizedBox(height: 16),
+          const SectionTitle('Les dates'),
           _DateTile(
             label: 'Date de la 1re cotisation',
             date: g.startDate,
@@ -315,7 +397,17 @@ class _StartGroupScreenState extends State<StartGroupScreen> {
               ],
             ),
           ),
-          const SizedBox(height: 24),
+          const SizedBox(height: 12),
+          StatusCard(
+            icon: Icons.warning_amber_rounded,
+            title: 'À savoir',
+            message:
+                'Après le démarrage, les dates, montants et participants ne '
+                'peuvent plus être modifiés. Chaque remise ne sera possible '
+                'qu\'une fois sa collecte complète.',
+            color: paymentStatusColor(PaymentStatus.pending),
+          ),
+          const SizedBox(height: 16),
           FilledButton.icon(
             onPressed: _busy ? null : _launch,
             icon: const Icon(Icons.play_arrow),
@@ -419,6 +511,159 @@ class GroupEventsScreen extends StatelessWidget {
             },
           );
         },
+      ),
+    );
+  }
+}
+
+/// Confirmation de la remise de la cagnotte en cours (collecte complète) :
+/// montant, commission, mode de remise. Renvoie le mode choisi.
+class PayoutSheet extends StatefulWidget {
+  const PayoutSheet({
+    super.key,
+    required this.group,
+    required this.beneficiary,
+  });
+
+  final Group group;
+  final GroupMember beneficiary;
+
+  @override
+  State<PayoutSheet> createState() => _PayoutSheetState();
+}
+
+class _PayoutSheetState extends State<PayoutSheet> {
+  PaymentMethod _method = PaymentMethod.cash;
+
+  @override
+  Widget build(BuildContext context) {
+    final g = widget.group;
+    final b = widget.beneficiary;
+    final theme = Theme.of(context);
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              'Confirmer la remise',
+              style: theme.textTheme.titleLarge?.copyWith(
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            Text(
+              'Cagnotte n°${g.currentPot} · ${b.name} · ${b.profile.phone}',
+              style: theme.textTheme.bodySmall,
+            ),
+            const SizedBox(height: 14),
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.surfaceContainerHighest.withValues(
+                  alpha: 0.5,
+                ),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Column(
+                children: [
+                  InfoRow('Collecte validée', money(g.grossPot)),
+                  InfoRow('Votre commission', '− ${money(g.commission)}'),
+                  const Divider(height: 16),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          'À remettre à ${b.name.split(' ').first}',
+                          style: const TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                      Text(
+                        money(g.netPot),
+                        style: theme.textTheme.titleLarge?.copyWith(
+                          fontWeight: FontWeight.w800,
+                          color: theme.colorScheme.primary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'Comment remettez-vous l\'argent ?',
+              style: theme.textTheme.titleSmall?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 8),
+            SegmentedButton<PaymentMethod>(
+              segments: const [
+                ButtonSegment(
+                  value: PaymentMethod.cash,
+                  icon: Icon(Icons.payments_outlined),
+                  label: Text('Espèces'),
+                ),
+                ButtonSegment(
+                  value: PaymentMethod.mobileMoney,
+                  icon: Icon(Icons.phone_android),
+                  label: Text('Mobile Money'),
+                ),
+              ],
+              selected: {_method},
+              onSelectionChanged: (s) => setState(() => _method = s.first),
+            ),
+            const SizedBox(height: 14),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(
+                  Icons.info_outline,
+                  size: 18,
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    b.managed
+                        ? 'Cette remise est définitive et ne pourra pas être '
+                              'annulée.'
+                        : '${b.name} recevra une demande pour confirmer qu\'il '
+                              'a bien reçu l\'argent. Cette remise ne pourra pas '
+                              'être annulée.',
+                    style: theme.textTheme.bodySmall,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () => Navigator.pop(context),
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size(0, 50),
+                    ),
+                    child: const Text('Annuler'),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: FilledButton(
+                    onPressed: () => Navigator.pop(context, _method),
+                    style: FilledButton.styleFrom(
+                      minimumSize: const Size(0, 50),
+                    ),
+                    child: const Text('Confirmer'),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }

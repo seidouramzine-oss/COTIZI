@@ -89,22 +89,43 @@ tontines, puis invitent leurs **clients**, qui ne font que participer.
     **relancer sur WhatsApp**.
 11. Les cotisations comptent dans l'ordre : les N premières pour la cagnotte n°1,
     les N suivantes pour la n°2, etc.
-12. À la remise, le tontinier **confirme « Cagnotte remise »**. Le
-    **bénéficiaire confirme l'avoir reçue** (ou signale un problème). La
-    collecte suivante devient la cagnotte en cours. Après la dernière remise, la
-    tontine est **terminée**.
-13. Chaque action importante est notée dans l'**historique** du groupe (création,
+12. **Une cagnotte ne peut être remise que lorsque sa collecte est complète**
+    (toutes les cotisations de tous les participants pour cette cagnotte sont
+    validées). Avant, le bouton de remise est verrouillé et l'écran montre
+    **ce qui manque** : qui doit encore combien, avec un bouton pour relancer
+    chacun sur WhatsApp, ou tout le groupe en un message. Si un participant ne
+    paie pas, le tontinier peut **encaisser pour lui** (il avance l'argent) pour
+    débloquer la remise. Le serveur vérifie aussi cette règle.
+13. Collecte complète : le tontinier appuie sur **« Remettre la cagnotte »**,
+    vérifie le récapitulatif (collecte, sa commission, montant à remettre) et
+    choisit le mode de remise (**espèces** ou **Mobile Money**). Le
+    **bénéficiaire confirme l'avoir reçue** (ou signale un problème) ; le
+    tontinier suit les 3 étapes (collecte complète, remise faite, réception
+    confirmée) et peut partager un **reçu de remise**. La collecte suivante
+    devient la cagnotte en cours. Après la dernière remise, la tontine est
+    **terminée**.
+14. Chaque action importante est notée dans l'**historique** du groupe (création,
     tirage, démarrage, paiements, remises…). Le tontinier voit tout ; un
     participant voit les actions générales et celles qui le concernent.
-14. **Relevés PDF** : le tontinier partage le bilan d'un groupe ou le relevé d'un
+15. **Relevés PDF** : le tontinier partage le bilan d'un groupe ou le relevé d'un
     participant ; le participant peut partager son propre relevé.
+
+## Rappels sur le téléphone
+
+- Le **client** reçoit un rappel **la veille de chaque cotisation à payer**
+  (à 18 h), et le lendemain matin s'il a des cotisations en retard.
+- Le **tontinier** reçoit un rappel **le matin de chaque remise prévue**.
+- Les rappels sont préparés par le téléphone (pas de serveur) et mis à jour à
+  chaque ouverture de l'application. On peut les couper dans
+  **Profil → Paramètres → Rappels**.
 
 Exemple : 10 participants, 5 000 FCFA par jour, collecte de 30 jours ;
 cagnotte = 10 × 30 × 5 000 = 1 500 000 FCFA ; commission 5 % = 75 000 FCFA ;
 le bénéficiaire reçoit 1 425 000 FCFA, une remise tous les 30 jours.
 
 Les groupes créés avant la version 2.0 restent consultables mais n'acceptent
-plus de paiements.
+plus de paiements. Pour les groupes démarrés avec la version 2.0, la remise
+reste bloquée par l'application tant que la collecte n'est pas complète.
 
 ## Tontine à carnet
 

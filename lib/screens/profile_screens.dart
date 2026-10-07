@@ -9,6 +9,7 @@ import '../invite_link.dart';
 import '../models.dart';
 import '../settings.dart';
 import '../widgets/common.dart';
+import '../reminders.dart';
 import 'business_screens.dart';
 import 'subscription_screens.dart';
 
@@ -238,6 +239,24 @@ class _ProfilePageState extends State<ProfilePage> {
           const SectionTitle('Paramètres'),
           _Group(
             children: [
+              if (Reminders.supported)
+                ValueListenableBuilder<bool>(
+                  valueListenable: Reminders.enabled,
+                  builder: (context, on, _) => SwitchListTile(
+                    secondary: const Icon(Icons.notifications_active_outlined),
+                    title: const Text('Rappels'),
+                    subtitle: Text(
+                      _p.isMember
+                          ? 'La veille de chaque cotisation à payer'
+                          : 'Jours de remise et cotisations à payer',
+                    ),
+                    value: on,
+                    onChanged: (v) async {
+                      await Reminders.setEnabled(v);
+                      if (v) Reminders.update();
+                    },
+                  ),
+                ),
               ValueListenableBuilder<ThemeMode>(
                 valueListenable: themeMode,
                 builder: (context, mode, _) => ListTile(
@@ -543,8 +562,15 @@ class HelpScreen extends StatelessWidget {
             'ordre fixé) et la date de début. Il démarre la tontine quand '
             'l\'ordre est fixé : les dates de début et de fin sont alors '
             'figées. Pendant la collecte, tous cotisent pour la cagnotte en '
-            'cours ; à la date de remise, elle est donnée au bénéficiaire, qui '
-            'confirme l\'avoir reçue.',
+            'cours. Elle n\'est remise au bénéficiaire que lorsque toute sa '
+            'collecte est payée ; le bénéficiaire confirme l\'avoir reçue.',
+      ),
+      (
+        Icons.notifications_active_outlined,
+        'Rappels',
+        'COTIZI vous prévient la veille de chaque cotisation à payer et, pour '
+            'le tontinier, le matin de chaque remise. Vous pouvez les couper '
+            'dans Profil → Paramètres → Rappels.',
       ),
       (
         Icons.check_circle_outline,

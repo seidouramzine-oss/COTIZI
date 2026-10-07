@@ -204,6 +204,7 @@ class Group {
     this.memberIds = const [],
     this.members = const [],
     this.pendingCount = 0,
+    this.levels,
   });
 
   final String id;
@@ -256,6 +257,11 @@ class Group {
   final List<String> memberIds;
   final List<GroupMember> members;
   final int pendingCount;
+
+  /// Nombre de participants par niveau (cagnottes entièrement payées),
+  /// tenu à jour pour que le serveur bloque une remise avant la fin de la
+  /// collecte. Null : groupe démarré avant la version 2.1.
+  final Map<String, int>? levels;
 
   /// Groupe d'une version précédente : consultation seulement.
   bool get isLegacy => orderMode == null;
@@ -376,6 +382,32 @@ class Group {
     return units * contributionAmount;
   }
 
+  /// Collecte de la cagnotte [pot] complète : la remise est possible.
+  bool isPotComplete(int pot) => collectedFor(pot) >= grossPot;
+
+  /// Montant qui manque pour compléter la cagnotte [pot].
+  int missingFor(int pot) => max(0, grossPot - collectedFor(pot));
+
+  /// Participants qui n'ont pas encore tout payé (validé) pour la cagnotte
+  /// [pot] : cotisations manquantes, dont celles en attente de validation.
+  List<PotShortfall> shortfallsFor(int pot) {
+    final from = (pot - 1) * perPot;
+    return [
+      for (final m in members)
+        if ((m.approvedCount - from).clamp(0, perPot) < perPot)
+          PotShortfall(
+            member: m,
+            missing: perPot - (m.approvedCount - from).clamp(0, perPot),
+            pending:
+                (m.declaredCount - from).clamp(0, perPot) -
+                (m.approvedCount - from).clamp(0, perPot),
+            amount:
+                (perPot - (m.approvedCount - from).clamp(0, perPot)) *
+                contributionAmount,
+          ),
+    ]..sort((a, b) => b.missing.compareTo(a.missing));
+  }
+
   GroupMember? beneficiaryOf(int pot) {
     for (final m in members) {
       if (m.drawPosition == pot) return m;
@@ -417,6 +449,7 @@ class Group {
     memberIds: memberIds,
     members: members ?? this.members,
     pendingCount: pendingCount ?? this.pendingCount,
+    levels: levels,
   );
 
   factory Group.fromDoc(DocumentSnapshot<Json> doc) {
@@ -479,8 +512,35 @@ class Group {
       joinedCount: _int(json['joinedCount']),
       drawnCount: drawnCount,
       memberIds: List<String>.from(json['memberIds'] as List? ?? const []),
+      levels: json['levels'] is Map
+          ? {
+              for (final e in (json['levels'] as Map).entries)
+                e.key as String: _int(e.value),
+            }
+          : null,
     );
   }
+}
+
+/// Ce qui manque à un participant pour une cagnotte.
+class PotShortfall {
+  const PotShortfall({
+    required this.member,
+    required this.missing,
+    required this.pending,
+    required this.amount,
+  });
+
+  final GroupMember member;
+
+  /// Cotisations pas encore validées pour cette cagnotte.
+  final int missing;
+
+  /// Parmi elles, cotisations déclarées en attente de validation.
+  final int pending;
+
+  /// Montant des cotisations manquantes.
+  final int amount;
 }
 
 /// Situation d'un participant : cotisations dues, déclarées et validées.
@@ -584,7 +644,11 @@ class Payout {
     required this.paidAt,
     this.receivedAt,
     this.problem,
+    this.method,
   });
+
+  /// Mode de remise (null : remise enregistrée avant la version 2.1).
+  final PaymentMethod? method;
 
   final int pot;
   final String beneficiaryId;
@@ -612,6 +676,11 @@ class Payout {
           ? (json['receivedAt'] as Timestamp).toDate()
           : null,
       problem: json['problem'] as String?,
+      method: switch (json['method']) {
+        'cash' => PaymentMethod.cash,
+        'mobile_money' => PaymentMethod.mobileMoney,
+        _ => null,
+      },
     );
   }
 }
