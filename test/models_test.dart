@@ -7,8 +7,12 @@ Group _group({
   int contribution = 5000,
   Frequency frequency = Frequency.monthly,
   DateTime? start,
+  int perPot = 1,
+  DateTime? firstPayout,
   CommissionType commissionType = CommissionType.percent,
   double commissionValue = 5,
+  GroupStatus status = GroupStatus.active,
+  List<GroupMember> members_ = const [],
 }) => Group(
   id: 'g',
   tontineId: 't',
@@ -20,10 +24,26 @@ Group _group({
   contributionAmount: contribution,
   frequency: frequency,
   startDate: start ?? DateTime(2026, 1, 31),
+  contributionsPerPot: perPot,
+  firstPayoutDate: firstPayout ?? start ?? DateTime(2026, 1, 31),
   commissionType: commissionType,
   commissionValue: commissionValue,
   inviteCode: 'ABC123',
-  status: GroupStatus.active,
+  status: status,
+  members: members_,
+);
+
+GroupMember _member(
+  String id, {
+  int? pos,
+  int declared = 0,
+  int approved = 0,
+}) => GroupMember(
+  userId: id,
+  drawPosition: pos,
+  profile: Profile(fullName: id, phone: '+22901000000'),
+  declaredCount: declared,
+  approvedCount: approved,
 );
 
 void main() {
@@ -60,44 +80,88 @@ void main() {
       );
     });
 
-    test(
-      'tours à payer : passés sans paiement, refus à refaire, puis le prochain',
-      () {
-        final g = _group(
-          members: 5,
-          frequency: Frequency.weekly,
-          start: DateTime(2026, 10, 1),
-        );
-        Payment pay(int tour, PaymentStatus status, [String user = 'u']) =>
-            Payment(
-              id: '${user}_$tour',
-              userId: user,
-              amount: 5000,
-              proofId: 'p',
-              status: status,
-              rejectionReason: null,
-              declaredAt: DateTime(2026, 10, 1),
-              payer: const Profile(fullName: 'U', phone: '+229'),
-              tourNumber: tour,
-            );
-        // Tours : 1/10, 8/10, 15/10, 22/10, 29/10 ; on est le 15/10
-        final (due, next) = g.unpaidTours('u', [
-          pay(1, PaymentStatus.approved),
-          pay(2, PaymentStatus.rejected),
-          pay(3, PaymentStatus.approved, 'autre'),
-        ], DateTime(2026, 10, 15, 18));
-        expect(due, [2, 3]);
-        expect(next, 4);
+    test('cagnotte : 5 000 F par jour pendant 30 jours, 10 participants', () {
+      final g = _group(
+        frequency: Frequency.daily,
+        start: DateTime(2026, 10, 7),
+        perPot: 30,
+        firstPayout: DateTime(2026, 11, 5),
+      );
+      expect(g.perMemberPerPot, 150000);
+      expect(g.grossPot, 1500000);
+      expect(g.netPot, 1425000);
+      expect(g.totalContributions, 300);
+      expect(g.collectStart(1), DateTime(2026, 10, 7));
+      expect(g.collectEnd(1), DateTime(2026, 11, 5));
+      expect(g.collectStart(2), DateTime(2026, 11, 6));
+      expect(g.payoutDate(1), DateTime(2026, 11, 5));
+      expect(g.payoutDate(2), DateTime(2026, 12, 5));
+    });
 
-        final (allPaid, upcoming) = g.unpaidTours('u', [
-          pay(1, PaymentStatus.approved),
-          pay(2, PaymentStatus.pending),
-          pay(3, PaymentStatus.pending),
-        ], DateTime(2026, 10, 15));
-        expect(allPaid, isEmpty);
-        expect(upcoming, 4);
-      },
-    );
+    test('cotisations dues à une date (jour, semaine, mois)', () {
+      final daily = _group(
+        frequency: Frequency.daily,
+        start: DateTime(2026, 10, 7),
+        perPot: 30,
+      );
+      expect(daily.dueCount(DateTime(2026, 10, 6, 23)), 0);
+      expect(daily.dueCount(DateTime(2026, 10, 7, 8)), 1);
+      expect(daily.dueCount(DateTime(2026, 10, 18, 20)), 12);
+      expect(daily.dueCount(DateTime(2030, 1, 1)), 300);
+      final weekly = _group(
+        frequency: Frequency.weekly,
+        start: DateTime(2026, 10, 7),
+        perPot: 4,
+      );
+      expect(weekly.dueCount(DateTime(2026, 10, 20)), 2);
+      final monthly = _group(start: DateTime(2026, 1, 31), perPot: 1);
+      expect(monthly.dueCount(DateTime(2026, 3, 30)), 2);
+      expect(monthly.dueCount(DateTime(2026, 3, 31)), 3);
+    });
+
+    test('« vous êtes à jour », retard, avance et attente', () {
+      final today = DateTime(2026, 10, 18);
+      final g = _group(
+        frequency: Frequency.daily,
+        start: DateTime(2026, 10, 7),
+        perPot: 30,
+      );
+      final late = g.standingOf(_member('a', declared: 9, approved: 9), today);
+      expect(late.due, 12);
+      expect(late.late, 3);
+      expect(late.upToDate, isFalse);
+      final ok = g.standingOf(_member('b', declared: 14, approved: 10), today);
+      expect(ok.upToDate, isTrue);
+      expect(ok.pending, 4);
+      expect(ok.ahead, 2);
+      expect(ok.remaining, 286);
+      final waiting = _group(
+        frequency: Frequency.daily,
+        start: DateTime(2026, 10, 7),
+        status: GroupStatus.recruiting,
+      );
+      expect(waiting.standingOf(_member('c'), today).upToDate, isTrue);
+    });
+
+    test('montant collecté pour la cagnotte en cours', () {
+      final g = _group(
+        members: 3,
+        contribution: 1000,
+        frequency: Frequency.daily,
+        start: DateTime(2026, 10, 7),
+        perPot: 5,
+        members_: [
+          _member('a', pos: 1, declared: 7, approved: 6),
+          _member('b', pos: 2, declared: 3, approved: 3),
+          _member('c', pos: 3),
+        ],
+      );
+      expect(g.collectedFor(1), (5 + 3) * 1000);
+      expect(g.collectedFor(1, withPending: true), (5 + 3) * 1000);
+      expect(g.collectedFor(2), 1 * 1000);
+      expect(g.collectedFor(2, withPending: true), 2 * 1000);
+      expect(g.beneficiaryOf(2)?.userId, 'b');
+    });
 
     test('tours mensuels : le 31 devient le dernier jour du mois', () {
       final g = _group(start: DateTime(2026, 1, 31));

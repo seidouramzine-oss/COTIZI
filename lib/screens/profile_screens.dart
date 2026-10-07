@@ -516,9 +516,19 @@ class HelpScreen extends StatelessWidget {
       (
         Icons.casino_outlined,
         'Tontine à cagnotte',
-        'Chaque membre cotise à chaque tour. Quand le groupe est complet, le '
-            'tontinier lance le tirage au sort et chacun tire son numéro : c\'est '
-            'son tour pour recevoir la cagnotte, moins la commission du tontinier.',
+        'Le tontinier fixe la cotisation (ex. 5 000 F chaque jour), la durée de '
+            'collecte (ex. 30 jours) et la date de remise. Pendant la collecte, '
+            'tous les participants cotisent pour la cagnotte en cours ; à la date '
+            'de remise, elle est donnée au bénéficiaire, moins la commission. '
+            'L\'ordre des bénéficiaires est fixé par le tirage au sort.',
+      ),
+      (
+        Icons.check_circle_outline,
+        'Être à jour',
+        'Votre accueil indique « Vous êtes à jour » quand toutes les cotisations '
+            'arrivées à échéance sont payées, ou le nombre de cotisations en '
+            'retard. Vous pouvez payer plusieurs cotisations en une fois, et '
+            'même payer d\'avance.',
       ),
       (
         Icons.menu_book_outlined,
@@ -537,7 +547,8 @@ class HelpScreen extends StatelessWidget {
         Icons.rule,
         'Validation par le tontinier',
         'Le tontinier regarde la preuve puis valide ou refuse. En cas de refus, '
-            'la raison s\'affiche et le membre peut déclarer à nouveau.',
+            'la raison s\'affiche et le paiement est à refaire. Un paiement '
+            'validé donne un reçu à partager.',
       ),
     ];
     final theme = Theme.of(context);

@@ -7,6 +7,24 @@ import '../models.dart';
 import '../widgets/common.dart';
 import 'payment_screens.dart';
 
+/// Paiement d'un carnet ouvert par le tontinier (validation) ou par le
+/// client (consultation, reçu).
+Widget carnetPaymentScreen(Carnet c, Payment p, {required bool canReview}) =>
+    ReviewPaymentScreen(
+      payment: p,
+      canReview: canReview,
+      details: [('Carnet', c.label), ('Cases payées', '${p.caseCount}')],
+      onReview: (approve, reason) =>
+          Api.reviewCarnetPayment(c.id, p, approve, reason),
+      receipt: receiptText(
+        p,
+        tontine: c.tontineName,
+        item: 'Carnet : ${c.label}',
+        owner: c.ownerName,
+        detail: '${p.caseCount} case(s) × ${money(c.caseAmount)}',
+      ),
+    );
+
 /// Détail d'un carnet de 31 cases, vu par le tontinier ou par le client.
 class CarnetScreen extends StatefulWidget {
   const CarnetScreen({super.key, required this.carnetId});
@@ -33,21 +51,15 @@ class _CarnetScreenState extends State<CarnetScreen> {
     if (changed == true && mounted) _reload();
   }
 
-  void _openPayment(Carnet c, Payment p, bool isOwner) => _push(
-    ReviewPaymentScreen(
-      payment: p,
-      canReview: isOwner,
-      details: [('Carnet', c.label), ('Cases payées', '${p.caseCount}')],
-      onReview: (approve, reason) =>
-          Api.reviewCarnetPayment(c.id, p, approve, reason),
-    ),
-  );
+  void _openPayment(Carnet c, Payment p, bool isOwner) =>
+      _push(carnetPaymentScreen(c, p, canReview: isOwner));
 
   void _declare(Carnet c) => _push(
     DeclarePaymentScreen(
       title: 'Déclarer un paiement',
-      caseAmount: c.caseAmount,
-      maxCases: c.remainingCases,
+      unitAmount: c.caseAmount,
+      maxUnits: c.remainingCases,
+      unitsLabel: 'Nombre de cases payées',
       details: [
         ('Carnet', c.label),
         ('Montant par case', money(c.caseAmount)),

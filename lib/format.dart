@@ -23,6 +23,45 @@ String frequencyLabel(Frequency f) => switch (f) {
   Frequency.monthly => 'Chaque mois',
 };
 
+/// « chaque jour », « chaque semaine »…
+String frequencyLower(Frequency f) => frequencyLabel(f).toLowerCase();
+
+/// Durée couverte par [n] cotisations : « 30 jours », « 4 semaines »…
+String durationLabel(Frequency f, int n) => switch (f) {
+  Frequency.daily => '$n jour${n > 1 ? 's' : ''}',
+  Frequency.weekly => '$n semaine${n > 1 ? 's' : ''}',
+  Frequency.biweekly => '${2 * n} semaines',
+  Frequency.monthly => '$n mois',
+};
+
+/// Unité de la durée de collecte saisie par le tontinier.
+String durationUnit(Frequency f) => switch (f) {
+  Frequency.daily => 'jours',
+  Frequency.weekly => 'semaines',
+  Frequency.biweekly => 'quinzaines',
+  Frequency.monthly => 'mois',
+};
+
+/// « 3 cotisations »
+String contributionsLabel(int n) => '$n cotisation${n > 1 ? 's' : ''}';
+
+/// Échéance par rapport à aujourd'hui : « aujourd'hui », « dans 12 jours »…
+String countdownLabel(DateTime date, [DateTime? now]) {
+  final today = DateUtils.dateOnly(now ?? DateTime.now());
+  final days = DateTime.utc(
+    date.year,
+    date.month,
+    date.day,
+  ).difference(DateTime.utc(today.year, today.month, today.day)).inDays;
+  return switch (days) {
+    0 => 'aujourd\'hui',
+    1 => 'demain',
+    -1 => 'hier',
+    > 1 => 'dans $days jours',
+    _ => 'il y a ${-days} jours',
+  };
+}
+
 String commissionLabel(Group g) => g.commissionType == CommissionType.percent
     ? '${NumberFormat.decimalPattern('fr').format(g.commissionValue)} % (${money(g.commission)})'
     : money(g.commission);
@@ -31,6 +70,7 @@ String groupStatusLabel(GroupStatus s) => switch (s) {
   GroupStatus.recruiting => 'Inscriptions',
   GroupStatus.drawing => 'Tirage au sort',
   GroupStatus.active => 'En cours',
+  GroupStatus.finished => 'Terminée',
 };
 
 String paymentStatusLabel(PaymentStatus s) => switch (s) {

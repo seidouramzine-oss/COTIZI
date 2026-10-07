@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../api.dart';
 import '../format.dart';
@@ -344,4 +345,190 @@ Future<bool> confirm(
     ),
   );
   return ok ?? false;
+}
+
+/// Chiffre clé : petit libellé au-dessus d'une valeur mise en avant.
+class Figure extends StatelessWidget {
+  const Figure(this.label, this.value, {super.key, this.caption});
+
+  final String label;
+  final String value;
+  final String? caption;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: theme.textTheme.labelMedium?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          value,
+          style: theme.textTheme.titleMedium?.copyWith(
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        if (caption != null) Text(caption!, style: theme.textTheme.bodySmall),
+      ],
+    );
+  }
+}
+
+/// Chiffres clés sur deux colonnes.
+class FigureGrid extends StatelessWidget {
+  const FigureGrid(this.figures, {super.key});
+
+  final List<Figure> figures;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        for (var i = 0; i < figures.length; i += 2)
+          Padding(
+            padding: EdgeInsets.only(top: i == 0 ? 0 : 14),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(child: figures[i]),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: i + 1 < figures.length
+                      ? figures[i + 1]
+                      : const SizedBox.shrink(),
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+/// Carte d'état colorée : icône, titre, message et contenu facultatif.
+class StatusCard extends StatelessWidget {
+  const StatusCard({
+    super.key,
+    required this.icon,
+    required this.title,
+    required this.color,
+    this.message,
+    this.children = const [],
+    this.onTap,
+  });
+
+  final IconData icon;
+  final String title;
+  final Color color;
+  final String? message;
+  final List<Widget> children;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      color: color.withValues(alpha: 0.10),
+      clipBehavior: Clip.antiAlias,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(color: color.withValues(alpha: 0.35)),
+      ),
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(icon, color: color),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          title,
+                          style: TextStyle(
+                            color: color,
+                            fontWeight: FontWeight.w800,
+                            fontSize: 16,
+                          ),
+                        ),
+                        if (message != null) ...[
+                          const SizedBox(height: 2),
+                          Text(message!),
+                        ],
+                      ],
+                    ),
+                  ),
+                  if (onTap != null) const Icon(Icons.chevron_right),
+                ],
+              ),
+              ...children,
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Barre de progression avec son libellé.
+class ProgressLine extends StatelessWidget {
+  const ProgressLine({
+    super.key,
+    required this.value,
+    required this.label,
+    this.color,
+  });
+
+  final double value;
+  final String label;
+  final Color? color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        ExcludeSemantics(
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: LinearProgressIndicator(
+              value: value.clamp(0, 1),
+              minHeight: 10,
+              color: color,
+            ),
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text(label, style: Theme.of(context).textTheme.bodySmall),
+      ],
+    );
+  }
+}
+
+/// Ouvre WhatsApp avec un message déjà écrit pour [phone] (+229…).
+Future<void> openWhatsApp(
+  BuildContext context,
+  String phone,
+  String text,
+) async {
+  final digits = phone.replaceAll(RegExp(r'\D'), '');
+  final uri = Uri.parse(
+    'https://wa.me/$digits?text=${Uri.encodeComponent(text)}',
+  );
+  if (!await launchUrl(uri, mode: LaunchMode.externalApplication) &&
+      context.mounted) {
+    showError(context, const AppException('Impossible d\'ouvrir WhatsApp'));
+  }
 }

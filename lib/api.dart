@@ -288,14 +288,22 @@ class Api {
       _db.collection('carnets').where('ownerId', isEqualTo: uid).get(),
     ]);
     final tontineCount = (results[0] as AggregateQuerySnapshot).count ?? 0;
-    final groups = (results[1] as QuerySnapshot<Json>).docs
-        .map(Group.fromDoc)
-        .toList();
+    final groups = await Future.wait(
+      (results[1] as QuerySnapshot<Json>).docs
+          .map(Group.fromDoc)
+          .map(
+            (g) => g.status == GroupStatus.active && !g.isLegacy
+                ? group(g.id)
+                : Future.value(g),
+          ),
+    );
     final carnets = (results[2] as QuerySnapshot<Json>).docs
         .map(Carnet.fromDoc)
         .toList();
     final pending = await Future.wait([
-      for (final g in groups.where((g) => g.status == GroupStatus.active))
+      for (final g in groups.where(
+        (g) => g.status == GroupStatus.active && !g.isLegacy,
+      ))
         _pendingOf('groups/${g.id}/payments').then(
           (list) => [for (final p in list) PendingReview(payment: p, group: g)],
         ),
@@ -333,14 +341,18 @@ class Api {
       groups.map((g) async {
         final detail = await group(g.id);
         final payments = await groupPayments(detail);
-        final (due, next) = detail.status == GroupStatus.active
-            ? detail.unpaidTours(uid, payments, today)
-            : (const <int>[], null);
+        final me = detail.memberById(uid);
         return MemberGroupStatus(
           group: detail,
           payments: payments,
-          dueTours: due,
-          nextTour: next,
+          standing: me == null
+              ? MemberStanding(
+                  due: 0,
+                  declared: 0,
+                  approved: 0,
+                  total: detail.totalContributions,
+                )
+              : detail.standingOf(me, today),
         );
       }),
     );
@@ -455,6 +467,9 @@ class Api {
           'phone': me.phone,
           'joinedAt': _now,
           'drawPosition': null,
+          'declaredCount': 0,
+          'approvedCount': 0,
+          'lastPaymentId': null,
         });
       try {
         await batch.commit();
@@ -550,6 +565,8 @@ class Api {
     required int contributionAmount,
     required Frequency frequency,
     required DateTime startDate,
+    required int contributionsPerPot,
+    required DateTime firstPayoutDate,
     required CommissionType commissionType,
     required double commissionValue,
   }) async {
@@ -568,6 +585,9 @@ class Api {
         'contributionAmount': contributionAmount,
         'frequency': frequency.name,
         'startDate': dateKey(startDate),
+        'contributionsPerPot': contributionsPerPot,
+        'firstPayoutDate': dateKey(firstPayoutDate),
+        'paidOutCount': 0,
         'commissionType': commissionType.name,
         'commissionValue': commissionValue,
         'inviteCode': code,
@@ -643,58 +663,101 @@ class Api {
     await batch.commit();
   }
 
-  static Future<void> declarePayment({
+  /// Le participant déclare [count] cotisations (une seule preuve).
+  /// Son compteur de cotisations déclarées avance dans le même envoi.
+  static Future<void> declareContributions({
     required Group group,
-    required int tourNumber,
+    required int count,
     required Uint8List proof,
     required String mime,
-    required bool afterRejection,
   }) async {
     final me = await _requireMe();
-    final batch = _db.batch();
-    final proofId = _addProof(
-      batch,
-      proof,
-      mime,
-      'group',
-      group.id,
-      group.ownerId,
-    );
-    final ref = _db.doc('groups/${group.id}/payments/${uid}_$tourNumber');
-    if (afterRejection) {
-      batch.update(ref, {
-        'proofId': proofId,
-        'status': 'pending',
-        'rejectionReason': null,
-        'declaredAt': _now,
-        'reviewedAt': null,
-      });
-    } else {
-      batch.set(ref, {
+    final memberRef = _db.doc('groups/${group.id}/members/$uid');
+    await _db.runTransaction((tx) async {
+      final member = GroupMember.fromDoc(await tx.get(memberRef));
+      final remaining = group.totalContributions - member.declaredCount;
+      if (count > remaining) {
+        throw AppException(
+          remaining == 0
+              ? 'Vous avez déjà déclaré toutes vos cotisations'
+              : 'Il ne vous reste que $remaining cotisation(s) à payer',
+        );
+      }
+      final proofRef = _db.collection('proofs').doc();
+      tx.set(
+        proofRef,
+        _proofData(proof, mime, 'group', group.id, group.ownerId),
+      );
+      final payRef = _db.collection('groups/${group.id}/payments').doc();
+      tx.set(payRef, {
         'userId': uid,
         'payerName': me.fullName,
         'payerPhone': me.phone,
-        'tourNumber': tourNumber,
-        'amount': group.contributionAmount,
-        'proofId': proofId,
+        'count': count,
+        'amount': count * group.contributionAmount,
+        'proofId': proofRef.id,
         'status': 'pending',
         'rejectionReason': null,
         'declaredAt': _now,
         'reviewedAt': null,
       });
-    }
-    await batch.commit();
+      tx.update(memberRef, {
+        'declaredCount': member.declaredCount + count,
+        'lastPaymentId': payRef.id,
+      });
+    });
   }
 
-  static Future<void> reviewPayment(
+  /// Validation : les cotisations comptent comme payées ; refus : elles
+  /// redeviennent à payer.
+  static Future<void> reviewContributions(
     String groupId,
-    String paymentId,
+    Payment p,
     bool approve,
     String? reason,
   ) {
-    return _db
-        .doc('groups/$groupId/payments/$paymentId')
-        .update(_review(approve, reason));
+    final memberRef = _db.doc('groups/$groupId/members/${p.userId}');
+    return _db.runTransaction((tx) async {
+      final member = GroupMember.fromDoc(await tx.get(memberRef));
+      tx.update(
+        _db.doc('groups/$groupId/payments/${p.id}'),
+        _review(approve, reason),
+      );
+      tx.update(
+        memberRef,
+        approve
+            ? {'approvedCount': member.approvedCount + p.count}
+            : {'declaredCount': member.declaredCount - p.count},
+      );
+    });
+  }
+
+  /// Remises déjà confirmées, par numéro de cagnotte.
+  static Future<Map<int, Payout>> payouts(String groupId) async {
+    final snap = await _db.collection('groups/$groupId/payouts').get();
+    return {
+      for (final d in snap.docs) Payout.fromDoc(d).pot: Payout.fromDoc(d),
+    };
+  }
+
+  /// Le tontinier confirme avoir remis la cagnotte en cours à son
+  /// bénéficiaire.
+  static Future<void> confirmPayout(Group g) async {
+    final pot = g.paidOutCount + 1;
+    final beneficiary = g.beneficiaryOf(pot);
+    if (beneficiary == null) {
+      throw const AppException('Bénéficiaire introuvable');
+    }
+    final batch = _db.batch()
+      ..set(_db.doc('groups/${g.id}/payouts/$pot'), {
+        'tour': pot,
+        'beneficiaryId': beneficiary.userId,
+        'beneficiaryName': beneficiary.name,
+        'amount': g.netPot,
+        'paidAt': _now,
+      })
+      ..update(_db.doc('groups/${g.id}'), {'paidOutCount': pot});
+    await batch.commit();
   }
 
   static Json _review(bool approve, String? reason) => {
@@ -864,19 +927,6 @@ class Api {
     'mime': mime,
     'createdAt': _now,
   };
-
-  static String _addProof(
-    WriteBatch batch,
-    Uint8List bytes,
-    String mime,
-    String kind,
-    String targetId,
-    String reviewerId,
-  ) {
-    final ref = _db.collection('proofs').doc();
-    batch.set(ref, _proofData(bytes, mime, kind, targetId, reviewerId));
-    return ref.id;
-  }
 
   static Future<Uint8List> proofImage(String proofId) async {
     final doc = await _db.doc('proofs/$proofId').get();

@@ -70,8 +70,9 @@ class _CreateTontineScreenState extends State<CreateTontineScreen> {
               icon: Icons.savings_outlined,
               title: 'Tontine à cagnotte',
               description:
-                  'Vous créez des groupes. Les membres cotisent à chaque tour et, '
-                  'selon le tirage au sort, chacun reçoit la cagnotte à son tour.',
+                  'Vous créez des groupes. Les participants cotisent (chaque '
+                  'jour, semaine ou mois) et la cagnotte est remise à chacun à '
+                  'son tour, selon le tirage au sort.',
               onTap: () => setState(() => _type = TontineType.cagnotte),
             ),
             _TypeCard(
@@ -269,9 +270,11 @@ class _TontineScreenState extends State<TontineScreen> {
                   style: const TextStyle(fontWeight: FontWeight.w600),
                 ),
                 subtitle: Text(
-                  '${g.joinedCount} / ${g.memberCount} membres · '
-                  '${money(g.contributionAmount)} ${frequencyLabel(g.frequency).toLowerCase()}',
+                  '${g.joinedCount} / ${g.memberCount} participants · '
+                  '${money(g.contributionAmount)} ${frequencyLower(g.frequency)}'
+                  '${g.isLegacy ? '' : '\nCagnotte de ${money(g.netPot)} tous les ${durationLabel(g.frequency, g.perPot)}'}',
                 ),
+                isThreeLine: !g.isLegacy,
                 trailing: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   crossAxisAlignment: CrossAxisAlignment.end,

@@ -31,26 +31,41 @@ tontines, puis invitent leurs **clients**, qui ne font que participer.
 
 1. Le tontinier crée sa tontine, puis un ou plusieurs **groupes**.
 2. Pour chaque groupe il fixe :
-   - le **nombre de membres** (= nombre de tours) ;
-   - la **cotisation** par membre et par tour ;
-   - la **fréquence** : chaque jour, chaque semaine, toutes les 2 semaines ou chaque mois ;
-   - la **date du premier tour** (les dates suivantes en découlent) ;
-   - sa **commission** : un pourcentage ou un montant fixe, **retenue sur la cagnotte** du bénéficiaire.
-3. Le groupe reçoit un **code d'invitation** que le tontinier partage (WhatsApp, SMS...).
-   Les membres l'entrent dans l'application pour rejoindre le groupe.
-4. Quand le groupe est **complet**, le tontinier **lance le tirage au sort** :
-   l'application tire alors au hasard l'ordre de passage. Chaque membre
-   **tire ensuite son numéro** pour découvrir son tour de réception de la cagnotte
-   (il ne peut ni le choisir ni le changer). Le tontinier peut révéler les
-   numéros des membres retardataires.
-5. Quand tout le monde a son numéro, le groupe passe **en cours**.
-6. À chaque tour, chaque membre **déclare son paiement** avec une **capture d'écran**
-   de l'envoi. Le paiement est **en attente** jusqu'à ce que le tontinier :
-   - le **valide**, ou
-   - le **refuse en indiquant la raison** ; le membre peut alors déclarer à nouveau.
+   - le **nombre de participants** (= nombre de cagnottes : chacun reçoit une fois) ;
+   - la **cotisation** et sa **fréquence** : chaque jour, chaque semaine, toutes
+     les 2 semaines ou chaque mois ;
+   - la date de la **première cotisation** ;
+   - la **durée de collecte** avant chaque remise (ex. 30 jours = 30 cotisations) ;
+   - la **date de la 1re remise** au bénéficiaire (par défaut, le dernier jour de
+     collecte) ; les remises suivantes ont lieu tous les « durée de collecte » ;
+   - sa **commission** (pourcentage ou montant fixe), **retenue sur chaque cagnotte**.
+3. Le groupe reçoit un **lien / code d'invitation** que le tontinier partage.
+4. Quand le groupe est **complet**, le tontinier **lance le tirage au sort** ;
+   chaque participant **tire son numéro** = son rang de remise (il ne peut ni le
+   choisir ni le changer). Le tontinier peut tirer pour les retardataires.
+5. Le groupe passe **en cours** : la cagnotte n°1 est **en cours de collecte**.
+   Tous les participants cotisent pour elle (barre de progression, montant
+   validé / total, date et compte à rebours de la remise).
+6. Le participant **paie une ou plusieurs cotisations à la fois** et déclare le
+   paiement avec **une capture d'écran**. Il peut payer d'avance. Le paiement est
+   **en attente** jusqu'à ce que le tontinier :
+   - le **valide** (un **reçu** est alors disponible à partager), ou
+   - le **refuse en indiquant la raison** (les cotisations sont à repayer).
+7. **« Vous êtes à jour »** : toutes les cotisations arrivées à échéance sont
+   déclarées. Sinon l'accueil affiche le nombre de cotisations **en retard** et le
+   montant. Le tontinier voit qui est en retard et peut **relancer sur WhatsApp**.
+8. Les cotisations comptent dans l'ordre : les N premières pour la cagnotte n°1,
+   les N suivantes pour la n°2, etc.
+9. À la remise, le tontinier **confirme « Cagnotte remise »** : elle passe dans
+   l'historique (visible des participants) et la collecte suivante devient la
+   cagnotte en cours. Après la dernière remise, la tontine est **terminée**.
 
-Exemple : 10 membres × 5 000 FCFA = cagnotte de 50 000 FCFA par tour ;
-commission 5 % = 2 500 FCFA ; le bénéficiaire reçoit 47 500 FCFA.
+Exemple : 10 participants, 5 000 FCFA par jour, collecte de 30 jours ;
+cagnotte = 10 × 30 × 5 000 = 1 500 000 FCFA ; commission 5 % = 75 000 FCFA ;
+le bénéficiaire reçoit 1 425 000 FCFA, une remise tous les 30 jours.
+
+Les groupes créés avant la version 1.4 (une cotisation par tour) restent
+consultables mais n'acceptent plus de paiements.
 
 ## Tontine à carnet
 

@@ -66,6 +66,7 @@ npm test   # lance l'émulateur Firestore et le scénario tests/rules.test.mjs
 ```
 
 Le scénario couvre : inscription, création de groupe, invitations, groupe complet,
-tirage au sort (impossible de choisir son numéro), déclarations avec preuve,
-refus motivé, validation, carnet de 31 cases, confidentialité des données,
+tirage au sort (impossible de choisir son numéro), paiement de plusieurs
+cotisations avec preuve, refus motivé, validation, remises confirmées, anciens
+groupes en lecture seule, carnet de 31 cases, confidentialité des données,
 essai gratuit et abonnement des tontiniers, administration.
