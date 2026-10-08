@@ -682,8 +682,10 @@ test('abonnement des tontiniers et administration', async (t) => {
     await assertSucceeds(admin.doc('admins/adm').get());
     await assertSucceeds(neuf.doc('admins/neuf').get());
   });
-  await t.test('lire la fiche administrateur d\'un autre : refusé', () =>
-    assertFails(neuf.doc('admins/adm').get()));
+  await t.test('vérifier qu\'un compte est administrateur (accès illimité) : autorisé', () =>
+    assertSucceeds(neuf.doc('admins/adm').get()));
+  await t.test('lister les administrateurs : refusé', () =>
+    assertFails(neuf.collection('admins').get()));
   await t.test('se déclarer administrateur : refusé', () =>
     assertFails(neuf.doc('admins/neuf').set({ note: 'moi' })));
   await t.test('l\'administrateur crée des tontines sans abonnement', () =>
@@ -1337,4 +1339,82 @@ test('version 2.5 : remboursement du carnet, clôture du groupe', async (t) => {
   await env.withSecurityRulesDisabled((ctx) => ctx.firestore().doc(`groups/${G}`).update({ paidOutCount: 2 }));
   await t.test('un participant clôture le groupe : refusé', () => assertFails(closeGroup(db('a'))));
   await t.test('le tontinier clôture le groupe terminé', () => assertSucceeds(closeGroup(T)));
+});
+
+test('version 2.6 : abonnement du tontinier expiré, activité en pause', async (t) => {
+  const T = db('t');
+  const tontine = T.collection('tontines').doc();
+  await assertSucceeds(tontine.set({
+    ownerId: 't', ownerName: 'Tontinier', name: 'Tontine du marché', type: 'cagnotte', createdAt: now(),
+  }));
+  const G = await createGroup(T, tontine.id, 'EXP234', { memberCount: 2, contributionsPerPot: 1 });
+  await assertSucceeds(joinGroup('a', G));
+  await assertSucceeds(joinGroup('b', G));
+  await env.withSecurityRulesDisabled(async (ctx) => {
+    const fs = ctx.firestore();
+    await fs.doc(`groups/${G}`).update({ status: 'active', startedAt: new Date(), levels: { '0': 2 } });
+    await fs.doc(`groups/${G}/members/a`).update({ drawPosition: 1 });
+    await fs.doc(`groups/${G}/members/b`).update({ drawPosition: 2 });
+    await fs.doc(`groups/${G}/payouts/1`).set({
+      tour: 1, beneficiaryId: 'a', beneficiaryName: 'Alice', amount: 1000, method: 'cash',
+      paidAt: new Date(), receivedAt: null, problem: null,
+    });
+    await fs.doc(`groups/${G}`).update({ paidOutCount: 1 });
+  });
+  await ensureTrust(T);
+  await t.test('abonnement actif : le client déclare', () => assertSucceeds(declare('a', G, 1, { method: 'cash' })));
+
+  // Carnet d'un client avec 5 cases payées
+  const cRef = T.collection('carnets').doc();
+  await env.withSecurityRulesDisabled((ctx) => ctx.firestore().doc(`carnets/${cRef.id}`).set({
+    tontineId: 'x', tontineName: 'Carnets', ownerId: 't', ownerName: 'Tontinier', label: 'Carnet E',
+    caseAmount: 500, caseCount: 31, clientId: 'b', clientName: 'Bob', clientPhone: people.b.phone,
+    inviteCode: 'EXC234', usedCases: 5, approvedCases: 5, lastPaymentId: null, createdAt: new Date(),
+  }));
+
+  // L'abonnement du tontinier expire
+  await env.withSecurityRulesDisabled((ctx) => ctx.firestore().doc('users/t').update({
+    subscriptionEnd: new Date(Date.now() - 86400000),
+  }));
+  await t.test('le client lit le profil de son tontinier (fin d\'abonnement)', () =>
+    assertSucceeds(db('a').doc('users/t').get()));
+  await t.test('lire le profil d\'un autre client : refusé', () =>
+    assertFails(db('a').doc('users/b').get()));
+  await t.test('expiré : le client ne peut plus déclarer', () =>
+    assertFails(declare('b', G, 1, { method: 'cash' })));
+  const pending = (await T.collection(`groups/${G}/payments`).where('status', '==', 'pending').get()).docs[0];
+  await t.test('expiré : le tontinier ne peut plus valider', async () => {
+    const m = await adminGet(`groups/${G}/members/a`);
+    await assertFails(T.batch()
+      .update(pending.ref, { status: 'approved', rejectionReason: null, reviewedAt: now() })
+      .update(T.doc(`groups/${G}/members/a`), { approvedCount: (m.approvedCount ?? 0) + 1 })
+      .commit());
+  });
+  await t.test('expiré : le carnet ne reçoit plus de paiement', () =>
+    assertFails(db('b').doc(`carnets/${cRef.id}`).update({ usedCases: 6, lastPaymentId: 'x' })));
+  await t.test('expiré : le bénéficiaire peut encore confirmer sa cagnotte', async () => {
+    const tr = await adminGet('trust/t');
+    const fa = db('a');
+    await assertSucceeds(fa.batch()
+      .update(fa.doc(`groups/${G}/payouts/1`), { receivedAt: now(), problem: null })
+      .update(fa.doc('trust/t'), {
+        payoutsConfirmed: (tr.payoutsConfirmed ?? 0) + 1, last: `groups/${G}/payouts/1`,
+      })
+      .commit());
+  });
+  await t.test('expiré : le client peut demander le remboursement du carnet', () =>
+    assertSucceeds(db('b').doc(`carnets/${cRef.id}`).update({
+      status: 'refund_requested', refundRequestedAt: now(),
+    })));
+  await t.test('expiré : le tontinier peut rembourser et clôturer', () =>
+    assertSucceeds(T.doc(`carnets/${cRef.id}`).update({
+      status: 'closed', closedAt: now(), refundAmount: 4 * 500,
+    })));
+
+  // L'administrateur réactive l'abonnement : tout reprend
+  await env.withSecurityRulesDisabled((ctx) => ctx.firestore().doc('users/t').update({
+    subscriptionEnd: new Date(Date.now() + 30 * 86400000),
+  }));
+  await t.test('abonnement réactivé : le client déclare de nouveau', () =>
+    assertSucceeds(declare('b', G, 1, { method: 'cash' })));
 });

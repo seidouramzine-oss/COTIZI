@@ -115,6 +115,21 @@ class _OwnerDashboardState extends State<OwnerDashboard> with Reloadable {
   late Future<List<AppNotification>> _recent = Api.notifications(limit: 4);
   bool _guideHidden = true;
 
+  /// Chiffres masqués sur l'accueil (bouton œil), mémorisé sur le téléphone.
+  bool _hideAmounts = false;
+
+  static const _hideKey = 'chiffres_masques';
+
+  String _m(int amount) => _hideAmounts ? '••••• FCFA' : money(amount);
+
+  Future<void> _toggleAmounts() async {
+    setState(() => _hideAmounts = !_hideAmounts);
+    try {
+      final p = await SharedPreferences.getInstance();
+      await p.setBool(_hideKey, _hideAmounts);
+    } catch (_) {}
+  }
+
   static const _guideKey = 'guide_demarrage_masque';
 
   @override
@@ -123,7 +138,10 @@ class _OwnerDashboardState extends State<OwnerDashboard> with Reloadable {
     SharedPreferences.getInstance()
         .then((p) {
           if (mounted) {
-            setState(() => _guideHidden = p.getBool(_guideKey) ?? false);
+            setState(() {
+              _guideHidden = p.getBool(_guideKey) ?? false;
+              _hideAmounts = p.getBool(_hideKey) ?? false;
+            });
           }
         })
         .catchError((_) {
@@ -328,7 +346,7 @@ class _OwnerDashboardState extends State<OwnerDashboard> with Reloadable {
               ),
               isThreeLine: true,
               trailing: Text(
-                money(r.payment.amount),
+                _m(r.payment.amount),
                 style: const TextStyle(fontWeight: FontWeight.w700),
               ),
               onTap: () => _review(r),
@@ -455,16 +473,35 @@ class _OwnerDashboardState extends State<OwnerDashboard> with Reloadable {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text(
-              'Encaissé ce mois-ci',
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: on.withValues(alpha: 0.85),
-              ),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Encaissé ce mois-ci',
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: on.withValues(alpha: 0.85),
+                    ),
+                  ),
+                ),
+                IconButton(
+                  tooltip: _hideAmounts
+                      ? 'Afficher les chiffres'
+                      : 'Masquer les chiffres',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: _toggleAmounts,
+                  icon: Icon(
+                    _hideAmounts
+                        ? Icons.visibility_off_outlined
+                        : Icons.visibility_outlined,
+                    color: on,
+                  ),
+                ),
+              ],
             ),
             FutureBuilder<Gains>(
               future: _gains,
               builder: (context, snap) => Text(
-                snap.hasData ? money(snap.data!.collectedThisMonth) : '…',
+                snap.hasData ? _m(snap.data!.collectedThisMonth) : '…',
                 style: theme.textTheme.headlineMedium?.copyWith(
                   color: on,
                   fontWeight: FontWeight.w800,
@@ -592,7 +629,7 @@ class _OwnerDashboardState extends State<OwnerDashboard> with Reloadable {
                           ),
                         ),
                         Text(
-                          '${money(g.contributionAmount)} ${frequencyLower(g.frequency)} · '
+                          '${_m(g.contributionAmount)} ${frequencyLower(g.frequency)} · '
                           '${g.memberCount} participants',
                           style: theme.textTheme.bodySmall,
                         ),
@@ -642,7 +679,7 @@ class _OwnerDashboardState extends State<OwnerDashboard> with Reloadable {
             title: 'Remise non confirmée · ${r.group.name}',
             subtitle:
                 '${p.beneficiaryName} n\'a pas confirmé avoir reçu '
-                '${money(p.amount)} (remise le ${dateShort(p.paidAt)}). '
+                '${_m(p.amount)} (remise le ${dateShort(p.paidAt)}). '
                 'Demandez-lui de confirmer dans COTIZI.',
             color: paymentStatusColor(PaymentStatus.pending),
             onTap: () => open(GroupScreen(groupId: r.group.id)),
@@ -663,7 +700,7 @@ class _OwnerDashboardState extends State<OwnerDashboard> with Reloadable {
             title: 'Cagnotte prête · ${g.name}',
             subtitle:
                 'Collecte complète · à remettre à ${b.name} '
-                '(${money(g.netPot)})',
+                '(${_m(g.netPot)})',
             color: paymentStatusColor(PaymentStatus.approved),
             onTap: () => open(GroupScreen(groupId: g.id)),
           ),
@@ -675,7 +712,7 @@ class _OwnerDashboardState extends State<OwnerDashboard> with Reloadable {
             icon: Icons.lock_outline,
             title: 'Remise bloquée · ${g.name}',
             subtitle:
-                'Il manque ${money(g.missingFor(pot))}'
+                'Il manque ${_m(g.missingFor(pot))}'
                 '${late > 0 ? ' · $late en retard' : ' · paiements à valider'}',
             color: paymentStatusColor(PaymentStatus.rejected),
             onTap: () => open(GroupScreen(groupId: g.id)),
@@ -764,7 +801,7 @@ class _OwnerDashboardState extends State<OwnerDashboard> with Reloadable {
             title: 'Remboursement demandé · ${c.label}',
             subtitle:
                 '${c.client?.fullName ?? 'Le client'} : remettez '
-                '${money(c.refundDue)} (${c.approvedCases - 1} cases) puis '
+                '${_m(c.refundDue)} (${c.approvedCases - 1} cases) puis '
                 'clôturez le carnet',
             color: paymentStatusColor(PaymentStatus.pending),
             onTap: () => open(CarnetScreen(carnetId: c.id)),
@@ -776,7 +813,7 @@ class _OwnerDashboardState extends State<OwnerDashboard> with Reloadable {
             icon: Icons.payments_outlined,
             title: '« ${c.label} » est terminé',
             subtitle:
-                'Remettez ${money(c.clientPayout)} à ${c.client?.fullName ?? 'votre client'}',
+                'Remettez ${_m(c.clientPayout)} à ${c.client?.fullName ?? 'votre client'}',
             color: paymentStatusColor(PaymentStatus.approved),
             onTap: () => open(CarnetScreen(carnetId: c.id)),
           ),
@@ -910,7 +947,14 @@ class _MemberDashboardState extends State<MemberDashboard> with Reloadable {
         ))
           (s.group, p),
     ];
+    // Tontiniers dont l'abonnement est terminé : activité en pause
+    final owners = <String, String>{
+      for (final s in o.groups) s.group.ownerId: s.group.ownerName,
+      for (final c in o.carnets) c.ownerId: c.ownerName,
+    };
     return [
+      for (final e in owners.entries)
+        PausedBanner(ownerId: e.key, ownerName: e.value, isOwner: false),
       // ------------------------------------------- Cagnottes à confirmer
       for (final s in o.groups.where((s) => s.payoutToConfirm != null))
         StatusCard(

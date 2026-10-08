@@ -31,6 +31,19 @@ tontines, puis invitent leurs **clients**, qui ne font que participer.
   Mobile Money et le WhatsApp de l'assistance. Il n'a pas besoin
   d'abonnement.
 
+- **Un seul abonnement : celui du tontinier.** Ses clients utilisent COTIZI
+  gratuitement : ils n'ont jamais d'abonnement à prendre.
+- Tant que l'essai ou l'abonnement du tontinier est en cours, lui et tous ses
+  clients travaillent normalement.
+- **Abonnement terminé : activité en pause** (vérifié par le serveur), pour le
+  tontinier comme pour ses clients : plus de déclaration, de validation ni
+  d'encaissement de paiement, plus de remise de cagnotte, plus de nouveau
+  participant ni de nouvelle tontine. L'historique reste consultable. Pour
+  protéger les clients, deux actions restent possibles : **confirmer une
+  cagnotte reçue** (ou signaler un problème) et **demander / rembourser un
+  carnet**. Un bandeau « Activité en pause » l'explique au tontinier et à ses
+  clients. Tout reprend dès que l'administrateur réactive l'abonnement.
+
 ## Profil pro du tontinier
 
 - **Profil → Mon profil pro** : nom de l'activité, logo, ville, numéro WhatsApp
@@ -173,6 +186,12 @@ Quand **toutes les cagnottes ont été remises**, le tontinier clôture le group
 (« Clôturer le groupe », rappelé dans « À faire aujourd'hui »). Le groupe
 devient « Groupe clôturé » et plus rien ne peut y être modifié ; les
 participants sont prévenus.
+
+## Accueil du tontinier : masquer les chiffres
+
+Le bouton en forme d'œil, sur la carte « Encaissé ce mois-ci », masque les
+montants de l'accueil (••••• FCFA), par exemple devant des clients. Le choix
+est mémorisé sur le téléphone.
 
 ## Notifications (la cloche)
 

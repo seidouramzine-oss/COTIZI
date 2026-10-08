@@ -84,6 +84,15 @@ service cloud.firestore {
         && (subscriptionEndOf(u) > request.time || isAdmin());
     }
 
+    // Abonnement (ou essai) du tontinier en cours : lui et ses clients
+    // peuvent travailler. Expiré : son activité est en pause (consultation
+    // seulement), sauf ce qui protège le client (confirmer une remise,
+    // demander le remboursement d'un carnet).
+    function ownerActive(ownerId) {
+      return subscriptionEndOf(get(doc('users/' + ownerId)).data) > request.time
+        || exists(doc('admins/' + ownerId));
+    }
+
     function groupData(groupId) {
       return get(doc('groups/' + groupId)).data;
     }
@@ -302,6 +311,9 @@ service cloud.firestore {
 
     match /users/{userId} {
       allow read: if (signedIn() && userId == uid()) || isAdmin();
+      // Le profil d'un tontinier (nom, numéro, fin d'abonnement) est lisible :
+      // ses clients savent ainsi si son activité est en pause.
+      allow get: if signedIn() && existing().get('role', 'tontinier') == 'tontinier';
       // role : « tontinier » ou « membre » (client inscrit avec un code
       // d'invitation). Il ne peut plus être modifié ensuite.
       // L'abonnement (subscriptionEnd) ne peut être fixé que par l'administrateur.
@@ -324,8 +336,8 @@ service cloud.firestore {
     // ---------------------------------------------------- Administration
 
     match /admins/{userId} {
-      // Chacun peut seulement vérifier s'il est administrateur
-      allow get: if signedIn() && userId == uid();
+      // Chacun peut vérifier si un compte est administrateur (accès illimité)
+      allow get: if signedIn();
     }
 
     match /settings/{name} {
@@ -470,7 +482,8 @@ service cloud.firestore {
           || (incoming().termsVersion == 1 && incoming().accepted == {}))
         && getAfter(doc('invites/' + incoming().inviteCode)).data.targetId == groupId;
 
-      allow update: if signedIn() && isV2(existing()) && (
+      allow update: if signedIn() && isV2(existing())
+        && ownerActive(existing().ownerId) && (
         // Le tontinier modifie le groupe pendant les inscriptions
         (existing().ownerId == uid()
           && existing().status == 'recruiting'
@@ -746,6 +759,7 @@ service cloud.firestore {
         // Le participant déclare [count] cotisations (+ pénalités de retard),
         // payées par Mobile Money (capture obligatoire) ou en espèces
         allow create: if signedIn()
+          && ownerActive(groupData(groupId).ownerId)
           && incoming().keys().hasOnly(['userId', 'payerName', 'payerPhone', 'count',
               'amount', 'penalty', 'method', 'note', 'proofId', 'status',
               'rejectionReason', 'declaredAt', 'reviewedAt', 'recordedBy', 'reference',
@@ -773,6 +787,7 @@ service cloud.firestore {
 
         // Le tontinier encaisse lui-même : paiement validé d'office
         allow create: if signedIn()
+          && ownerActive(groupData(groupId).ownerId)
           && isGroupOwner(groupId)
           && isStarted(groupData(groupId))
           && incoming().keys().hasOnly(['userId', 'payerName', 'payerPhone', 'count',
@@ -802,6 +817,7 @@ service cloud.firestore {
 
         // Le tontinier valide (cotisations payées) ou refuse (à payer de nouveau)
         allow update: if signedIn()
+          && ownerActive(groupData(groupId).ownerId)
           && isGroupOwner(groupId)
           && isStarted(groupData(groupId))
           && validReview()
@@ -824,6 +840,7 @@ service cloud.firestore {
       match /payouts/{pot} {
         allow read: if signedIn() && (isGroupOwner(groupId) || isGroupMember(groupId));
         allow create: if signedIn() && isGroupOwner(groupId)
+          && ownerActive(uid())
           && isStarted(groupData(groupId))
           && incoming().keys().hasOnly(['tour', 'beneficiaryId', 'beneficiaryName', 'amount',
               'method', 'paidAt', 'receivedAt', 'problem'])
@@ -909,6 +926,7 @@ service cloud.firestore {
       allow update: if signedIn() && (
         // Le client rejoint le carnet avec le code
         (existing().clientId == null
+          && ownerActive(existing().ownerId)
           && existing().ownerId != uid()
           && changedOnly(['clientId', 'clientName', 'clientPhone'])
           && incoming().clientId == uid()
@@ -917,6 +935,7 @@ service cloud.firestore {
         // Le client déclare des cases (paiement créé dans le même envoi)
         || (existing().clientId == uid()
           && existing().get('status', 'active') == 'active'
+          && ownerActive(existing().ownerId)
           && changedOnly(['usedCases', 'lastPaymentId'])
           && incoming().usedCases > existing().usedCases
           && incoming().usedCases <= existing().caseCount
@@ -926,6 +945,7 @@ service cloud.firestore {
         // Le tontinier met à jour les compteurs (validation, refus, encaissement)
         || (existing().ownerId == uid()
           && existing().get('status', 'active') == 'active'
+          && ownerActive(uid())
           && changedOnly(['usedCases', 'approvedCases'])
           && incoming().approvedCases >= 0
           && incoming().approvedCases <= incoming().usedCases
@@ -962,6 +982,7 @@ service cloud.firestore {
         // Le client déclare des cases : Mobile Money (capture) ou espèces
         allow create: if signedIn()
           && carnetData(carnetId).get('status', 'active') == 'active'
+          && ownerActive(carnetData(carnetId).ownerId)
           && incoming().keys().hasOnly(['userId', 'payerName', 'payerPhone', 'caseCount',
               'amount', 'method', 'note', 'proofId', 'status', 'rejectionReason',
               'declaredAt', 'reviewedAt', 'recordedBy', 'reference', 'proofHash'])
@@ -992,6 +1013,7 @@ service cloud.firestore {
         // Le tontinier encaisse lui-même : paiement validé d'office
         allow create: if signedIn()
           && carnetData(carnetId).get('status', 'active') == 'active'
+          && ownerActive(carnetData(carnetId).ownerId)
           && carnetData(carnetId).ownerId == uid()
           && carnetData(carnetId).clientId != null
           && incoming().keys().hasOnly(['userId', 'payerName', 'payerPhone', 'caseCount',
@@ -1021,6 +1043,7 @@ service cloud.firestore {
 
         // Le tontinier valide (cases payées) ou refuse (cases libérées)
         allow update: if signedIn()
+          && ownerActive(carnetData(carnetId).ownerId)
           && carnetData(carnetId).ownerId == uid()
           && validReview()
           && ((incoming().status == 'approved'

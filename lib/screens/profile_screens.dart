@@ -143,6 +143,14 @@ class _ProfilePageState extends State<ProfilePage> {
                     _p.isMember ? 'Client' : 'Tontinier',
                     scheme.primary,
                   ),
+                  if (_p.isMember) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      'COTIZI est gratuit pour vous : c\'est votre tontinier '
+                      'qui a l\'abonnement.',
+                      style: theme.textTheme.bodySmall,
+                    ),
+                  ],
                   if (_p.createdAt != null) ...[
                     const SizedBox(height: 8),
                     Text(
@@ -549,11 +557,14 @@ class HelpScreen extends StatelessWidget {
         (
           Icons.workspace_premium_outlined,
           'Essai gratuit et abonnement',
-          'Un nouveau tontinier a 30 jours d\'essai gratuit. Ensuite, pour '
-              'créer de nouvelles tontines, groupes et carnets : Profil → Mon '
-              'abonnement → choisissez la durée et écrivez-nous sur WhatsApp. '
-              'Vous payez par Mobile Money, puis nous activons votre '
-              'abonnement. Vos groupes en cours continuent toujours.',
+          'Un seul abonnement : celui du tontinier. Vos clients utilisent '
+              'COTIZI gratuitement tant que votre abonnement est actif. Un '
+              'nouveau tontinier a 30 jours d\'essai gratuit. Pour continuer : '
+              'Profil → Mon abonnement → choisissez la durée et écrivez-nous '
+              'sur WhatsApp ; vous payez par Mobile Money, puis nous activons '
+              'votre abonnement. S\'il se termine, votre activité et celle de '
+              'vos clients est en pause (consultation seulement) jusqu\'au '
+              'renouvellement.',
         ),
       if (!isMember)
         (

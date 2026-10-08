@@ -1931,6 +1931,33 @@ class Api {
     return ref;
   }
 
+  static final _activeOwners = <String, (bool, DateTime)>{};
+
+  /// Abonnement (ou essai) du tontinier en cours : lui et ses clients peuvent
+  /// travailler. Sinon son activité est en pause (vérifié par le serveur).
+  static Future<bool> tontinierActive(String ownerId) async {
+    final cached = _activeOwners[ownerId];
+    if (cached != null &&
+        DateTime.now().difference(cached.$2) < const Duration(minutes: 5)) {
+      return cached.$1;
+    }
+    try {
+      final results = await Future.wait([
+        _db.doc('users/$ownerId').get(),
+        _db.doc('admins/$ownerId').get(),
+      ]);
+      final user = results[0];
+      final admin = results[1].exists;
+      final end = user.exists ? Profile.fromJson(user.data()!).accessEnd : null;
+      final active = admin || (end?.isAfter(DateTime.now()) ?? true);
+      _activeOwners[ownerId] = (active, DateTime.now());
+      return active;
+    } on FirebaseException {
+      // Inconnu (hors ligne…) : on ne bloque pas l'affichage
+      return true;
+    }
+  }
+
   /// Note de confiance d'un tontinier, lisible par tous.
   static Future<TrustStats> trust(String ownerId) async {
     try {

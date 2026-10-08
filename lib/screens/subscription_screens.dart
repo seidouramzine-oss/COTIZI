@@ -39,9 +39,10 @@ class AccessStatus {
     if (isAdmin) return 'Vous gérez COTIZI : aucun abonnement nécessaire.';
     final end = profile.accessEnd;
     if (canCreate) return 'Jusqu\'au ${dateLong(end!)}';
-    return 'Vous ne pouvez plus créer de tontine, de groupe ni de carnet. '
-        'Vos groupes et carnets en cours continuent : vous pouvez toujours '
-        'valider les paiements.';
+    return 'Votre activité est en pause : ni vous ni vos clients ne pouvez '
+        'déclarer, valider ou encaisser de paiement, remettre une cagnotte ou '
+        'créer une tontine. L\'historique reste consultable. Renouvelez votre '
+        'abonnement pour tout reprendre.';
   }
 
   IconData get icon => !canCreate
@@ -119,7 +120,7 @@ class AccessBanner extends StatelessWidget {
           style: TextStyle(color: color, fontWeight: FontWeight.w700),
         ),
         subtitle: Text(
-          status.canCreate ? status.detail : 'Appuyez ici pour le renouveler.',
+          status.canCreate ? status.detail : 'Activité en pause pour vous et vos clients. Appuyez ici pour renouveler.',
         ),
         trailing: const Icon(Icons.chevron_right),
         onTap: onTap,
@@ -171,6 +172,11 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
                   padding: EdgeInsets.symmetric(vertical: 8),
                   child: Column(
                     children: [
+                      _Feature(
+                        Icons.groups_outlined,
+                        'Vos clients utilisent COTIZI gratuitement : un seul '
+                        'abonnement, le vôtre',
+                      ),
                       _Feature(
                         Icons.savings_outlined,
                         'Tontines à cagnotte et à carnet sans limite',
