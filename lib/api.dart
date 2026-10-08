@@ -407,10 +407,24 @@ class Api {
           ],
         ),
     ]);
+    // Remises pas encore confirmées par leur bénéficiaire
+    final open = await Future.wait([
+      for (final g in groups.where(
+        (g) =>
+            g.status == GroupStatus.active && !g.isLegacy && g.paidOutCount > 0,
+      ))
+        payouts(g.id).then(
+          (m) => [
+            for (final p in m.values)
+              if (!p.confirmed) OpenPayout(g, p),
+          ],
+        ),
+    ]);
     return OwnerOverview(
       tontineCount: tontineCount,
       groups: groups,
       carnets: carnets,
+      openPayouts: open.expand((l) => l).toList(),
       pending: pending.expand((l) => l).toList()
         ..sort((a, b) => a.payment.declaredAt.compareTo(b.payment.declaredAt)),
     );
@@ -1141,12 +1155,21 @@ class Api {
     Uint8List? proof,
     String? mime,
     String? note,
+    String? reference,
   }) async {
     final me = await _requireMe();
     final memberRef = _db.doc('groups/${group.id}/members/$uid');
+    final payRef = _db.collection('groups/${group.id}/payments').doc();
+    final ref = method == PaymentMethod.mobileMoney
+        ? _requireReference(reference)
+        : null;
+    if (ref != null) await _checkReference(ref);
     var declared = 0;
     await _db.runTransaction((tx) async {
       final member = GroupMember.fromDoc(await tx.get(memberRef));
+      if (ref != null) {
+        _reserveReference(tx, ref, payRef.path, uid, group.ownerId);
+      }
       final remaining = group.totalContributions - member.declaredCount;
       if (count > remaining) {
         throw AppException(
@@ -1171,7 +1194,6 @@ class Api {
       }
       final amount = count * group.contributionAmount + penalty;
       declared = amount;
-      final payRef = _db.collection('groups/${group.id}/payments').doc();
       tx.set(payRef, {
         'userId': uid,
         'payerName': me.fullName,
@@ -1187,6 +1209,7 @@ class Api {
         'declaredAt': _now,
         'reviewedAt': null,
         'recordedBy': 'member',
+        'reference': ref,
       });
       tx.update(memberRef, {
         'declaredCount': member.declaredCount + count,
@@ -1267,6 +1290,10 @@ class Api {
             )
           : null;
       if (levels != null) tx.update(groupRef, levels);
+      // Paiement refusé : sa référence Mobile Money redevient utilisable
+      if (!approve && p.reference != null) {
+        tx.delete(_db.doc('paymentRefs/${p.reference}'));
+      }
       tx
         ..update(
           _db.doc('groups/$groupId/payments/${p.id}'),
@@ -1312,15 +1339,23 @@ class Api {
     required PaymentMethod method,
     required int penalty,
     String? note,
+    String? reference,
   }) async {
     final me = await _requireMe();
     final memberRef = _db.doc('groups/${group.id}/members/${member.userId}');
     final payRef = _db.collection('groups/${group.id}/payments').doc();
     final amount = count * group.contributionAmount + penalty;
     final groupRef = _db.doc('groups/${group.id}');
+    final ref = method == PaymentMethod.mobileMoney
+        ? _optionalReference(reference)
+        : null;
+    if (ref != null) await _checkReference(ref);
     await _db.runTransaction((tx) async {
       final groupData = (await tx.get(groupRef)).data()!;
       final fresh = GroupMember.fromDoc(await tx.get(memberRef));
+      if (ref != null) {
+        _reserveReference(tx, ref, payRef.path, member.userId, uid);
+      }
       if (count > group.totalContributions - fresh.declaredCount) {
         throw const AppException('Plus que les cotisations restantes');
       }
@@ -1347,6 +1382,7 @@ class Api {
           'declaredAt': _now,
           'reviewedAt': _now,
           'recordedBy': 'owner',
+          'reference': ref,
         })
         ..update(memberRef, {
           'declaredCount': fresh.declaredCount + count,
@@ -1399,6 +1435,8 @@ class Api {
         'La collecte n\'est pas complète : il manque ${money(g.missingFor(pot))}.',
       );
     }
+    final trustRef = await _ensureTrust(uid);
+    final trust = TrustStats.fromJson((await trustRef.get()).data());
     final (eventRef, eventData) = _eventDoc(
       g.id,
       me,
@@ -1418,6 +1456,11 @@ class Api {
             'problem': null,
           })
           ..update(_db.doc('groups/${g.id}'), {'paidOutCount': pot})
+          // Note de confiance : une remise de plus (vérifié par le serveur)
+          ..update(trustRef, {
+            'payoutsDone': trust.payoutsDone + 1,
+            'last': 'groups/${g.id}/payouts/$pot',
+          })
           ..set(eventRef, eventData))
         .commit();
     await _notify(
@@ -1439,6 +1482,14 @@ class Api {
     String? problem,
   }) async {
     final me = await _requireMe();
+    final group = (await _db.doc('groups/$groupId').get()).data();
+    final ownerId = group?['ownerId'] as String? ?? '';
+    final trustRef = await _ensureTrust(ownerId);
+    final trust = TrustStats.fromJson((await trustRef.get()).data());
+    // Confirmation, ou premier signalement : compté dans la note de confiance
+    final field = problem == null
+        ? 'payoutsConfirmed'
+        : (p.problem == null ? 'payoutsDisputed' : null);
     final (eventRef, eventData) = _eventDoc(
       groupId,
       me,
@@ -1448,16 +1499,23 @@ class Api {
           : '${me.fullName} signale un problème sur la cagnotte n°${p.pot} : '
                 '$problem',
     );
-    await (_db.batch()
-          ..update(_db.doc('groups/$groupId/payouts/${p.pot}'), {
-            'receivedAt': problem == null ? _now : null,
-            'problem': problem?.trim(),
-          })
-          ..set(eventRef, eventData))
-        .commit();
-    final group = (await _db.doc('groups/$groupId').get()).data();
+    final batch = _db.batch()
+      ..update(_db.doc('groups/$groupId/payouts/${p.pot}'), {
+        'receivedAt': problem == null ? _now : null,
+        'problem': problem?.trim(),
+      })
+      ..set(eventRef, eventData);
+    if (field != null) {
+      batch.update(trustRef, {
+        field: field == 'payoutsConfirmed'
+            ? trust.payoutsConfirmed + 1
+            : trust.payoutsDisputed + 1,
+        'last': 'groups/$groupId/payouts/${p.pot}',
+      });
+    }
+    await batch.commit();
     await _notify(
-      to: group?['ownerId'] as String?,
+      to: ownerId,
       type: problem == null ? 'payout_received' : 'payout_problem',
       title: problem == null ? 'Cagnotte reçue' : 'Problème sur une remise',
       body: problem == null
@@ -1543,15 +1601,24 @@ class Api {
     Uint8List? proof,
     String? mime,
     String? note,
+    String? reference,
   }) async {
     final me = await _requireMe();
     final carnetRef = _db.doc('carnets/${carnet.id}');
+    final payRef = carnetRef.collection('payments').doc();
+    final ref = method == PaymentMethod.mobileMoney
+        ? _requireReference(reference)
+        : null;
+    if (ref != null) await _checkReference(ref);
     await _db.runTransaction((tx) async {
       final fresh = Carnet.fromDoc(await tx.get(carnetRef));
       if (caseCount > fresh.remainingCases) {
         throw AppException(
           'Il ne reste que ${fresh.remainingCases} case(s) à payer sur ce carnet',
         );
+      }
+      if (ref != null) {
+        _reserveReference(tx, ref, payRef.path, uid, carnet.ownerId);
       }
       String? proofId;
       if (method == PaymentMethod.mobileMoney) {
@@ -1562,7 +1629,6 @@ class Api {
         );
         proofId = proofRef.id;
       }
-      final payRef = carnetRef.collection('payments').doc();
       tx
         ..set(payRef, {
           'userId': uid,
@@ -1578,6 +1644,7 @@ class Api {
           'declaredAt': _now,
           'reviewedAt': null,
           'recordedBy': 'member',
+          'reference': ref,
         })
         ..update(carnetRef, {
           'usedCases': fresh.usedCases + caseCount,
@@ -1602,15 +1669,23 @@ class Api {
     required int caseCount,
     required PaymentMethod method,
     String? note,
+    String? reference,
   }) async {
     final carnetRef = _db.doc('carnets/${carnet.id}');
     final payRef = carnetRef.collection('payments').doc();
+    final ref = method == PaymentMethod.mobileMoney
+        ? _optionalReference(reference)
+        : null;
+    if (ref != null) await _checkReference(ref);
     await _db.runTransaction((tx) async {
       final fresh = Carnet.fromDoc(await tx.get(carnetRef));
       if (caseCount > fresh.remainingCases) {
         throw AppException(
           'Il ne reste que ${fresh.remainingCases} case(s) à payer sur ce carnet',
         );
+      }
+      if (ref != null) {
+        _reserveReference(tx, ref, payRef.path, fresh.clientId ?? '', uid);
       }
       tx
         ..set(payRef, {
@@ -1627,6 +1702,7 @@ class Api {
           'declaredAt': _now,
           'reviewedAt': _now,
           'recordedBy': 'owner',
+          'reference': ref,
         })
         ..update(carnetRef, {
           'usedCases': fresh.usedCases + caseCount,
@@ -1657,6 +1733,9 @@ class Api {
     await _db.runTransaction((tx) async {
       final fresh = Carnet.fromDoc(await tx.get(carnetRef));
       label = fresh.label;
+      if (!approve && p.reference != null) {
+        tx.delete(_db.doc('paymentRefs/${p.reference}'));
+      }
       tx.update(
         carnetRef.collection('payments').doc(p.id),
         _review(approve, reason),
@@ -1678,6 +1757,98 @@ class Api {
                 '(${reason ?? ''}).',
       carnetId: carnetId,
     );
+  }
+
+  // --------------------------------------------------- Anti-fraude
+
+  static const _referenceUsed = AppException(
+    'Cette référence de transaction a déjà servi pour un autre paiement. '
+    'Vérifiez la référence sur le SMS de Mobile Money.',
+  );
+
+  /// Référence de transaction Mobile Money normalisée (majuscules, sans
+  /// espaces), ou null si elle est mal écrite.
+  static String? normalizeReference(String? input) {
+    final r = (input ?? '').toUpperCase().replaceAll(RegExp(r'\s+'), '');
+    return RegExp(r'^[A-Z0-9.\-]{4,40}$').hasMatch(r) ? r : null;
+  }
+
+  static String _requireReference(String? input) =>
+      normalizeReference(input) ??
+      (throw const AppException(
+        'Entrez la référence de la transaction (sur le SMS de Mobile Money)',
+      ));
+
+  static String? _optionalReference(String? input) {
+    if ((input ?? '').trim().isEmpty) return null;
+    return _requireReference(input);
+  }
+
+  /// Vérifie qu'une référence Mobile Money n'a jamais servi. Une référence
+  /// prise par quelqu'un d'autre n'est pas lisible : le refus le signale.
+  static Future<void> _checkReference(String reference) async {
+    try {
+      if ((await _db.doc('paymentRefs/$reference').get()).exists) {
+        throw _referenceUsed;
+      }
+    } on FirebaseException catch (e) {
+      if (e.code == 'permission-denied') throw _referenceUsed;
+      rethrow;
+    }
+  }
+
+  /// Réserve la référence pour ce paiement, dans le même envoi : une même
+  /// référence ne peut servir qu'une fois (le serveur le vérifie aussi).
+  static void _reserveReference(
+    Transaction tx,
+    String reference,
+    String paymentPath,
+    String payerId,
+    String ownerId,
+  ) {
+    tx.set(_db.doc('paymentRefs/$reference'), {
+      'payment': paymentPath,
+      'payerId': payerId,
+      'ownerId': ownerId,
+      'at': _now,
+    });
+  }
+
+  /// Note de confiance du tontinier (créée à zéro la première fois).
+  static Future<DocumentReference<Json>> _ensureTrust(String ownerId) async {
+    final ref = _db.doc('trust/$ownerId');
+    if (!(await ref.get()).exists) {
+      try {
+        await ref.set({
+          'payoutsDone': 0,
+          'payoutsConfirmed': 0,
+          'payoutsDisputed': 0,
+          'last': null,
+        });
+      } on FirebaseException {
+        // Créée entre-temps par quelqu'un d'autre
+      }
+    }
+    return ref;
+  }
+
+  /// Note de confiance d'un tontinier, lisible par tous.
+  static Future<TrustStats> trust(String ownerId) async {
+    try {
+      final doc = await _db.doc('trust/$ownerId').get();
+      return TrustStats.fromJson(doc.data());
+    } on FirebaseException {
+      return const TrustStats();
+    }
+  }
+
+  /// Tontinier d'un code d'invitation (avant de rejoindre).
+  static Future<(String ownerId, String kind)> inviteOwner(String input) async {
+    final invite = await _db.doc('invites/${normalizeCode(input)}').get();
+    if (!invite.exists) {
+      throw const AppException('Code d\'invitation introuvable');
+    }
+    return (invite['ownerId'] as String, invite['kind'] as String);
   }
 
   // ---------------------------------------------------- Profil pro

@@ -5,6 +5,7 @@ import '../format.dart';
 import '../invite_link.dart';
 import '../models.dart';
 import '../widgets/common.dart';
+import '../widgets/trust.dart';
 import 'carnet_screens.dart';
 import 'dashboard_screens.dart';
 import 'group_screens.dart';
@@ -397,6 +398,26 @@ class _JoinScreenState extends State<JoinScreen> {
   final _code = TextEditingController();
   bool _busy = false;
 
+  /// Tontinier du code saisi : sa note de confiance s'affiche avant de
+  /// rejoindre.
+  String? _ownerId;
+
+  Future<void> _check() async {
+    if (_code.text.trim().isEmpty) return;
+    setState(() => _busy = true);
+    try {
+      final (ownerId, _) = await Api.inviteOwner(_code.text);
+      if (ownerId == Api.uid) {
+        throw const AppException('C\'est votre propre code d\'invitation');
+      }
+      if (mounted) setState(() => _ownerId = ownerId);
+    } catch (e) {
+      if (mounted) showError(context, e);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   @override
   void dispose() {
     _code.dispose();
@@ -443,19 +464,35 @@ class _JoinScreenState extends State<JoinScreen> {
               letterSpacing: 6,
               fontWeight: FontWeight.w700,
             ),
-            decoration: const InputDecoration(hintText: 'ABC123'),
-            onSubmitted: (_) => _join(),
+            decoration: const InputDecoration(
+              labelText: 'Code d\'invitation',
+              hintText: 'ABC123',
+            ),
+            onChanged: (_) {
+              if (_ownerId != null) setState(() => _ownerId = null);
+            },
+            onSubmitted: (_) => _ownerId == null ? _check() : _join(),
           ),
           const SizedBox(height: 20),
+          if (_ownerId != null) ...[
+            TrustCard(key: ValueKey(_ownerId), ownerId: _ownerId!),
+            const SizedBox(height: 4),
+            const Text(
+              'Vérifiez qu\'il s\'agit bien de votre tontinier avant de '
+              'rejoindre. COTIZI ne touche jamais votre argent : vous le '
+              'payez directement.',
+            ),
+            const SizedBox(height: 16),
+          ],
           FilledButton(
-            onPressed: _busy ? null : _join,
+            onPressed: _busy ? null : (_ownerId == null ? _check : _join),
             child: _busy
                 ? const SizedBox(
                     width: 20,
                     height: 20,
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
-                : const Text('Rejoindre'),
+                : Text(_ownerId == null ? 'Vérifier le code' : 'Rejoindre'),
           ),
         ],
       ),

@@ -10,6 +10,7 @@ import '../invite_link.dart';
 import '../models.dart';
 import '../reports.dart';
 import '../widgets/common.dart';
+import '../widgets/trust.dart';
 import 'group_actions.dart';
 import 'group_form.dart';
 import 'payment_screens.dart';
@@ -79,14 +80,16 @@ Widget payContributionsScreen(
     ),
     ('Déjà payées', '${s.declared} / ${s.total}'),
   ],
-  onSubmit: (count, method, proof, mime, note) => Api.declareContributions(
-    group: g,
-    count: count,
-    method: method,
-    proof: proof,
-    mime: mime,
-    note: note,
-  ),
+  onSubmit: (count, method, proof, mime, note, reference) =>
+      Api.declareContributions(
+        group: g,
+        count: count,
+        method: method,
+        proof: proof,
+        mime: mime,
+        note: note,
+        reference: reference,
+      ),
 );
 
 /// Message de relance d'un participant en retard.
@@ -119,6 +122,7 @@ String shortfallGroupText(Group g, List<PotShortfall> list, String owner) => [
 /// Reçu de remise d'une cagnotte.
 String payoutReceipt(Group g, Payout p, String owner) => [
   'REÇU DE REMISE — COTIZI',
+  'N° ${p.receiptNumberIn(g.id)}',
   'Tontine : ${g.tontineName}',
   'Groupe : ${g.name}',
   'Cagnotte n°${p.pot} sur ${g.memberCount}',
@@ -129,6 +133,11 @@ String payoutReceipt(Group g, Payout p, String owner) => [
   'Remise le ${dateTime(p.paidAt)}'
       '${p.method == null ? '' : ' (${methodLabel(p.method!).toLowerCase()})'}',
   'Tontinier : $owner',
+  if (p.receivedAt != null)
+    'Réception confirmée par le bénéficiaire le ${dateTime(p.receivedAt!)}'
+  else
+    'Réception pas encore confirmée par le bénéficiaire',
+  'Enregistré dans COTIZI : ni modifiable ni supprimable.',
 ].join('\n');
 
 /// Détail d'un groupe, vu par le tontinier ou par un participant.
@@ -337,7 +346,7 @@ class _GroupScreenState extends State<GroupScreen> {
         initialUnits: max(1, s.late),
         unitsLabel: 'Nombre de cotisations',
         penaltyFor: (n) => g.penaltyFor(m.declaredCount + 1, n, DateTime.now()),
-        onSubmit: (count, method, penalty, note) async {
+        onSubmit: (count, method, penalty, note, reference) async {
           final p = await Api.recordPayment(
             group: g,
             member: m,
@@ -345,6 +354,7 @@ class _GroupScreenState extends State<GroupScreen> {
             method: method,
             penalty: penalty,
             note: note,
+            reference: reference,
           );
           return groupReceipt(g, p, b);
         },
@@ -545,6 +555,10 @@ class _GroupScreenState extends State<GroupScreen> {
                     GroupStatus.active ||
                     GroupStatus.finished => _started(d, isOwner),
                   },
+                if (!isOwner && !g.isLegacy) ...[
+                  const SectionTitle('Votre tontinier'),
+                  TrustCard(ownerId: g.ownerId, ownerName: g.ownerName),
+                ],
               ],
             );
           },

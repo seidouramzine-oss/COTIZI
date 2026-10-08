@@ -147,9 +147,34 @@ function proof(fs, owner, kind, targetId) {
   }];
 }
 
+// Référence Mobile Money unique pour chaque déclaration de test
+let refCounter = 0;
+const nextRef = () => `MP${Date.now() % 100000}${++refCounter}`;
+
+// Enregistre la référence d'un paiement Mobile Money dans le même envoi
+function setRef(batch, fs, ref, paymentPath, payerId, ownerId = 't') {
+  batch.set(fs.doc(`paymentRefs/${ref}`), { payment: paymentPath, payerId, ownerId, at: now() });
+}
+
+// Note de confiance du tontinier : créée à zéro si absente
+async function ensureTrust(fs, ownerId = 't') {
+  if (!(await adminGet(`trust/${ownerId}`))) {
+    await fs.doc(`trust/${ownerId}`).set({
+      payoutsDone: 0, payoutsConfirmed: 0, payoutsDisputed: 0, last: null,
+    });
+  }
+}
+
+// Fait avancer un compteur de la note de confiance dans le même envoi
+async function moveTrust(batch, fs, field, payoutPath, ownerId = 't') {
+  const tr = await adminGet(`trust/${ownerId}`);
+  batch.update(fs.doc(`trust/${ownerId}`), { [field]: (tr?.[field] ?? 0) + 1, last: payoutPath });
+}
+
 // Déclare [count] cotisations : paiement + compteur du membre dans le même envoi
 async function declare(id, groupId, count,
-  { amount, counter = true, payment = true, method = 'mobile_money', penalty = 0, proofId } = {}) {
+  { amount, counter = true, payment = true, method = 'mobile_money', penalty = 0, proofId,
+    reference, registerRef = true } = {}) {
   const fs = db(id);
   const g = await adminGet(`groups/${groupId}`);
   const m = await adminGet(`groups/${groupId}/members/${id}`);
@@ -161,6 +186,7 @@ async function declare(id, groupId, count,
     proofRef = pRef.id;
   }
   const payRef = fs.collection(`groups/${groupId}/payments`).doc();
+  const ref = reference === undefined ? (method === 'mobile_money' ? nextRef() : null) : reference;
   if (payment) {
     batch.set(payRef, {
       userId: id, payerName: people[id].name, payerPhone: people[id].phone, count,
@@ -168,7 +194,9 @@ async function declare(id, groupId, count,
       note: method === 'cash' ? 'Remis au marché' : null,
       proofId: proofId === undefined ? proofRef : proofId, status: 'pending',
       rejectionReason: null, declaredAt: now(), reviewedAt: null, recordedBy: 'member',
+      reference: ref,
     });
+    if (ref && registerRef) setRef(batch, fs, ref, `groups/${groupId}/payments/${payRef.id}`, id, g.ownerId);
   }
   if (counter) {
     batch.update(fs.doc(`groups/${groupId}/members/${id}`), {
@@ -444,13 +472,15 @@ test('scénario complet', async (t) => {
   // Remise de la cagnotte 1 au membre qui a tiré le n°1
   const ms = (await assertSucceeds(T.collection(`groups/${groupId}/members`).get())).docs;
   const byPos = Object.fromEntries(ms.map((d) => [d.data().drawPosition, d.id]));
-  const payout = (fs, pot, beneficiary) => {
+  await ensureTrust(T);
+  const payout = async (fs, pot, beneficiary, { trust = true } = {}) => {
     const batch = fs.batch();
     batch.set(fs.doc(`groups/${groupId}/payouts/${pot}`), {
       tour: pot, beneficiaryId: beneficiary, beneficiaryName: people[beneficiary].name,
       amount: 85500, paidAt: now(), receivedAt: null, problem: null,
     });
     batch.update(fs.doc(`groups/${groupId}`), { paidOutCount: pot });
+    if (trust) await moveTrust(batch, fs, 'payoutsDone', `groups/${groupId}/payouts/${pot}`);
     return batch.commit();
   };
   await t.test('un membre confirme une remise : refusé', () =>
@@ -476,7 +506,15 @@ test('scénario complet', async (t) => {
     batch.update(T.doc(`groups/${groupId}`), { paidOutCount: 1 });
     return batch.commit();
   })()));
+  await t.test('remise sans compter dans la note de confiance : refusé', () =>
+    assertFails(payout(T, 1, byPos[1], { trust: false })));
   await assertSucceeds(payout(T, 1, byPos[1]));
+  await t.test('note de confiance : 1 remise', async () => {
+    const tr = await adminGet('trust/t');
+    if (tr.payoutsDone !== 1) throw new Error(JSON.stringify(tr));
+  });
+  await t.test('gonfler sa note sans remise : refusé', () =>
+    assertFails(T.doc('trust/t').update({ payoutsDone: 5, last: `groups/${groupId}/payouts/1` })));
   await t.test('remise confirmée deux fois : refusé', () =>
     assertFails(payout(T, 1, byPos[1])));
   await t.test('les membres voient les remises', () =>
@@ -534,10 +572,14 @@ test('scénario complet', async (t) => {
       const [pRef, pData] = proof(fs, id, 'carnet', carnetRef.id);
       tx.set(pRef, pData);
       const payRef = fs.collection(`carnets/${carnetRef.id}/payments`).doc();
+      const ref = nextRef();
       tx.set(payRef, {
         userId: id, payerName: people[id].name, payerPhone: people[id].phone, caseCount: cases,
         amount: amount ?? cases * c.caseAmount, proofId: pRef.id, status: 'pending',
-        rejectionReason: null, declaredAt: now(), reviewedAt: null,
+        rejectionReason: null, declaredAt: now(), reviewedAt: null, reference: ref,
+      });
+      tx.set(fs.doc(`paymentRefs/${ref}`), {
+        payment: `carnets/${carnetRef.id}/payments/${payRef.id}`, payerId: id, ownerId: 't', at: now(),
       });
       tx.update(fs.doc(`carnets/${carnetRef.id}`), {
         usedCases: c.usedCases + cases, lastPaymentId: payRef.id,
@@ -866,13 +908,22 @@ test('version 2 : ordre, places réservées, démarrage, espèces, encaissement,
       .where('userId', 'in', ['z', 'p22997000099']).get()));
 
   // --- Remise confirmée par le tontinier puis par le bénéficiaire (rang 1 : b)
-  const payoutP = () => T.batch()
-    .set(T.doc(`groups/${P}/payouts/1`), {
-      tour: 1, beneficiaryId: 'b', beneficiaryName: 'Bob', amount: 17100, method: 'mobile_money',
-      paidAt: now(), receivedAt: null, problem: null,
-    })
-    .update(T.doc(`groups/${P}`), { paidOutCount: 1 })
-    .commit();
+  await ensureTrust(T);
+  const payoutP = async () => {
+    const batch = T.batch()
+      .set(T.doc(`groups/${P}/payouts/1`), {
+        tour: 1, beneficiaryId: 'b', beneficiaryName: 'Bob', amount: 17100, method: 'mobile_money',
+        paidAt: now(), receivedAt: null, problem: null,
+      })
+      .update(T.doc(`groups/${P}`), { paidOutCount: 1 });
+    await moveTrust(batch, T, 'payoutsDone', `groups/${P}/payouts/1`);
+    return batch.commit();
+  };
+  const answer = async (fs, fields, field) => {
+    const batch = fs.batch().update(fs.doc(`groups/${P}/payouts/1`), fields);
+    if (field) await moveTrust(batch, fs, field, `groups/${P}/payouts/1`);
+    return batch.commit();
+  };
   await t.test('remise : collecte incomplète, refusé', () => assertFails(payoutP()));
   await assertSucceeds(record(T, 'b', 3));
   await assertSucceeds(record(T, 'c', 2));
@@ -880,10 +931,23 @@ test('version 2 : ordre, places réservées, démarrage, espèces, encaissement,
   await assertSucceeds(record(T, 'z', 1));
   await assertSucceeds(payoutP());
   await t.test('un autre participant confirme la réception : refusé', () =>
-    assertFails(db('c').doc(`groups/${P}/payouts/1`).update({ receivedAt: now(), problem: null })));
+    assertFails(answer(db('c'), { receivedAt: now(), problem: null }, 'payoutsConfirmed')));
   await t.test('le tontinier confirme à la place du bénéficiaire : refusé', () =>
-    assertFails(T.doc(`groups/${P}/payouts/1`).update({ receivedAt: now(), problem: null })));
-  await assertSucceeds(db('b').doc(`groups/${P}/payouts/1`).update({ receivedAt: now(), problem: null }));
+    assertFails(answer(T, { receivedAt: now(), problem: null }, 'payoutsConfirmed')));
+  await t.test('le tontinier compte une confirmation sans réception : refusé', () =>
+    assertFails(answer(T, {}, 'payoutsConfirmed')));
+  await t.test('signaler un problème sans le compter : refusé', () =>
+    assertFails(answer(db('b'), { receivedAt: null, problem: 'Il manque 1 000 F' })));
+  await assertSucceeds(answer(db('b'), { receivedAt: null, problem: 'Il manque 1 000 F' }, 'payoutsDisputed'));
+  await t.test('confirmer sans le compter : refusé', () =>
+    assertFails(answer(db('b'), { receivedAt: now(), problem: null })));
+  await assertSucceeds(answer(db('b'), { receivedAt: now(), problem: null }, 'payoutsConfirmed'));
+  await t.test('note de confiance : remise, problème signalé, réception confirmée', async () => {
+    const tr = await adminGet('trust/t');
+    if (tr.payoutsConfirmed !== 1 || tr.payoutsDisputed !== 1) throw new Error(JSON.stringify(tr));
+  });
+  await t.test('tout le monde lit la note de confiance', () =>
+    assertSucceeds(db('d').doc('trust/t').get()));
   await t.test('changer sa confirmation : refusé', () =>
     assertFails(db('b').doc(`groups/${P}/payouts/1`).update({ receivedAt: null, problem: 'Non' })));
 
@@ -1121,4 +1185,63 @@ test('notifications (cloche)', async (t) => {
   const list = await T.collection('users/t/notifications').get();
   await t.test('marquer comme lue', () => assertSucceeds(list.docs[0].ref.update({ read: true })));
   await t.test('modifier le texte : refusé', () => assertFails(list.docs[0].ref.update({ title: 'x' })));
+});
+
+test('version 2.4 : référence Mobile Money utilisable une seule fois', async (t) => {
+  const T = db('t');
+  const tontine = T.collection('tontines').doc();
+  await assertSucceeds(tontine.set({
+    ownerId: 't', ownerName: 'Tontinier', name: 'Tontine du marché', type: 'cagnotte', createdAt: now(),
+  }));
+  const G = await createGroup(T, tontine.id, 'REF234', { memberCount: 2 });
+  await assertSucceeds(joinGroup('a', G));
+  await assertSucceeds(joinGroup('b', G));
+  await startDraw(G, ['a', 'b']);
+  await drawLot('a', G);
+  await drawLot('b', G);
+  await env.withSecurityRulesDisabled((ctx) => ctx.firestore().doc(`groups/${G}`).update({
+    status: 'active', startedAt: new Date(), levels: { '0': 2 },
+  }));
+  await t.test('Mobile Money sans référence : refusé', () =>
+    assertFails(declare('a', G, 1, { reference: null })));
+  await t.test('référence mal écrite : refusé', () =>
+    assertFails(declare('a', G, 1, { reference: 'ab 12' })));
+  await t.test('référence non enregistrée : refusé', () =>
+    assertFails(declare('a', G, 1, { reference: 'MP240101', registerRef: false })));
+  const p1 = await assertSucceeds(declare('a', G, 1, { reference: 'MP240101' }));
+  await t.test('la même référence une 2e fois : refusé', () =>
+    assertFails(declare('a', G, 1, { reference: 'MP240101' })));
+  await t.test('la référence d\'un autre client : refusé', () =>
+    assertFails(declare('b', G, 1, { reference: 'MP240101' })));
+  await t.test('une référence libre se vérifie', () =>
+    assertSucceeds(db('b').doc('paymentRefs/MP999999').get()));
+  await t.test('une référence prise par un autre ne se lit pas', () =>
+    assertFails(db('b').doc('paymentRefs/MP240101').get()));
+  await t.test('le payeur lit sa référence', () =>
+    assertSucceeds(db('a').doc('paymentRefs/MP240101').get()));
+  await t.test('effacer une référence d\'un paiement en attente : refusé', () =>
+    assertFails(T.doc('paymentRefs/MP240101').delete()));
+  await t.test('le client efface sa référence : refusé', () =>
+    assertFails(db('a').doc('paymentRefs/MP240101').delete()));
+  await t.test('référence pour un paiement inexistant : refusé', () =>
+    assertFails(db('a').doc('paymentRefs/MP777777').set({
+      payment: `groups/${G}/payments/inconnu`, payerId: 'a', ownerId: 't', at: now(),
+    })));
+  // Refus du tontinier : la référence est libérée dans le même envoi
+  const m = await adminGet(`groups/${G}/members/a`);
+  await assertSucceeds(T.batch()
+    .update(T.doc(`groups/${G}/payments/${p1}`), {
+      status: 'rejected', rejectionReason: 'Montant incorrect', reviewedAt: now(),
+    })
+    .update(T.doc(`groups/${G}/members/a`), { declaredCount: m.declaredCount - 1 })
+    .delete(T.doc('paymentRefs/MP240101'))
+    .commit());
+  await t.test('après refus, la référence peut être redéclarée', () =>
+    assertSucceeds(declare('a', G, 1, { reference: 'MP240101' })));
+  await t.test('espèces avec une référence : refusé', () =>
+    assertFails(declare('b', G, 1, { method: 'cash', reference: 'MP555555' })));
+  await t.test('créer une note de confiance gonflée : refusé', () =>
+    assertFails(db('z').doc('trust/z').set({
+      payoutsDone: 10, payoutsConfirmed: 10, payoutsDisputed: 0, last: null,
+    })));
 });

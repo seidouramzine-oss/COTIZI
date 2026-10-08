@@ -757,6 +757,44 @@ class GroupMember {
 }
 
 /// Remise d'une cagnotte à son bénéficiaire, confirmée par le tontinier.
+/// Numéro de reçu lisible tiré d'un identifiant Firestore : CZ-XXXX-XXXX.
+String receiptCode(String id) {
+  final c = id.toUpperCase().padRight(8, '0').substring(0, 8);
+  return 'CZ-${c.substring(0, 4)}-${c.substring(4)}';
+}
+
+/// Note de confiance d'un tontinier, tenue par le serveur : chaque compteur
+/// n'avance qu'avec la remise, la confirmation ou le signalement réel.
+class TrustStats {
+  const TrustStats({
+    this.payoutsDone = 0,
+    this.payoutsConfirmed = 0,
+    this.payoutsDisputed = 0,
+  });
+
+  /// Cagnottes remises par le tontinier.
+  final int payoutsDone;
+
+  /// Réceptions confirmées par les bénéficiaires.
+  final int payoutsConfirmed;
+
+  /// Problèmes signalés par des bénéficiaires.
+  final int payoutsDisputed;
+
+  bool get isNew => payoutsDone == 0;
+
+  /// Part des remises confirmées (0 à 100).
+  int get confirmedPercent => payoutsDone == 0
+      ? 0
+      : (min(payoutsConfirmed, payoutsDone) * 100 / payoutsDone).round();
+
+  factory TrustStats.fromJson(Json? json) => TrustStats(
+    payoutsDone: _int(json?['payoutsDone']),
+    payoutsConfirmed: _int(json?['payoutsConfirmed']),
+    payoutsDisputed: _int(json?['payoutsDisputed']),
+  );
+}
+
 class Payout {
   const Payout({
     required this.pot,
@@ -785,6 +823,14 @@ class Payout {
   final String? problem;
 
   bool get confirmed => receivedAt != null;
+
+  /// Numéro du reçu de remise, propre au groupe et à la cagnotte.
+  String receiptNumberIn(String groupId) => '${receiptCode(groupId)}-$pot';
+
+  /// Remise pas encore confirmée par le bénéficiaire après [days] jours.
+  bool unconfirmedSince(int days, [DateTime? now]) =>
+      receivedAt == null &&
+      (now ?? DateTime.now()).difference(paidAt).inDays >= days;
 
   factory Payout.fromDoc(DocumentSnapshot<Json> doc) {
     final json = doc.data()!;
@@ -825,7 +871,12 @@ class Payment {
     this.method = PaymentMethod.mobileMoney,
     this.note,
     this.recordedByOwner = false,
+    this.reference,
   });
+
+  /// Référence de la transaction Mobile Money (unique : une même référence
+  /// ne peut pas servir à deux paiements).
+  final String? reference;
 
   /// Pénalités de retard comprises dans [amount].
   final int penalty;
@@ -856,8 +907,8 @@ class Payment {
   /// Carnet : nombre de cases payées.
   final int caseCount;
 
-  /// Numéro court affiché sur le reçu.
-  String get receiptNumber => id.substring(0, min(8, id.length)).toUpperCase();
+  /// Numéro du reçu : identifiant unique du paiement (CZ-XXXX-XXXX).
+  String get receiptNumber => receiptCode(id);
 
   factory Payment.fromDoc(DocumentSnapshot<Json> doc) {
     final json = doc.data()!;
@@ -885,6 +936,7 @@ class Payment {
           : PaymentMethod.mobileMoney,
       note: json['note'] as String?,
       recordedByOwner: json['recordedBy'] == 'owner',
+      reference: json['reference'] as String?,
     );
   }
 }
@@ -966,13 +1018,33 @@ class PendingReview {
 }
 
 /// Vue d'ensemble du tontinier (accueil).
+/// Remise d'une cagnotte pas encore confirmée par son bénéficiaire.
+class OpenPayout {
+  const OpenPayout(this.group, this.payout);
+
+  final Group group;
+  final Payout payout;
+
+  /// Bénéficiaire sans application : il ne peut pas confirmer lui-même.
+  bool get managed => RegExp(r'^p\d+$').hasMatch(payout.beneficiaryId);
+}
+
 class OwnerOverview {
   const OwnerOverview({
     required this.tontineCount,
     required this.groups,
     required this.carnets,
     required this.pending,
+    this.openPayouts = const [],
   });
+
+  /// Remises non confirmées (ou contestées) par les bénéficiaires.
+  final List<OpenPayout> openPayouts;
+
+  /// Au moins un paiement validé (guide de démarrage).
+  bool get hasApprovedPayment =>
+      groups.any((g) => g.members.any((m) => m.approvedCount > 0)) ||
+      carnets.any((c) => c.approvedCases > 0);
 
   final int tontineCount;
   final List<Group> groups;

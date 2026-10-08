@@ -1,3 +1,4 @@
+import 'package:cotizi/api.dart';
 import 'package:cotizi/format.dart';
 import 'package:cotizi/models.dart';
 import 'package:cotizi/reminders.dart';
@@ -486,6 +487,41 @@ void main() {
       expect(late.map((f) => f.member.userId), ['c', 'b']);
       expect(late.first.late, 5);
       expect(late.last.late, 1);
+    });
+  });
+
+  group('Version 2.4 anti-fraude', () {
+    test('référence Mobile Money normalisée', () {
+      expect(Api.normalizeReference(' mp240101.1234 a56 '), 'MP240101.1234A56');
+      expect(Api.normalizeReference('ab'), isNull);
+      expect(Api.normalizeReference('MP#12345'), isNull);
+      expect(Api.normalizeReference(null), isNull);
+    });
+
+    test('numéros de reçu', () {
+      expect(receiptCode('abcd1234xyz'), 'CZ-ABCD-1234');
+      expect(receiptCode('ab'), 'CZ-AB00-0000');
+    });
+
+    test('note de confiance', () {
+      expect(const TrustStats().isNew, isTrue);
+      const t = TrustStats(payoutsDone: 4, payoutsConfirmed: 3);
+      expect(t.confirmedPercent, 75);
+      // Confirmations d'anciennes remises : jamais plus de 100 %
+      const old = TrustStats(payoutsDone: 1, payoutsConfirmed: 3);
+      expect(old.confirmedPercent, 100);
+    });
+
+    test('remise non confirmée après 2 jours', () {
+      final p = Payout(
+        pot: 1,
+        beneficiaryId: 'a',
+        beneficiaryName: 'Awa',
+        amount: 1000,
+        paidAt: DateTime(2026, 10, 1, 10),
+      );
+      expect(p.unconfirmedSince(2, DateTime(2026, 10, 2, 12)), isFalse);
+      expect(p.unconfirmedSince(2, DateTime(2026, 10, 3, 11)), isTrue);
     });
   });
 }

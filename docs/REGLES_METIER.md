@@ -137,6 +137,35 @@ tontines, puis invitent leurs **clients**, qui ne font que participer.
   par l'administrateur). Un client peut aussi **écrire à son tontinier** depuis
   la page de son groupe.
 
+## Confiance et anti-fraude
+
+- **COTIZI ne touche jamais l'argent** : les clients paient le tontinier
+  (Mobile Money ou espèces) et déclarent le paiement ; le tontinier valide.
+- **Référence Mobile Money unique** : pour un paiement Mobile Money, le client
+  recopie la référence de la transaction (sur le SMS) en plus de la capture.
+  Une référence ne peut servir qu'à **un seul paiement** dans tout COTIZI
+  (vérifié par le serveur) : la même capture ne peut pas être déclarée deux
+  fois. Si le tontinier **refuse** le paiement, la référence redevient libre.
+  Quand le tontinier encaisse lui-même un paiement Mobile Money, il peut aussi
+  saisir la référence (conseillé).
+- **Rien ne s'efface** : un paiement validé et une remise ne peuvent plus être
+  modifiés ni supprimés, par personne.
+- **Reçus numérotés** : chaque paiement validé a un numéro de reçu unique
+  (CZ-XXXX-XXXX) ; chaque remise aussi (CZ-XXXX-XXXX-n). Le reçu indique la
+  référence Mobile Money et si le bénéficiaire a confirmé la réception.
+- **Note de confiance du tontinier**, visible par tous avant de rejoindre
+  (écran « Rejoindre » après la vérification du code) et sur la page du
+  groupe : cagnottes remises, pourcentage confirmé par les bénéficiaires,
+  problèmes signalés. Les chiffres sont tenus par le serveur : chaque compteur
+  n'avance qu'avec la remise, la confirmation ou le signalement correspondant ;
+  le tontinier ne peut pas les modifier.
+- **Remise non confirmée** : tant que le bénéficiaire n'a pas confirmé, la
+  remise reste « en attente » ; après 2 jours, l'accueil du tontinier l'affiche
+  dans « À faire aujourd'hui ». Un problème signalé y apparaît en rouge.
+- **Guide « Démarrer avec COTIZI »** (accueil du tontinier) : profil pro et
+  numéros Mobile Money, première tontine, invitation des clients, premier
+  paiement validé.
+
 ## Notifications (la cloche)
 
 - La **cloche** en haut de l'accueil montre le nombre de nouvelles

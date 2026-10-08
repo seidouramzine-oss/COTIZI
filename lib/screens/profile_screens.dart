@@ -586,6 +586,17 @@ class HelpScreen extends StatelessWidget {
             'dans Profil → Paramètres → Rappels.',
       ),
       (
+        Icons.verified_user_outlined,
+        'Contre la fraude',
+        'COTIZI ne touche jamais l\'argent. Une référence Mobile Money ne '
+            'peut servir qu\'à un seul paiement : la même capture ne peut pas '
+            'être déclarée deux fois. Un paiement validé ou une remise ne '
+            'peuvent plus être modifiés ni supprimés, et chaque reçu porte un '
+            'numéro unique (CZ-…). La note de confiance du tontinier '
+            '(cagnottes remises, confirmées par les bénéficiaires, problèmes '
+            'signalés) est tenue par COTIZI : il ne peut pas la changer.',
+      ),
+      (
         Icons.notifications_none,
         'La cloche',
         'La cloche en haut de l\'accueil vous signale les opérations : '
@@ -612,6 +623,7 @@ class HelpScreen extends StatelessWidget {
         'Déclarer un paiement',
         'Appuyez sur « Payer », choisissez le nombre de cotisations puis le '
             'mode : Mobile Money (les numéros du tontinier s\'affichent ; '
+            'recopiez la référence de la transaction écrite sur le SMS et '
             'ajoutez la capture de l\'envoi) ou espèces (remises en main '
             'propre). Le paiement reste « En attente » jusqu\'à ce que le '
             'tontinier le valide. En cas de retard, des pénalités peuvent '

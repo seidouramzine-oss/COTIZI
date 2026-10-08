@@ -80,14 +80,16 @@ class _CarnetScreenState extends State<CarnetScreen> {
         ('Montant par case', money(c.caseAmount)),
         ('Cases restantes', '${c.remainingCases}'),
       ],
-      onSubmit: (cases, method, proof, mime, note) => Api.declareCarnetPayment(
-        carnet: c,
-        caseCount: cases,
-        method: method,
-        proof: proof,
-        mime: mime,
-        note: note,
-      ),
+      onSubmit: (cases, method, proof, mime, note, reference) =>
+          Api.declareCarnetPayment(
+            carnet: c,
+            caseCount: cases,
+            method: method,
+            proof: proof,
+            mime: mime,
+            note: note,
+            reference: reference,
+          ),
     ),
   );
 
@@ -103,12 +105,13 @@ class _CarnetScreenState extends State<CarnetScreen> {
       unitAmount: c.caseAmount,
       maxUnits: c.remainingCases,
       unitsLabel: 'Nombre de cases',
-      onSubmit: (cases, method, penalty, note) async {
+      onSubmit: (cases, method, penalty, note, reference) async {
         final p = await Api.recordCarnetPayment(
           carnet: c,
           caseCount: cases,
           method: method,
           note: note,
+          reference: reference,
         );
         return carnetReceipt(c, p, _business);
       },

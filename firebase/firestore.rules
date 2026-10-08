@@ -251,6 +251,40 @@ service cloud.firestore {
           || (incoming().status == 'rejected' && isText(incoming().rejectionReason, 1, 300)));
     }
 
+    // Référence de transaction Mobile Money : en majuscules, sans espaces.
+    // Une référence ne peut servir qu'à un seul paiement (anti-fraude :
+    // la même capture ne peut pas être déclarée deux fois).
+    function validRef(r) {
+      return r is string && r.matches('^[A-Z0-9.-]{4,40}$');
+    }
+
+    function refPath(r) {
+      return doc('paymentRefs/' + r);
+    }
+
+    // La référence du paiement est enregistrée dans le même envoi
+    function refRegistered(paymentPath) {
+      return validRef(incoming().reference)
+        && !exists(refPath(incoming().reference))
+        && getAfter(refPath(incoming().reference)).data.payment == paymentPath;
+    }
+
+    // Note de confiance du tontinier (remises, confirmations, problèmes) :
+    // chaque compteur n'avance qu'avec la remise correspondante.
+    function trustPath(ownerId) {
+      return doc('trust/' + ownerId);
+    }
+
+    function trustCount(ownerId, field) {
+      return get(trustPath(ownerId)).data.get(field, 0);
+    }
+
+    function trustMoved(ownerId, field, payoutPath) {
+      return getAfter(trustPath(ownerId)).data.last == payoutPath
+        && getAfter(trustPath(ownerId)).data.get(field, 0)
+          == trustCount(ownerId, field) + 1;
+    }
+
     // ----------------------------------------------------------- Profils
 
     match /users/{userId} {
@@ -694,15 +728,17 @@ service cloud.firestore {
         allow create: if signedIn()
           && incoming().keys().hasOnly(['userId', 'payerName', 'payerPhone', 'count',
               'amount', 'penalty', 'method', 'note', 'proofId', 'status',
-              'rejectionReason', 'declaredAt', 'reviewedAt', 'recordedBy'])
+              'rejectionReason', 'declaredAt', 'reviewedAt', 'recordedBy', 'reference'])
           && incoming().userId == uid()
           && isGroupMember(groupId)
           && isStarted(groupData(groupId))
           && validContributionPayment(groupData(groupId))
           && incoming().payerName == me().fullName
           && incoming().payerPhone == me().phone
-          && ((incoming().method == 'mobile_money' && ownsProof(incoming().proofId))
-            || (incoming().method == 'cash' && incoming().proofId == null))
+          && ((incoming().method == 'mobile_money' && ownsProof(incoming().proofId)
+              && refRegistered('groups/' + groupId + '/payments/' + paymentId))
+            || (incoming().method == 'cash' && incoming().proofId == null
+              && incoming().get('reference', null) == null))
           && incoming().status == 'pending'
           && incoming().rejectionReason == null
           && incoming().reviewedAt == null
@@ -718,7 +754,7 @@ service cloud.firestore {
           && isStarted(groupData(groupId))
           && incoming().keys().hasOnly(['userId', 'payerName', 'payerPhone', 'count',
               'amount', 'penalty', 'method', 'note', 'proofId', 'status',
-              'rejectionReason', 'declaredAt', 'reviewedAt', 'recordedBy'])
+              'rejectionReason', 'declaredAt', 'reviewedAt', 'recordedBy', 'reference'])
           && exists(memberPath(groupId, incoming().userId))
           && get(memberPath(groupId, incoming().userId)).data.get('claimedBy', null) == null
           && incoming().payerName == get(memberPath(groupId, incoming().userId)).data.fullName
@@ -726,6 +762,9 @@ service cloud.firestore {
           && validContributionPayment(groupData(groupId))
           && incoming().method in ['cash', 'mobile_money']
           && incoming().proofId == null
+          && (incoming().get('reference', null) == null
+            || (incoming().method == 'mobile_money'
+              && refRegistered('groups/' + groupId + '/payments/' + paymentId)))
           && incoming().status == 'approved'
           && incoming().rejectionReason == null
           && incoming().recordedBy == 'owner'
@@ -776,15 +815,21 @@ service cloud.firestore {
           && incoming().amount is int && incoming().amount >= 0
           && incoming().paidAt == request.time
           && incoming().receivedAt == null
-          && incoming().problem == null;
+          && incoming().problem == null
+          && trustMoved(uid(), 'payoutsDone', 'groups/' + groupId + '/payouts/' + pot);
         // Le bénéficiaire confirme la réception, ou signale un problème
         allow update: if signedIn()
           && (existing().beneficiaryId == uid()
             || get(memberPath(groupId, uid())).data.get('claimedFrom', '') == existing().beneficiaryId)
           && existing().receivedAt == null
           && changedOnly(['receivedAt', 'problem'])
-          && ((incoming().receivedAt == request.time && incoming().problem == null)
-            || (incoming().receivedAt == null && isText(incoming().problem, 1, 300)));
+          && ((incoming().receivedAt == request.time && incoming().problem == null
+              && trustMoved(groupData(groupId).ownerId, 'payoutsConfirmed',
+                'groups/' + groupId + '/payouts/' + pot))
+            || (incoming().receivedAt == null && isText(incoming().problem, 1, 300)
+              && (existing().problem != null
+                || trustMoved(groupData(groupId).ownerId, 'payoutsDisputed',
+                  'groups/' + groupId + '/payouts/' + pot))));
       }
 
       // Journal du groupe (non modifiable). Le tontinier voit tout ; un
@@ -870,7 +915,7 @@ service cloud.firestore {
         allow create: if signedIn()
           && incoming().keys().hasOnly(['userId', 'payerName', 'payerPhone', 'caseCount',
               'amount', 'method', 'note', 'proofId', 'status', 'rejectionReason',
-              'declaredAt', 'reviewedAt', 'recordedBy'])
+              'declaredAt', 'reviewedAt', 'recordedBy', 'reference'])
           && incoming().userId == uid()
           && carnetData(carnetId).clientId == uid()
           && incoming().caseCount is int
@@ -880,8 +925,10 @@ service cloud.firestore {
           && incoming().payerPhone == me().phone
           && validNote()
           && ((incoming().get('method', 'mobile_money') == 'mobile_money'
-              && ownsProof(incoming().proofId))
-            || (incoming().get('method', '') == 'cash' && incoming().proofId == null))
+              && ownsProof(incoming().proofId)
+              && refRegistered('carnets/' + carnetId + '/payments/' + paymentId))
+            || (incoming().get('method', '') == 'cash' && incoming().proofId == null
+              && incoming().get('reference', null) == null))
           && incoming().get('recordedBy', 'member') == 'member'
           && incoming().status == 'pending'
           && incoming().rejectionReason == null
@@ -897,7 +944,7 @@ service cloud.firestore {
           && carnetData(carnetId).clientId != null
           && incoming().keys().hasOnly(['userId', 'payerName', 'payerPhone', 'caseCount',
               'amount', 'method', 'note', 'proofId', 'status', 'rejectionReason',
-              'declaredAt', 'reviewedAt', 'recordedBy'])
+              'declaredAt', 'reviewedAt', 'recordedBy', 'reference'])
           && incoming().userId == carnetData(carnetId).clientId
           && incoming().payerName == carnetData(carnetId).clientName
           && incoming().payerPhone == carnetData(carnetId).clientPhone
@@ -907,6 +954,9 @@ service cloud.firestore {
           && validNote()
           && incoming().method in ['cash', 'mobile_money']
           && incoming().proofId == null
+          && (incoming().get('reference', null) == null
+            || (incoming().method == 'mobile_money'
+              && refRegistered('carnets/' + carnetId + '/payments/' + paymentId)))
           && incoming().status == 'approved'
           && incoming().rejectionReason == null
           && incoming().recordedBy == 'owner'
@@ -949,6 +999,73 @@ service cloud.firestore {
           || incoming().logoMime in ['image/jpeg', 'image/png', 'image/webp'])
         && incoming().accounts is list && incoming().accounts.size() <= 3
         && incoming().updatedAt == request.time;
+    }
+
+    // ------------------------------------- Références Mobile Money utilisées
+
+    // Chacun peut vérifier qu'une référence est libre (document absent) ;
+    // une référence prise ne se lit que par son payeur ou son tontinier.
+    match /paymentRefs/{ref} {
+      allow get: if signedIn()
+        && (resource == null || existing().payerId == uid() || existing().ownerId == uid());
+      allow create: if signedIn()
+        && incoming().keys().hasOnly(['payment', 'payerId', 'ownerId', 'at'])
+        && validRef(ref)
+        && incoming().at == request.time
+        && incoming().payment is string
+        && incoming().payment.split('/').size() == 4
+        && incoming().payment.split('/')[2] == 'payments'
+        && !exists(doc(incoming().payment))
+        && getAfter(doc(incoming().payment)).data.reference == ref
+        && getAfter(doc(incoming().payment)).data.userId == incoming().payerId
+        && (uid() == incoming().payerId || uid() == incoming().ownerId)
+        && ((incoming().payment.split('/')[0] == 'groups'
+            && groupData(incoming().payment.split('/')[1]).ownerId == incoming().ownerId)
+          || (incoming().payment.split('/')[0] == 'carnets'
+            && carnetData(incoming().payment.split('/')[1]).ownerId == incoming().ownerId));
+      // Paiement refusé : le tontinier libère la référence
+      allow delete: if signedIn() && existing().ownerId == uid()
+        && getAfter(doc(existing().payment)).data.status == 'rejected';
+    }
+
+    // ---------------------------------------- Note de confiance du tontinier
+
+    // Lisible par tous (avant de rejoindre un groupe). Les compteurs ne
+    // bougent qu'avec la remise, la confirmation ou le signalement
+    // correspondant, écrits dans le même envoi.
+    match /trust/{ownerId} {
+      allow read: if signedIn();
+      allow create: if signedIn()
+        && incoming().keys().hasOnly(['payoutsDone', 'payoutsConfirmed',
+            'payoutsDisputed', 'last'])
+        && incoming().payoutsDone == 0
+        && incoming().payoutsConfirmed == 0
+        && incoming().payoutsDisputed == 0
+        && incoming().last == null;
+      allow update: if signedIn()
+        && incoming().last is string
+        && incoming().last.split('/').size() == 4
+        && incoming().last.split('/')[0] == 'groups'
+        && incoming().last.split('/')[2] == 'payouts'
+        && groupData(incoming().last.split('/')[1]).ownerId == ownerId
+        && (
+          // Remise d'une cagnotte par le tontinier
+          (ownerId == uid()
+            && changedOnly(['payoutsDone', 'last'])
+            && incoming().payoutsDone == existing().payoutsDone + 1
+            && !exists(doc(incoming().last))
+            && getAfter(doc(incoming().last)).data.paidAt == request.time)
+          // Réception confirmée par le bénéficiaire
+          || (changedOnly(['payoutsConfirmed', 'last'])
+            && incoming().payoutsConfirmed == existing().payoutsConfirmed + 1
+            && get(doc(incoming().last)).data.receivedAt == null
+            && getAfter(doc(incoming().last)).data.receivedAt == request.time)
+          // Problème signalé par le bénéficiaire
+          || (changedOnly(['payoutsDisputed', 'last'])
+            && incoming().payoutsDisputed == existing().payoutsDisputed + 1
+            && get(doc(incoming().last)).data.problem == null
+            && getAfter(doc(incoming().last)).data.problem is string)
+        );
     }
 
     // ------------------------------------------------ Preuves de paiement

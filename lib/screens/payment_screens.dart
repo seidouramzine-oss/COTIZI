@@ -30,6 +30,7 @@ String receiptText(
     if (p.penalty > 0) 'Pénalités de retard : ${money(p.penalty)}',
     'Montant : ${money(p.amount)}',
     'Mode : ${methodLabel(p.method)}',
+    if (p.reference != null) 'Référence Mobile Money : ${p.reference}',
     if (p.recordedByOwner)
       'Encaissé par le tontinier le ${dateTime(p.reviewedAt ?? p.declaredAt)}'
     else ...[
@@ -38,6 +39,8 @@ String receiptText(
     ],
     line,
     'Reçu COTIZI — paiement validé par le tontinier.',
+    'Enregistré dans COTIZI : il ne peut être ni modifié ni supprimé. '
+        'Vérifiable dans l\'historique du groupe.',
   ].join('\n');
 }
 
@@ -182,6 +185,7 @@ class DeclarePaymentScreen extends StatefulWidget {
     Uint8List? proof,
     String? mime,
     String? note,
+    String? reference,
   )
   onSubmit;
 
@@ -195,6 +199,7 @@ class _DeclarePaymentScreenState extends State<DeclarePaymentScreen> {
   late int _units = widget.initialUnits.clamp(1, max(1, widget.maxUnits));
   PaymentMethod _method = PaymentMethod.mobileMoney;
   final _note = TextEditingController();
+  final _reference = TextEditingController();
   bool _busy = false;
 
   int get _penalty => widget.penaltyFor?.call(_units) ?? 0;
@@ -203,6 +208,7 @@ class _DeclarePaymentScreenState extends State<DeclarePaymentScreen> {
   @override
   void dispose() {
     _note.dispose();
+    _reference.dispose();
     super.dispose();
   }
 
@@ -228,6 +234,13 @@ class _DeclarePaymentScreenState extends State<DeclarePaymentScreen> {
 
   Future<void> _submit() async {
     final cash = _method == PaymentMethod.cash;
+    if (!cash && Api.normalizeReference(_reference.text) == null) {
+      showInfo(
+        context,
+        'Entrez la référence de la transaction (sur le SMS de Mobile Money)',
+      );
+      return;
+    }
     if (!cash && _preview == null) {
       showInfo(context, 'Ajoutez la capture d\'écran de votre paiement');
       return;
@@ -240,6 +253,7 @@ class _DeclarePaymentScreenState extends State<DeclarePaymentScreen> {
         cash ? null : _preview,
         cash ? null : _mime,
         _note.text,
+        cash ? null : _reference.text,
       );
       if (!mounted) return;
       showInfo(
@@ -368,7 +382,25 @@ class _DeclarePaymentScreenState extends State<DeclarePaymentScreen> {
             ),
             const SizedBox(height: 12),
             Text(
-              '2. Ajoutez la capture d\'écran de l\'envoi. Le tontinier la '
+              '2. Recopiez la référence de la transaction, écrite sur le SMS '
+              'de confirmation de Mobile Money.',
+              style: theme.textTheme.bodyMedium,
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _reference,
+              textCapitalization: TextCapitalization.characters,
+              maxLength: 40,
+              decoration: const InputDecoration(
+                labelText: 'Référence de la transaction',
+                hintText: 'Ex. MP240101.1234.A56789',
+                helperText: 'Une référence ne peut servir qu\'une seule fois.',
+                prefixIcon: Icon(Icons.tag),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '3. Ajoutez la capture d\'écran de l\'envoi. Le tontinier la '
               'vérifiera avant de valider.',
               style: theme.textTheme.bodyMedium,
             ),
@@ -440,6 +472,7 @@ class RecordPaymentScreen extends StatefulWidget {
     PaymentMethod method,
     int penalty,
     String? note,
+    String? reference,
   )
   onSubmit;
 
@@ -452,6 +485,7 @@ class _RecordPaymentScreenState extends State<RecordPaymentScreen> {
   PaymentMethod _method = PaymentMethod.cash;
   bool _applyPenalty = true;
   final _note = TextEditingController();
+  final _reference = TextEditingController();
   bool _busy = false;
 
   int get _suggestedPenalty => widget.penaltyFor?.call(_units) ?? 0;
@@ -461,10 +495,18 @@ class _RecordPaymentScreenState extends State<RecordPaymentScreen> {
   @override
   void dispose() {
     _note.dispose();
+    _reference.dispose();
     super.dispose();
   }
 
   Future<void> _submit() async {
+    final mobile = _method == PaymentMethod.mobileMoney;
+    if (mobile &&
+        _reference.text.trim().isNotEmpty &&
+        Api.normalizeReference(_reference.text) == null) {
+      showInfo(context, 'Référence de transaction mal écrite');
+      return;
+    }
     if (!await confirm(
       context,
       title: 'Encaisser',
@@ -482,6 +524,7 @@ class _RecordPaymentScreenState extends State<RecordPaymentScreen> {
         _method,
         _penalty,
         _note.text,
+        mobile ? _reference.text : null,
       );
       if (!mounted) return;
       await showDialog<void>(
@@ -570,6 +613,17 @@ class _RecordPaymentScreenState extends State<RecordPaymentScreen> {
             onSelectionChanged: (s) => setState(() => _method = s.first),
           ),
           const SizedBox(height: 12),
+          if (_method == PaymentMethod.mobileMoney)
+            TextField(
+              controller: _reference,
+              textCapitalization: TextCapitalization.characters,
+              maxLength: 40,
+              decoration: const InputDecoration(
+                labelText: 'Référence de la transaction (conseillé)',
+                helperText: 'Empêche qu\'un même envoi soit compté deux fois.',
+                prefixIcon: Icon(Icons.tag),
+              ),
+            ),
           TextField(
             controller: _note,
             maxLength: 200,
@@ -723,6 +777,8 @@ class _ReviewPaymentScreenState extends State<ReviewPaymentScreen> {
                     InfoRow('Pénalités de retard', money(p.penalty)),
                   InfoRow('Montant', money(p.amount), bold: true),
                   InfoRow('Mode', methodLabel(p.method)),
+                  if (p.reference != null)
+                    InfoRow('Référence Mobile Money', p.reference!, bold: true),
                   if (p.note != null) InfoRow('Note', p.note!),
                   if (p.recordedByOwner)
                     InfoRow(
@@ -741,6 +797,27 @@ class _ReviewPaymentScreenState extends State<ReviewPaymentScreen> {
                   ],
                   if (p.status == PaymentStatus.rejected)
                     InfoRow('Raison du refus', p.rejectionReason ?? ''),
+                  if (p.status == PaymentStatus.approved) ...[
+                    InfoRow('N° de reçu', p.receiptNumber),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.lock_outline,
+                          size: 18,
+                          color: theme.colorScheme.primary,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Paiement validé : il ne peut plus être modifié '
+                            'ni supprimé, par personne.',
+                            style: theme.textTheme.bodySmall,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -768,6 +845,24 @@ class _ReviewPaymentScreenState extends State<ReviewPaymentScreen> {
               ),
             )
           else ...[
+            if (p.reference != null &&
+                p.status == PaymentStatus.pending &&
+                widget.canReview)
+              Padding(
+                padding: const EdgeInsets.only(top: 12),
+                child: Card(
+                  color: theme.colorScheme.secondaryContainer,
+                  child: Padding(
+                    padding: const EdgeInsets.all(14),
+                    child: Text(
+                      'Avant de valider, vérifiez que vous avez bien reçu un '
+                      'SMS Mobile Money avec la référence ${p.reference} et '
+                      'le montant ${money(p.amount)}. COTIZI refuse '
+                      'automatiquement une référence déjà utilisée.',
+                    ),
+                  ),
+                ),
+              ),
             const SectionTitle('Preuve de paiement'),
             ProofImage(p.proofId, height: 420),
             const SizedBox(height: 4),

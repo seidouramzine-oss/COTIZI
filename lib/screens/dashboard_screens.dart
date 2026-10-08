@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../api.dart';
 import '../format.dart';
 import '../models.dart';
 import '../reminders.dart';
 import '../widgets/common.dart';
+import '../widgets/trust.dart';
 import 'carnet_screens.dart';
 import 'group_screens.dart';
 import 'home_screen.dart';
@@ -111,6 +113,69 @@ class _OwnerDashboardState extends State<OwnerDashboard> with Reloadable {
   late final Future<Business?> _business = Api.business(Api.uid);
   late Future<int> _unread = Api.unreadCount();
   late Future<List<AppNotification>> _recent = Api.notifications(limit: 4);
+  bool _guideHidden = true;
+
+  static const _guideKey = 'guide_demarrage_masque';
+
+  @override
+  void initState() {
+    super.initState();
+    SharedPreferences.getInstance()
+        .then((p) {
+          if (mounted) {
+            setState(() => _guideHidden = p.getBool(_guideKey) ?? false);
+          }
+        })
+        .catchError((_) {
+          if (mounted) setState(() => _guideHidden = false);
+        });
+  }
+
+  Future<void> _hideGuide() async {
+    setState(() => _guideHidden = true);
+    try {
+      final p = await SharedPreferences.getInstance();
+      await p.setBool(_guideKey, true);
+    } catch (_) {}
+  }
+
+  /// Guide « Démarrer avec COTIZI » : 4 étapes, masqué une fois fini.
+  Widget _guide(OwnerOverview o) => FutureBuilder<Business?>(
+    future: _business,
+    builder: (context, snap) {
+      if (_guideHidden || snap.connectionState != ConnectionState.done) {
+        return const SizedBox.shrink();
+      }
+      final steps = [
+        StartStep(
+          Icons.storefront_outlined,
+          'Compléter mon profil pro et mes numéros Mobile Money',
+          (snap.data?.accounts ?? const []).isNotEmpty,
+          () => open(const BusinessProfileScreen()),
+        ),
+        StartStep(
+          Icons.group_add_outlined,
+          'Créer ma première tontine',
+          o.groups.isNotEmpty || o.carnets.isNotEmpty,
+          () => openIfCanCreate(const CreateTontineScreen()),
+        ),
+        StartStep(
+          Icons.share_outlined,
+          'Inviter mes clients avec le lien',
+          o.memberCount > 0,
+          widget.onShowTontines,
+        ),
+        StartStep(
+          Icons.fact_check_outlined,
+          'Valider mon premier paiement',
+          o.hasApprovedPayment,
+          widget.onShowTontines,
+        ),
+      ];
+      if (steps.every((s) => s.done)) return const SizedBox.shrink();
+      return GettingStartedCard(steps: steps, onClose: _hideGuide);
+    },
+  );
 
   static Future<AccessStatus> _loadAccess() async {
     final results = await Future.wait([Api.reloadProfile(), Api.isAdmin()]);
@@ -191,15 +256,16 @@ class _OwnerDashboardState extends State<OwnerDashboard> with Reloadable {
           onRetry: reload,
           builder: (context, o) => ListView(
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
-            children: o.tontineCount == 0 ? _empty() : _content(o),
+            children: o.tontineCount == 0 ? _empty(o) : _content(o),
           ),
         ),
       ),
     );
   }
 
-  List<Widget> _empty() => [
+  List<Widget> _empty(OwnerOverview o) => [
     _accessBanner(),
+    _guide(o),
     EmptyState(
       icon: Icons.savings_outlined,
       title: 'Bienvenue sur COTIZI',
@@ -212,6 +278,8 @@ class _OwnerDashboardState extends State<OwnerDashboard> with Reloadable {
         label: const Text('Créer ma première tontine'),
       ),
     ),
+    const MoneySafetyCard(isMember: false),
+    HelpCard(onTap: () => open(const HelpScreen(isMember: false))),
   ];
 
   List<Widget> _content(OwnerOverview o) {
@@ -231,6 +299,7 @@ class _OwnerDashboardState extends State<OwnerDashboard> with Reloadable {
       _hero(o, active.length, lateMembers),
       const SizedBox(height: 4),
       _quickActions(),
+      _guide(o),
       // --------------------------------------------- Paiements à valider
       if (o.pending.isNotEmpty) ...[
         SectionTitle(
@@ -336,6 +405,11 @@ class _OwnerDashboardState extends State<OwnerDashboard> with Reloadable {
           );
         },
       ),
+      // ------------------------------------------------- Confiance
+      const SectionTitle('Confiance'),
+      TrustCard(ownerId: Api.uid, own: true),
+      const MoneySafetyCard(isMember: false),
+      HelpCard(onTap: () => open(const HelpScreen(isMember: false))),
     ];
   }
 
@@ -547,6 +621,35 @@ class _OwnerDashboardState extends State<OwnerDashboard> with Reloadable {
   List<Widget> _todos(OwnerOverview o) {
     final items = <Widget>[];
     final today = DateUtils.dateOnly(DateTime.now());
+    // Remises contestées, puis remises non confirmées depuis 2 jours
+    for (final r in o.openPayouts) {
+      final p = r.payout;
+      if (p.problem != null) {
+        items.add(
+          _TodoTile(
+            icon: Icons.report_gmailerrorred,
+            title: 'Problème signalé · ${r.group.name}',
+            subtitle:
+                '${p.beneficiaryName} (cagnotte n°${p.pot}) : ${p.problem}',
+            color: paymentStatusColor(PaymentStatus.rejected),
+            onTap: () => open(GroupScreen(groupId: r.group.id)),
+          ),
+        );
+      } else if (!r.managed && p.unconfirmedSince(2)) {
+        items.add(
+          _TodoTile(
+            icon: Icons.hourglass_bottom,
+            title: 'Remise non confirmée · ${r.group.name}',
+            subtitle:
+                '${p.beneficiaryName} n\'a pas confirmé avoir reçu '
+                '${money(p.amount)} (remise le ${dateShort(p.paidAt)}). '
+                'Demandez-lui de confirmer dans COTIZI.',
+            color: paymentStatusColor(PaymentStatus.pending),
+            onTap: () => open(GroupScreen(groupId: r.group.id)),
+          ),
+        );
+      }
+    }
     for (final g in o.groups.where(
       (g) => g.status == GroupStatus.active && !g.isLegacy,
     )) {
@@ -664,8 +767,7 @@ class _OwnerDashboardState extends State<OwnerDashboard> with Reloadable {
         );
       }
     }
-    if (items.isEmpty) return const [];
-    return [const SectionTitle('À faire aujourd\'hui'), ...items];
+    return items;
   }
 }
 
@@ -743,6 +845,10 @@ class _MemberDashboardState extends State<MemberDashboard> with Reloadable {
                         icon: const Icon(Icons.qr_code_2),
                         label: const Text('Rejoindre avec un code'),
                       ),
+                    ),
+                    const MoneySafetyCard(isMember: true),
+                    HelpCard(
+                      onTap: () => open(const HelpScreen(isMember: true)),
                     ),
                   ]
                 : _content(o),
@@ -897,6 +1003,9 @@ class _MemberDashboardState extends State<MemberDashboard> with Reloadable {
         icon: const Icon(Icons.groups_outlined),
         label: const Text('Voir toutes mes tontines'),
       ),
+      const SizedBox(height: 12),
+      const MoneySafetyCard(isMember: true),
+      HelpCard(onTap: () => open(const HelpScreen(isMember: true))),
     ];
   }
 
