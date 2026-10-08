@@ -309,6 +309,67 @@ class Api {
   static Future<void> closeSubscriptionRequest(String userId) =>
       _db.doc('subscriptionRequests/$userId').delete();
 
+  // ---------------------------------------------------------- Notifications
+
+  static final _managedId = RegExp(r'^p\d+$');
+
+  /// Prévient [to] d'une opération (cloche de notifications). Envoi au mieux :
+  /// une erreur n'annule jamais l'opération elle-même.
+  static Future<void> _notify({
+    required String? to,
+    required String type,
+    required String title,
+    required String body,
+    String? groupId,
+    String? carnetId,
+  }) async {
+    if (to == null || to == uid || _managedId.hasMatch(to)) return;
+    try {
+      final me = await _requireMe();
+      await _db.collection('users/$to/notifications').add({
+        'type': type,
+        'title': title,
+        'body': body.length > 300 ? body.substring(0, 300) : body,
+        'groupId': groupId,
+        'carnetId': carnetId,
+        'actorId': uid,
+        'actorName': me.fullName,
+        'read': false,
+        'at': _now,
+      });
+    } catch (_) {}
+  }
+
+  /// Mes notifications, les plus récentes d'abord.
+  static Future<List<AppNotification>> notifications({int limit = 50}) async {
+    final snap = await _db
+        .collection('users/$uid/notifications')
+        .orderBy('at', descending: true)
+        .limit(limit)
+        .get();
+    return snap.docs.map(AppNotification.fromDoc).toList();
+  }
+
+  /// Nombre de notifications non lues (au plus 99).
+  static Future<int> unreadCount() async {
+    final snap = await _db
+        .collection('users/$uid/notifications')
+        .where('read', isEqualTo: false)
+        .limit(99)
+        .get();
+    return snap.size;
+  }
+
+  static Future<void> markAllRead(List<AppNotification> list) async {
+    final unread = list.where((n) => !n.read).toList();
+    if (unread.isEmpty) return;
+    final batch = _db.batch();
+    for (final n in unread) {
+      batch.update(_db.doc('users/$uid/notifications/${n.id}'), {'read': true});
+    }
+    await batch.commit();
+  }
+
   // --------------------------------------------------------------- Accueils
 
   /// Tableau de bord du tontinier : ses groupes, ses carnets et tous les
@@ -577,6 +638,14 @@ class Api {
         }
         rethrow;
       }
+      final name = (await ref.get()).data()?['name'] as String? ?? '';
+      await _notify(
+        to: invite['ownerId'] as String?,
+        type: 'joined',
+        title: 'Nouveau participant',
+        body: '${me.fullName} a rejoint le groupe « $name ».',
+        groupId: targetId,
+      );
       return (kind, targetId);
     }
 
@@ -593,6 +662,13 @@ class Api {
       }
       rethrow;
     }
+    await _notify(
+      to: invite['ownerId'] as String?,
+      type: 'joined',
+      title: 'Nouveau client',
+      body: '${me.fullName} a pris un de vos carnets.',
+      carnetId: targetId,
+    );
     return (kind, targetId);
   }
 
@@ -803,6 +879,13 @@ class Api {
           ..update(_db.doc('groups/${g.id}'), {'accepted.$uid': g.termsVersion})
           ..set(ref, data))
         .commit();
+    await _notify(
+      to: g.ownerId,
+      type: 'rules_accepted',
+      title: 'Règlement accepté',
+      body: '${me.fullName} a accepté le règlement de « ${g.name} ».',
+      groupId: g.id,
+    );
   }
 
   /// Suppression d'un groupe qui n'a pas démarré (avec ses participants,
@@ -1036,6 +1119,17 @@ class Api {
           })
           ..set(eventRef, eventData))
         .commit();
+    for (final id in g.memberIds) {
+      await _notify(
+        to: id,
+        type: 'started',
+        title: 'Tontine démarrée',
+        body:
+            '« ${g.name} » a démarré : $summary. Vous pouvez payer vos '
+            'cotisations.',
+        groupId: g.id,
+      );
+    }
   }
 
   /// Le participant déclare [count] cotisations, payées par Mobile Money
@@ -1050,6 +1144,7 @@ class Api {
   }) async {
     final me = await _requireMe();
     final memberRef = _db.doc('groups/${group.id}/members/$uid');
+    var declared = 0;
     await _db.runTransaction((tx) async {
       final member = GroupMember.fromDoc(await tx.get(memberRef));
       final remaining = group.totalContributions - member.declaredCount;
@@ -1075,6 +1170,7 @@ class Api {
         proofId = proofRef.id;
       }
       final amount = count * group.contributionAmount + penalty;
+      declared = amount;
       final payRef = _db.collection('groups/${group.id}/payments').doc();
       tx.set(payRef, {
         'userId': uid,
@@ -1106,6 +1202,16 @@ class Api {
       );
       tx.set(eventRef, eventData);
     });
+    await _notify(
+      to: group.ownerId,
+      type: 'payment_declared',
+      title: 'Paiement à valider',
+      body:
+          '${me.fullName} · ${group.name} : ${contributionsLabel(count)}, '
+          '${money(declared)} '
+          '(${method == PaymentMethod.cash ? 'espèces' : 'Mobile Money'}).',
+      groupId: group.id,
+    );
   }
 
   static String _methodKey(PaymentMethod m) =>
@@ -1147,8 +1253,10 @@ class Api {
     final me = await _requireMe();
     final memberRef = _db.doc('groups/$groupId/members/${p.userId}');
     final groupRef = _db.doc('groups/$groupId');
+    var groupName = '';
     await _db.runTransaction((tx) async {
       final group = (await tx.get(groupRef)).data()!;
+      groupName = group['name'] as String? ?? '';
       final member = GroupMember.fromDoc(await tx.get(memberRef));
       final levels = approve
           ? _levelsPatch(
@@ -1184,6 +1292,16 @@ class Api {
       );
       tx.set(eventRef, eventData);
     });
+    await _notify(
+      to: p.userId,
+      type: approve ? 'payment_approved' : 'payment_rejected',
+      title: approve ? 'Paiement validé' : 'Paiement refusé',
+      body: approve
+          ? '$groupName : votre paiement de ${money(p.amount)} est validé.'
+          : '$groupName : votre paiement de ${money(p.amount)} est refusé '
+                '(${reason ?? ''}). Les cotisations sont à repayer.',
+      groupId: groupId,
+    );
   }
 
   /// Le tontinier encaisse lui-même un paiement (validé d'office).
@@ -1246,6 +1364,15 @@ class Api {
       );
       tx.set(eventRef, eventData);
     });
+    await _notify(
+      to: member.userId,
+      type: 'payment_recorded',
+      title: 'Paiement encaissé',
+      body:
+          '${group.name} : le tontinier a encaissé ${contributionsLabel(count)} '
+          '(${money(amount)}) pour vous.',
+      groupId: group.id,
+    );
     return Payment.fromDoc(await payRef.get());
   }
 
@@ -1293,6 +1420,15 @@ class Api {
           ..update(_db.doc('groups/${g.id}'), {'paidOutCount': pot})
           ..set(eventRef, eventData))
         .commit();
+    await _notify(
+      to: beneficiary.userId,
+      type: 'payout_confirmed',
+      title: 'Cagnotte remise',
+      body:
+          '${g.name} : le tontinier indique vous avoir remis '
+          '${money(g.netPot)}. Confirmez la réception.',
+      groupId: g.id,
+    );
   }
 
   /// Le bénéficiaire confirme avoir reçu la cagnotte, ou signale un
@@ -1319,6 +1455,18 @@ class Api {
           })
           ..set(eventRef, eventData))
         .commit();
+    final group = (await _db.doc('groups/$groupId').get()).data();
+    await _notify(
+      to: group?['ownerId'] as String?,
+      type: problem == null ? 'payout_received' : 'payout_problem',
+      title: problem == null ? 'Cagnotte reçue' : 'Problème sur une remise',
+      body: problem == null
+          ? '${me.fullName} confirme avoir reçu la cagnotte n°${p.pot} '
+                '(${group?['name'] ?? ''}).'
+          : '${me.fullName} signale un problème sur la cagnotte n°${p.pot} : '
+                '$problem',
+      groupId: groupId,
+    );
   }
 
   static Json _review(bool approve, String? reason) => {
@@ -1436,6 +1584,16 @@ class Api {
           'lastPaymentId': payRef.id,
         });
     });
+    await _notify(
+      to: carnet.ownerId,
+      type: 'payment_declared',
+      title: 'Paiement à valider',
+      body:
+          '${me.fullName} · ${carnet.label} : $caseCount case(s), '
+          '${money(caseCount * carnet.caseAmount)} '
+          '(${method == PaymentMethod.cash ? 'espèces' : 'Mobile Money'}).',
+      carnetId: carnet.id,
+    );
   }
 
   /// Le tontinier encaisse lui-même des cases (validées d'office).
@@ -1475,6 +1633,15 @@ class Api {
           'approvedCases': fresh.approvedCases + caseCount,
         });
     });
+    await _notify(
+      to: carnet.clientId,
+      type: 'payment_recorded',
+      title: 'Paiement encaissé',
+      body:
+          '${carnet.label} : le tontinier a encaissé $caseCount case(s) '
+          '(${money(caseCount * carnet.caseAmount)}) pour vous.',
+      carnetId: carnet.id,
+    );
     return Payment.fromDoc(await payRef.get());
   }
 
@@ -1484,10 +1651,12 @@ class Api {
     Payment p,
     bool approve,
     String? reason,
-  ) {
+  ) async {
     final carnetRef = _db.doc('carnets/$carnetId');
-    return _db.runTransaction((tx) async {
+    var label = '';
+    await _db.runTransaction((tx) async {
       final fresh = Carnet.fromDoc(await tx.get(carnetRef));
+      label = fresh.label;
       tx.update(
         carnetRef.collection('payments').doc(p.id),
         _review(approve, reason),
@@ -1499,6 +1668,16 @@ class Api {
             : {'usedCases': fresh.usedCases - p.caseCount},
       );
     });
+    await _notify(
+      to: p.userId,
+      type: approve ? 'payment_approved' : 'payment_rejected',
+      title: approve ? 'Paiement validé' : 'Paiement refusé',
+      body: approve
+          ? '$label : votre paiement de ${money(p.amount)} est validé.'
+          : '$label : votre paiement de ${money(p.amount)} est refusé '
+                '(${reason ?? ''}).',
+      carnetId: carnetId,
+    );
   }
 
   // ---------------------------------------------------- Profil pro

@@ -568,8 +568,10 @@ class HelpScreen extends StatelessWidget {
       (
         Icons.casino_outlined,
         'Tontine à cagnotte',
-        'Le tontinier fixe la cotisation (ex. 5 000 F chaque jour), la durée de '
-            'collecte (ex. 30 jours), l\'ordre des remises (tirage au sort ou '
+        'Le tontinier fixe la cotisation (ex. 5 000 F chaque jour) et quand la '
+            'cagnotte est remise : à chaque cotisation (tontine tournante : '
+            'avec 15 participants, 15 jours et chacun reçoit une fois) ou après '
+            'plusieurs cotisations (ex. 30 jours), l\'ordre des remises (tirage au sort ou '
             'ordre fixé) et la date de début. Il démarre la tontine quand '
             'l\'ordre est fixé : les dates de début et de fin sont alors '
             'figées. Pendant la collecte, tous cotisent pour la cagnotte en '
@@ -582,6 +584,14 @@ class HelpScreen extends StatelessWidget {
         'COTIZI vous prévient la veille de chaque cotisation à payer et, pour '
             'le tontinier, le matin de chaque remise. Vous pouvez les couper '
             'dans Profil → Paramètres → Rappels.',
+      ),
+      (
+        Icons.notifications_none,
+        'La cloche',
+        'La cloche en haut de l\'accueil vous signale les opérations : '
+            'paiements déclarés ou validés, nouveaux participants, règlement '
+            'accepté, cagnotte remise. Touchez une notification pour ouvrir le '
+            'groupe concerné.',
       ),
       (
         Icons.check_circle_outline,

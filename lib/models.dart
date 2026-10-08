@@ -1183,3 +1183,44 @@ class Gains {
   final int activeGroups;
   final int activeCarnets;
 }
+
+/// Notification de la cloche : opération faite par un client (pour le
+/// tontinier) ou par le tontinier (pour le client).
+class AppNotification {
+  const AppNotification({
+    required this.id,
+    required this.type,
+    required this.title,
+    required this.body,
+    required this.at,
+    required this.read,
+    this.groupId,
+    this.carnetId,
+    this.actorName = '',
+  });
+
+  final String id;
+  final String type;
+  final String title;
+  final String body;
+  final DateTime at;
+  final bool read;
+  final String? groupId;
+  final String? carnetId;
+  final String actorName;
+
+  factory AppNotification.fromDoc(DocumentSnapshot<Json> doc) {
+    final json = doc.data()!;
+    return AppNotification(
+      id: doc.id,
+      type: json['type'] as String? ?? '',
+      title: json['title'] as String? ?? '',
+      body: json['body'] as String? ?? '',
+      at: _time(json['at']),
+      read: json['read'] == true,
+      groupId: json['groupId'] as String?,
+      carnetId: json['carnetId'] as String?,
+      actorName: json['actorName'] as String? ?? '',
+    );
+  }
+}

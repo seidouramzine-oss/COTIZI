@@ -8,6 +8,7 @@ import '../widgets/common.dart';
 import 'carnet_screens.dart';
 import 'group_screens.dart';
 import 'home_screen.dart';
+import 'notifications_screen.dart';
 import 'profile_screens.dart' show HelpScreen;
 import 'business_screens.dart';
 import 'subscription_screens.dart';
@@ -76,105 +77,6 @@ class _TodoTile extends StatelessWidget {
   }
 }
 
-/// Chiffre clé de l'accueil.
-class _Kpi extends StatelessWidget {
-  const _Kpi(this.label, this.value, this.caption, {this.color, this.onTap});
-
-  final String label;
-  final String value;
-  final String caption;
-  final Color? color;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Card(
-      margin: const EdgeInsets.all(3),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: theme.textTheme.labelMedium?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const SizedBox(height: 4),
-              FittedBox(
-                fit: BoxFit.scaleDown,
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  value,
-                  style: theme.textTheme.titleLarge?.copyWith(
-                    fontWeight: FontWeight.w800,
-                    color: color,
-                    fontFeatures: const [FontFeature.tabularFigures()],
-                  ),
-                ),
-              ),
-              Text(
-                caption,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: theme.textTheme.bodySmall,
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Montant court : 2 340 000 → « 2,34 M », 85 000 → « 85 000 ».
-String _short(int amount) => amount >= 1000000
-    ? '${(amount / 1000000).toStringAsFixed(2).replaceAll('.', ',')} M'
-    : money(amount).replaceAll(' FCFA', '');
-
-/// Bandeau de synthèse coloré (à jour / à faire).
-class _Banner extends StatelessWidget {
-  const _Banner({required this.icon, required this.text, required this.color});
-
-  final IconData icon;
-  final String text;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      color: color.withValues(alpha: 0.12),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
-        side: BorderSide(color: color.withValues(alpha: 0.4)),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Row(
-          children: [
-            Icon(icon, color: color),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                text,
-                style: TextStyle(color: color, fontWeight: FontWeight.w700),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 // ======================================================= Accueil tontinier
 
 class OwnerDashboard extends StatefulWidget {
@@ -207,6 +109,8 @@ class _OwnerDashboardState extends State<OwnerDashboard> with Reloadable {
   late Future<AccessStatus> _access = _loadAccess();
   late Future<Gains> _gains = Api.gains();
   late final Future<Business?> _business = Api.business(Api.uid);
+  late Future<int> _unread = Api.unreadCount();
+  late Future<List<AppNotification>> _recent = Api.notifications(limit: 4);
 
   static Future<AccessStatus> _loadAccess() async {
     final results = await Future.wait([Api.reloadProfile(), Api.isAdmin()]);
@@ -218,6 +122,8 @@ class _OwnerDashboardState extends State<OwnerDashboard> with Reloadable {
     _data = _loadOverview();
     _access = _loadAccess();
     _gains = Api.gains();
+    _unread = Api.unreadCount();
+    _recent = Api.notifications(limit: 4);
   });
 
   /// Essai gratuit, fin d'abonnement proche ou terminée.
@@ -254,36 +160,6 @@ class _OwnerDashboardState extends State<OwnerDashboard> with Reloadable {
     );
   }
 
-  /// Accès au tableau de bord des gains et au profil pro.
-  Widget _shortcuts() => Row(
-    children: [
-      Expanded(
-        child: Card(
-          child: ListTile(
-            leading: const Icon(Icons.insights_outlined),
-            title: const Text(
-              'Mes gains',
-              style: TextStyle(fontWeight: FontWeight.w600),
-            ),
-            onTap: () => open(const GainsScreen()),
-          ),
-        ),
-      ),
-      Expanded(
-        child: Card(
-          child: ListTile(
-            leading: const Icon(Icons.storefront_outlined),
-            title: const Text(
-              'Profil pro',
-              style: TextStyle(fontWeight: FontWeight.w600),
-            ),
-            onTap: () => open(const BusinessProfileScreen()),
-          ),
-        ),
-      ),
-    ],
-  );
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -294,6 +170,10 @@ class _OwnerDashboardState extends State<OwnerDashboard> with Reloadable {
               _Greeting(widget.profile, snap.data?.name ?? 'Espace tontinier'),
         ),
         actions: [
+          NotificationBell(
+            unread: _unread,
+            onTap: () => open(const NotificationsScreen()),
+          ),
           IconButton(
             tooltip: 'Aide',
             icon: const Icon(Icons.help_outline),
@@ -336,7 +216,6 @@ class _OwnerDashboardState extends State<OwnerDashboard> with Reloadable {
 
   List<Widget> _content(OwnerOverview o) {
     final pendingColor = paymentStatusColor(PaymentStatus.pending);
-    final bad = paymentStatusColor(PaymentStatus.rejected);
     final today = DateUtils.dateOnly(DateTime.now());
     final active = o.groups
         .where((g) => g.status == GroupStatus.active && !g.isLegacy)
@@ -346,41 +225,18 @@ class _OwnerDashboardState extends State<OwnerDashboard> with Reloadable {
       (n, g) =>
           n + g.members.where((m) => !g.standingOf(m, today).upToDate).length,
     );
+    final todos = _todos(o);
     return [
       _accessBanner(),
-      Row(
-        children: [
-          Expanded(
-            child: FutureBuilder<Gains>(
-              future: _gains,
-              builder: (context, snap) => _Kpi(
-                'Encaissé',
-                snap.hasData ? _short(snap.data!.collectedThisMonth) : '…',
-                'FCFA ce mois',
-                onTap: () => open(const GainsScreen()),
-              ),
-            ),
-          ),
-          Expanded(
-            child: _Kpi(
-              'À valider',
-              '${o.pending.length}',
-              o.pending.isEmpty ? 'paiement' : money(o.pendingAmount),
-              color: o.pending.isEmpty ? null : pendingColor,
-            ),
-          ),
-          Expanded(
-            child: _Kpi(
-              'En retard',
-              '$lateMembers',
-              'participant${lateMembers > 1 ? 's' : ''}',
-              color: lateMembers == 0 ? null : bad,
-            ),
-          ),
-        ],
-      ),
+      _hero(o, active.length, lateMembers),
+      const SizedBox(height: 4),
+      _quickActions(),
+      // --------------------------------------------- Paiements à valider
       if (o.pending.isNotEmpty) ...[
-        SectionTitle('Paiements à valider (${o.pending.length})'),
+        SectionTitle(
+          'Paiements à valider',
+          trailing: StatusChip('${o.pending.length}', pendingColor),
+        ),
         for (final r in o.pending)
           Card(
             child: ListTile(
@@ -409,13 +265,35 @@ class _OwnerDashboardState extends State<OwnerDashboard> with Reloadable {
               onTap: () => _review(r),
             ),
           ),
-      ] else
-        _Banner(
-          icon: Icons.verified_outlined,
-          text: 'Aucun paiement à valider.',
-          color: paymentStatusColor(PaymentStatus.approved),
-        ),
-      ..._todos(o),
+      ],
+      // ------------------------------------------------- À faire
+      const SectionTitle('À faire aujourd\'hui'),
+      if (todos.isEmpty && o.pending.isEmpty)
+        Card(
+          child: ListTile(
+            leading: Icon(
+              Icons.check_circle,
+              color: paymentStatusColor(PaymentStatus.approved),
+            ),
+            title: const Text(
+              'Rien d\'urgent',
+              style: TextStyle(fontWeight: FontWeight.w700),
+            ),
+            subtitle: const Text(
+              'Aucun paiement à valider, aucun retard, aucune remise à faire.',
+            ),
+          ),
+        )
+      else if (todos.isEmpty)
+        const Card(
+          child: ListTile(
+            leading: Icon(Icons.arrow_upward),
+            title: Text('Validez les paiements ci-dessus'),
+          ),
+        )
+      else
+        ...todos,
+      // ------------------------------------------------- Groupes
       if (active.isNotEmpty) ...[
         SectionTitle(
           'Mes groupes en cours',
@@ -426,21 +304,179 @@ class _OwnerDashboardState extends State<OwnerDashboard> with Reloadable {
         ),
         for (final g in active) _groupProgress(g, today),
       ],
-      const SizedBox(height: 8),
-      _shortcuts(),
-      const SizedBox(height: 8),
-      OutlinedButton.icon(
-        onPressed: widget.onShowTontines,
-        icon: const Icon(Icons.savings_outlined),
-        label: const Text('Voir toutes mes tontines'),
-      ),
-      const SizedBox(height: 8),
-      FilledButton.tonalIcon(
-        onPressed: () => openIfCanCreate(const CreateTontineScreen()),
-        icon: const Icon(Icons.add),
-        label: const Text('Nouvelle tontine'),
+      // ------------------------------------------------- Activité récente
+      FutureBuilder<List<AppNotification>>(
+        future: _recent,
+        builder: (context, snap) {
+          final list = snap.data ?? const <AppNotification>[];
+          if (list.isEmpty) return const SizedBox.shrink();
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              SectionTitle(
+                'Activité récente',
+                trailing: TextButton(
+                  onPressed: () => open(const NotificationsScreen()),
+                  child: const Text('Tout voir'),
+                ),
+              ),
+              Card(
+                clipBehavior: Clip.antiAlias,
+                child: Column(
+                  children: [
+                    for (final n in list)
+                      NotificationTile(
+                        n,
+                        onTap: () => openNotificationTarget(context, n),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          );
+        },
       ),
     ];
+  }
+
+  /// Bandeau principal : encaissé ce mois et chiffres clés.
+  Widget _hero(OwnerOverview o, int activeGroups, int lateMembers) {
+    final theme = Theme.of(context);
+    final on = theme.colorScheme.onPrimary;
+    Widget stat(String value, String label, VoidCallback? onTap) => Expanded(
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
+          decoration: BoxDecoration(
+            color: on.withValues(alpha: 0.12),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Column(
+            children: [
+              Text(
+                value,
+                style: theme.textTheme.titleLarge?.copyWith(
+                  color: on,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.bodySmall?.copyWith(color: on),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    return Card(
+      color: theme.colorScheme.primary,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              'Encaissé ce mois-ci',
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: on.withValues(alpha: 0.85),
+              ),
+            ),
+            FutureBuilder<Gains>(
+              future: _gains,
+              builder: (context, snap) => Text(
+                snap.hasData ? money(snap.data!.collectedThisMonth) : '…',
+                style: theme.textTheme.headlineMedium?.copyWith(
+                  color: on,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                stat('${o.pending.length}', 'à valider', null),
+                const SizedBox(width: 8),
+                stat(
+                  '$lateMembers',
+                  lateMembers > 1 ? 'en retard' : 'en retard',
+                  null,
+                ),
+                const SizedBox(width: 8),
+                stat(
+                  '$activeGroups',
+                  activeGroups > 1 ? 'groupes actifs' : 'groupe actif',
+                  widget.onShowTontines,
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Raccourcis : nouvelle tontine, tontines, gains, profil pro.
+  Widget _quickActions() {
+    final theme = Theme.of(context);
+    Widget action(IconData icon, String label, VoidCallback onTap) => Expanded(
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Column(
+            children: [
+              Container(
+                width: 52,
+                height: 52,
+                decoration: BoxDecoration(
+                  color: theme.cardTheme.color,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: theme.colorScheme.outlineVariant),
+                ),
+                child: Icon(icon, color: theme.colorScheme.primary),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                label,
+                textAlign: TextAlign.center,
+                maxLines: 2,
+                style: theme.textTheme.labelMedium?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        action(
+          Icons.add,
+          'Nouvelle tontine',
+          () => openIfCanCreate(const CreateTontineScreen()),
+        ),
+        action(Icons.savings_outlined, 'Mes tontines', widget.onShowTontines),
+        action(
+          Icons.insights_outlined,
+          'Mes gains',
+          () => open(const GainsScreen()),
+        ),
+        action(
+          Icons.storefront_outlined,
+          'Profil pro',
+          () => open(const BusinessProfileScreen()),
+        ),
+      ],
+    );
   }
 
   /// Avancée de la cagnotte en cours d'un groupe.
@@ -550,9 +586,8 @@ class _OwnerDashboardState extends State<OwnerDashboard> with Reloadable {
         items.add(
           _TodoTile(
             icon: Icons.campaign_outlined,
-            title:
-                '« ${g.name} » : $late participant${late > 1 ? 's' : ''} en retard',
-            subtitle: 'Voir le suivi et relancer sur WhatsApp',
+            title: '$late participant${late > 1 ? 's' : ''} en retard',
+            subtitle: '${g.name} · relancez-les sur WhatsApp',
             color: paymentStatusColor(PaymentStatus.rejected),
             onTap: () => open(GroupScreen(groupId: g.id)),
           ),
@@ -660,8 +695,13 @@ class _MemberDashboardState extends State<MemberDashboard> with Reloadable {
     return o;
   }
 
+  late Future<int> _unread = Api.unreadCount();
+
   @override
-  void reload() => setState(() => _data = _loadOverview());
+  void reload() => setState(() {
+    _data = _loadOverview();
+    _unread = Api.unreadCount();
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -669,6 +709,10 @@ class _MemberDashboardState extends State<MemberDashboard> with Reloadable {
       appBar: AppBar(
         title: _Greeting(widget.profile, 'Espace participant'),
         actions: [
+          NotificationBell(
+            unread: _unread,
+            onTap: () => open(const NotificationsScreen()),
+          ),
           IconButton(
             tooltip: 'Aide',
             icon: const Icon(Icons.help_outline),

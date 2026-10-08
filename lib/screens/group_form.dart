@@ -33,7 +33,11 @@ class _GroupFormScreenState extends State<GroupFormScreen> {
   late final _amount = TextEditingController(
     text: _g == null ? '' : '${_g.contributionAmount}',
   );
-  late final _duration = TextEditingController(text: '${_g?.perPot ?? 30}');
+  late final _duration = TextEditingController(text: '${_g?.perPot ?? 1}');
+
+  /// Tontine tournante : une remise à chaque cotisation (collecte d'une
+  /// seule cotisation par participant).
+  late bool _rotating = (_g?.perPot ?? 1) == 1;
   late final _commission = TextEditingController(
     text: _g == null ? '0' : _formatNumber(_g.commissionValue),
   );
@@ -262,26 +266,84 @@ class _GroupFormScreenState extends State<GroupFormScreen> {
           ),
       ],
     ),
-    const SizedBox(height: 16),
-    TextFormField(
-      controller: _duration,
-      keyboardType: TextInputType.number,
-      inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-      decoration: InputDecoration(
-        labelText: 'Durée de collecte avant chaque remise',
-        suffixText: durationUnit(_frequency),
-        helperText: _perPot >= 1
-            ? 'Soit ${contributionsLabel(_perPot)} par participant pour '
-                  'chaque cagnotte'
-            : null,
-      ),
-      validator: (v) {
-        final n = int.tryParse(v ?? '') ?? 0;
-        return n < 1 || n > 366 ? 'Entre 1 et 366' : null;
-      },
-      onChanged: (_) => _payout = null,
+    const SizedBox(height: 20),
+    Text(
+      'Quand la cagnotte est-elle remise ?',
+      style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
     ),
+    const SizedBox(height: 8),
+    _ModeCard(
+      selected: _rotating,
+      title: 'À chaque cotisation (tontine tournante)',
+      text:
+          '${_capitalize(frequencyLower(_frequency))}, tout le monde cotise et '
+          'un participant reçoit la cagnotte. Avec '
+          '${_memberCount >= 2 ? _memberCount : 'N'} participants, la tontine '
+          'dure ${_memberCount >= 2 ? durationLabel(_frequency, _memberCount) : 'N ${durationUnit(_frequency)}'} '
+          'et chacun reçoit une fois.',
+      onTap: () => setState(() {
+        _rotating = true;
+        _duration.text = '1';
+        _payout = null;
+      }),
+    ),
+    const SizedBox(height: 8),
+    _ModeCard(
+      selected: !_rotating,
+      title: 'Après plusieurs cotisations',
+      text:
+          'La cagnotte est remise après une période de collecte (ex. 30 jours '
+          'de cotisations), puis la suivante commence.',
+      onTap: () => setState(() {
+        _rotating = false;
+        if (_perPot <= 1) _duration.text = '';
+        _payout = null;
+      }),
+    ),
+    if (!_rotating) ...[
+      const SizedBox(height: 16),
+      TextFormField(
+        controller: _duration,
+        keyboardType: TextInputType.number,
+        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+        decoration: InputDecoration(
+          labelText: 'Durée de collecte avant chaque remise',
+          suffixText: durationUnit(_frequency),
+          helperText: _perPot >= 1
+              ? 'Soit ${contributionsLabel(_perPot)} par participant pour '
+                    'chaque cagnotte'
+              : null,
+        ),
+        validator: (v) {
+          final n = int.tryParse(v ?? '') ?? 0;
+          return n < 2 || n > 366 ? 'Entre 2 et 366' : null;
+        },
+        onChanged: (_) => _payout = null,
+      ),
+    ],
+    if (_ready) ...[
+      const SizedBox(height: 16),
+      Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surfaceContainerHighest.withValues(
+            alpha: 0.5,
+          ),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Text(
+          'Durée totale : ${durationLabel(_frequency, _memberCount * _perPot)} · '
+          '$_memberCount remises, une tous les '
+          '${durationLabel(_frequency, _perPot)}. Chaque participant verse '
+          '${money(_perPot * _contribution)} par cagnotte.',
+          style: theme.textTheme.bodySmall,
+        ),
+      ),
+    ],
   ];
+
+  static String _capitalize(String s) =>
+      s.isEmpty ? s : s[0].toUpperCase() + s.substring(1);
 
   List<Widget> _payoutStep(ThemeData theme, Group g) => [
     Text(
@@ -741,6 +803,73 @@ class GroupSummary extends StatelessWidget {
               Text(g.rulesText, style: theme.textTheme.bodyMedium),
             ],
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Choix d'un mode (carte sélectionnable avec explication).
+class _ModeCard extends StatelessWidget {
+  const _ModeCard({
+    required this.selected,
+    required this.title,
+    required this.text,
+    required this.onTap,
+  });
+
+  final bool selected;
+  final String title;
+  final String text;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Semantics(
+      button: true,
+      selected: selected,
+      inMutuallyExclusiveGroup: true,
+      child: Material(
+        color: selected ? scheme.primaryContainer : scheme.surface,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(14),
+          side: BorderSide(
+            color: selected ? scheme.primary : scheme.outlineVariant,
+            width: selected ? 2 : 1,
+          ),
+        ),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(14),
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(
+                  selected
+                      ? Icons.radio_button_checked
+                      : Icons.radio_button_off,
+                  color: selected ? scheme.primary : scheme.onSurfaceVariant,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: const TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(text, style: Theme.of(context).textTheme.bodySmall),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
       ),
     );

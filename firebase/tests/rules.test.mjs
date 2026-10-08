@@ -1093,3 +1093,32 @@ test('version 2.2 : règlement accepté, pénalité en pourcentage, demandes d\'
       monthlyPrice: 5000, paymentPhone: '+22901000000', supportPhone: '+22901000001',
     })));
 });
+
+test('notifications (cloche)', async (t) => {
+  const T = db('t');
+  const tontine = T.collection('tontines').doc();
+  await assertSucceeds(tontine.set({
+    ownerId: 't', ownerName: 'Tontinier', name: 'Tontine du marché', type: 'cagnotte', createdAt: now(),
+  }));
+  const G = await createGroup(T, tontine.id, 'NOT234', { memberCount: 3 });
+  await assertSucceeds(joinGroup('a', G));
+  const notify = (from, to, fields = {}) => db(from).collection(`users/${to}/notifications`).add({
+    type: 'payment_declared', title: 'Paiement à valider', body: 'Alice : 1 cotisation',
+    groupId: G, carnetId: null, actorId: from, actorName: people[from].name, read: false, at: now(),
+    ...fields,
+  });
+  await t.test('un client prévient son tontinier', () => assertSucceeds(notify('a', 't')));
+  await t.test('le tontinier prévient un client du groupe', () =>
+    assertSucceeds(notify('t', 'a', { actorName: 'Tontinier', type: 'payment_approved' })));
+  await t.test('prévenir quelqu\'un hors du groupe : refusé', () => assertFails(notify('a', 'c')));
+  await t.test('une personne extérieure écrit au tontinier : refusé', () => assertFails(notify('c', 't')));
+  await t.test('se faire passer pour un autre : refusé', () =>
+    assertFails(notify('a', 't', { actorId: 'b' })));
+  await t.test('le tontinier lit ses notifications', () =>
+    assertSucceeds(T.collection('users/t/notifications').where('read', '==', false).get()));
+  await t.test('lire les notifications d\'un autre : refusé', () =>
+    assertFails(db('a').collection('users/t/notifications').get()));
+  const list = await T.collection('users/t/notifications').get();
+  await t.test('marquer comme lue', () => assertSucceeds(list.docs[0].ref.update({ read: true })));
+  await t.test('modifier le texte : refusé', () => assertFails(list.docs[0].ref.update({ title: 'x' })));
+});

@@ -292,6 +292,41 @@ service cloud.firestore {
         && incoming().get('supportPhone', '').size() <= 30;
     }
 
+    // Notifications (cloche) : un client prévient son tontinier, le tontinier
+    // prévient un client de son groupe ou de son carnet. Seul le destinataire
+    // les lit, les marque comme lues ou les supprime.
+    function linkedByGroup(groupId, other) {
+      let g = get(doc('groups/' + groupId)).data;
+      return (g.ownerId == uid() && other in g.memberIds)
+        || (g.ownerId == other && uid() in g.memberIds);
+    }
+
+    function linkedByCarnet(carnetId, other) {
+      let c = get(doc('carnets/' + carnetId)).data;
+      return (c.ownerId == uid() && c.get('clientId', null) == other)
+        || (c.ownerId == other && c.get('clientId', null) == uid());
+    }
+
+    match /users/{userId}/notifications/{notificationId} {
+      allow read, delete: if signedIn() && userId == uid();
+      allow update: if signedIn() && userId == uid()
+        && changedOnly(['read']) && incoming().read == true;
+      allow create: if signedIn() && userId != uid()
+        && incoming().keys().hasOnly(['type', 'title', 'body', 'groupId', 'carnetId',
+            'actorId', 'actorName', 'read', 'at'])
+        && isText(incoming().type, 1, 40)
+        && isText(incoming().title, 1, 100)
+        && isText(incoming().body, 1, 300)
+        && incoming().actorId == uid()
+        && incoming().actorName == me().fullName
+        && incoming().read == false
+        && incoming().at == request.time
+        && ((incoming().get('groupId', null) is string
+            && linkedByGroup(incoming().groupId, userId))
+          || (incoming().get('carnetId', null) is string
+            && linkedByCarnet(incoming().carnetId, userId)));
+    }
+
     // Demande d'abonnement d'un tontinier : il écrit à COTIZI sur WhatsApp,
     // paie, puis l'administrateur active l'abonnement et supprime la demande.
     match /subscriptionRequests/{userId} {

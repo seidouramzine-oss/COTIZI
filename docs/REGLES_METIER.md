@@ -47,7 +47,13 @@ tontines, puis invitent leurs **clients**, qui ne font que participer.
    - le **nombre de participants** (= nombre de cagnottes : chacun reçoit une fois) ;
    - la **cotisation** et sa **fréquence** : chaque jour, chaque semaine, toutes
      les 2 semaines ou chaque mois ;
-   - la **durée de collecte** avant chaque remise (ex. 30 jours = 30 cotisations) ;
+   - **quand la cagnotte est remise** :
+     - **à chaque cotisation (tontine tournante)**, le choix par défaut : chaque
+       jour (ou semaine, ou mois) tout le monde cotise et un participant reçoit
+       la cagnotte. Avec 15 participants qui cotisent chaque jour, la tontine
+       dure 15 jours et, à la fin, chacun a reçu sa cagnotte une fois ;
+     - **après plusieurs cotisations** : on fixe la **durée de collecte** avant
+       chaque remise (ex. 30 jours = 30 cotisations) ;
    - l'**ordre des remises** : **tirage au sort** ou **ordre fixé** par le tontinier ;
    - sa **commission** (pourcentage ou montant fixe), **retenue sur chaque cagnotte** ;
    - une **pénalité de retard** facultative : un **montant fixe** ou un
@@ -130,6 +136,20 @@ tontines, puis invitent leurs **clients**, qui ne font que participer.
   et bouton pour écrire à l'**assistance COTIZI sur WhatsApp** (numéro réglé
   par l'administrateur). Un client peut aussi **écrire à son tontinier** depuis
   la page de son groupe.
+
+## Notifications (la cloche)
+
+- La **cloche** en haut de l'accueil montre le nombre de nouvelles
+  notifications. En l'ouvrant, on voit la liste (Aujourd'hui / Plus tôt) et
+  elles passent en « lues ». Toucher une notification ouvre le groupe ou le
+  carnet concerné.
+- Le **tontinier** est prévenu quand un client : rejoint un groupe ou un carnet,
+  accepte le règlement, déclare un paiement, confirme ou conteste la réception
+  d'une cagnotte.
+- Le **client** est prévenu quand son tontinier : démarre la tontine, valide ou
+  refuse son paiement, enregistre un paiement pour lui, lui remet sa cagnotte.
+- Une notification ne peut être envoyée qu'entre un tontinier et ses propres
+  clients (vérifié par les règles du serveur) ; chacun ne lit que les siennes.
 
 ## Rappels sur le téléphone
 
