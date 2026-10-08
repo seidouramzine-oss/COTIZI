@@ -1160,6 +1160,15 @@ test('version 2.2 : règlement accepté, pénalité en pourcentage, demandes d\'
     assertSucceeds(admin.doc('settings/subscription').set({
       monthlyPrice: 5000, paymentPhone: '+22901000000', supportPhone: '+22901000001',
     })));
+  await t.test('e-mail et horaires de l\'assistance dans les réglages', () =>
+    assertSucceeds(admin.doc('settings/subscription').set({
+      monthlyPrice: 5000, paymentPhone: '+22901000000', supportPhone: '+22901000001',
+      supportEmail: 'assistance@cotizi.app', supportHours: 'du lundi au vendredi (9 h 00 - 17 h 00)',
+    })));
+  await t.test('horaires trop longs : refusé', () =>
+    assertFails(admin.doc('settings/subscription').set({
+      monthlyPrice: 5000, paymentPhone: '+22901000000', supportHours: 'x'.repeat(200),
+    })));
 });
 
 test('notifications (cloche)', async (t) => {

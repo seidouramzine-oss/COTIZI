@@ -278,6 +278,8 @@ class Api {
         'monthlyPrice': s.monthlyPrice,
         'paymentPhone': s.paymentPhone.trim(),
         'supportPhone': s.supportPhone.trim(),
+        'supportEmail': s.supportEmail.trim(),
+        'supportHours': s.supportHours.trim(),
       });
 
   /// Le tontinier demande un abonnement de [months] mois : la demande

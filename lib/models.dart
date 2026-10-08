@@ -134,7 +134,20 @@ class SubscriptionSettings {
     this.monthlyPrice = 0,
     this.paymentPhone = '',
     this.supportPhone = '',
+    this.supportEmail = '',
+    this.supportHours = '',
   });
+
+  /// E-mail de l'assistance COTIZI (facultatif).
+  final String supportEmail;
+
+  /// Horaires de l'assistance, ex. « du lundi au vendredi (9 h 00 - 17 h 00) ».
+  final String supportHours;
+
+  static const defaultHours = 'du lundi au samedi (8 h 00 - 18 h 00)';
+
+  String get hoursLabel =>
+      supportHours.isNotEmpty ? supportHours : defaultHours;
 
   final int monthlyPrice;
   final String paymentPhone;
@@ -152,6 +165,8 @@ class SubscriptionSettings {
     monthlyPrice: (json?['monthlyPrice'] as num?)?.toInt() ?? 0,
     paymentPhone: json?['paymentPhone'] as String? ?? '',
     supportPhone: json?['supportPhone'] as String? ?? '',
+    supportEmail: json?['supportEmail'] as String? ?? '',
+    supportHours: json?['supportHours'] as String? ?? '',
   );
 }
 

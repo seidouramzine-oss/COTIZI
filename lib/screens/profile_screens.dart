@@ -722,78 +722,222 @@ class HelpScreen extends StatelessWidget {
   }
 }
 
-/// « Besoin d'aide ? » : écrire ou téléphoner à l'assistance COTIZI.
+/// « Aide et support » : WhatsApp ou e-mail de l'assistance COTIZI.
 class SupportCard extends StatelessWidget {
   const SupportCard({super.key, required this.isMember});
 
   final bool isMember;
 
+  static const _whatsappGreen = Color(0xFF25D366);
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
     return FutureBuilder<(SubscriptionSettings, Profile?)>(
       future: Future.wait([Api.subscriptionSettings(), Api.myProfile()])
           .then((r) => (r[0] as SubscriptionSettings, r[1] as Profile?)),
       builder: (context, snap) {
-        final phone = snap.data?.$1.contactPhone ?? '';
+        final settings = snap.data?.$1 ?? const SubscriptionSettings();
         final me = snap.data?.$2;
-        final digits = phone.replaceAll(RegExp(r'\D'), '');
-        return Card(
-          color: theme.colorScheme.primaryContainer,
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Row(
-                  children: [
-                    Icon(
-                      Icons.support_agent,
-                      color: theme.colorScheme.onPrimaryContainer,
+        final phone = settings.contactPhone;
+        final email = settings.supportEmail;
+        final hello =
+            'Bonjour, j\'ai besoin d\'aide sur COTIZI.'
+            '${me == null ? '' : '\nNom : ${me.fullName}\nNuméro : ${me.phone}'}';
+        return Container(
+          margin: const EdgeInsets.symmetric(vertical: 6),
+          clipBehavior: Clip.antiAlias,
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                scheme.primaryContainer.withValues(alpha: 0.7),
+                scheme.primaryContainer,
+              ],
+            ),
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(color: scheme.outlineVariant),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.06),
+                blurRadius: 14,
+                offset: const Offset(0, 6),
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 8,
+                  ),
+                  decoration: BoxDecoration(
+                    color: scheme.primary.withValues(alpha: 0.14),
+                    borderRadius: const BorderRadius.only(
+                      bottomRight: Radius.circular(14),
                     ),
-                    const SizedBox(width: 10),
-                    Text(
-                      'Besoin d\'aide ?',
-                      style: theme.textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w800,
-                        color: theme.colorScheme.onPrimaryContainer,
+                  ),
+                  child: Text(
+                    'AIDE ET SUPPORT',
+                    style: theme.textTheme.labelLarge?.copyWith(
+                      color: scheme.primary,
+                      letterSpacing: 1.2,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 14, 16, 0),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Besoin d\'assistance ?',
+                            style: theme.textTheme.headlineSmall?.copyWith(
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'Nous sommes à un clic !',
+                            style: theme.textTheme.titleMedium,
+                          ),
+                        ],
+                      ),
+                    ),
+                    Container(
+                      width: 72,
+                      height: 72,
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: [Color(0xFF13906A), Color(0xFF075A41)],
+                        ),
+                        borderRadius: BorderRadius.circular(22),
+                        boxShadow: [
+                          BoxShadow(
+                            color: scheme.primary.withValues(alpha: 0.3),
+                            blurRadius: 12,
+                            offset: const Offset(0, 6),
+                          ),
+                        ],
+                      ),
+                      child: const Icon(
+                        Icons.question_mark_rounded,
+                        color: Colors.white,
+                        size: 40,
                       ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 8),
-                Text(
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
+                child: Text(
                   isMember
-                      ? 'Une question sur vos cotisations ou votre cagnotte ? '
-                            'Écrivez d\'abord à votre tontinier (bouton en haut '
-                            'de la page de votre groupe). Pour un problème avec '
-                            'l\'application, écrivez à l\'assistance COTIZI.'
-                      : 'Notre équipe vous répond sur WhatsApp : utilisation '
-                            'de l\'application, abonnement, problème avec un '
-                            'groupe ou un paiement.',
-                  style: TextStyle(color: theme.colorScheme.onPrimaryContainer),
+                      ? 'Une question sur vos cotisations ? Écrivez d\'abord à '
+                            'votre tontinier. Pour un problème avec '
+                            'l\'application, contactez COTIZI.'
+                      : 'Utilisation de l\'application, abonnement, groupe ou '
+                            'paiement : notre équipe vous répond.',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: scheme.onSurfaceVariant,
+                  ),
                 ),
-                if (digits.isNotEmpty) ...[
-                  const SizedBox(height: 12),
-                  FilledButton.icon(
-                    onPressed: () => openWhatsApp(
-                      context,
-                      phone,
-                      'Bonjour, j\'ai besoin d\'aide sur COTIZI.'
-                      '${me == null ? '' : '\nNom : ${me.fullName}\nNuméro : ${me.phone}'}',
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 18),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: FilledButton.icon(
+                        onPressed: phone.isEmpty
+                            ? null
+                            : () => openWhatsApp(context, phone, hello),
+                        style: FilledButton.styleFrom(
+                          backgroundColor: _whatsappGreen,
+                          foregroundColor: Colors.white,
+                          minimumSize: const Size.fromHeight(54),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          textStyle: const TextStyle(
+                            fontWeight: FontWeight.w800,
+                            fontSize: 16,
+                          ),
+                        ),
+                        icon: const Icon(Icons.chat),
+                        label: const Text('WhatsApp'),
+                      ),
                     ),
-                    icon: const Icon(Icons.chat_outlined),
-                    label: const Text('Écrire à l\'assistance sur WhatsApp'),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: email.isEmpty
+                            ? (phone.isEmpty
+                                  ? null
+                                  : () => launchUrl(
+                                      Uri.parse(
+                                        'tel:+${phone.replaceAll(RegExp(r'\D'), '')}',
+                                      ),
+                                    ))
+                            : () => launchUrl(
+                                Uri(
+                                  scheme: 'mailto',
+                                  path: email,
+                                  query:
+                                      'subject=${Uri.encodeComponent('Assistance COTIZI')}'
+                                      '&body=${Uri.encodeComponent(hello)}',
+                                ),
+                              ),
+                        style: OutlinedButton.styleFrom(
+                          backgroundColor: scheme.surface,
+                          minimumSize: const Size.fromHeight(54),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          textStyle: const TextStyle(
+                            fontWeight: FontWeight.w800,
+                            fontSize: 16,
+                          ),
+                        ),
+                        icon: Icon(
+                          email.isEmpty
+                              ? Icons.call_outlined
+                              : Icons.mail_outline,
+                        ),
+                        label: Text(email.isEmpty ? 'Appeler' : 'E-mail'),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Container(
+                color: const Color(0xFFFFE9A8),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 12,
+                ),
+                child: Text(
+                  'Contactez-nous ${settings.hoursLabel}',
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: const Color(0xFF7A3B00),
                   ),
-                  const SizedBox(height: 8),
-                  OutlinedButton.icon(
-                    onPressed: () => launchUrl(Uri.parse('tel:+$digits')),
-                    icon: const Icon(Icons.call_outlined),
-                    label: const Text('Appeler l\'assistance'),
-                  ),
-                ],
-              ],
-            ),
+                ),
+              ),
+            ],
           ),
         );
       },

@@ -710,6 +710,9 @@ class _AdminScreenState extends State<AdminScreen> {
                         'Mobile Money : ${_settings.paymentPhone}',
                       if (_settings.supportPhone.isNotEmpty)
                         'Assistance WhatsApp : ${_settings.supportPhone}',
+                      if (_settings.supportEmail.isNotEmpty)
+                        'E-mail : ${_settings.supportEmail}',
+                      'Horaires : ${_settings.hoursLabel}',
                     ].join('\n')
                   : 'Pas encore réglé : les tontiniers ne savent pas comment payer',
             ),
@@ -855,12 +858,16 @@ class _SettingsDialogState extends State<_SettingsDialog> {
   late final _support = TextEditingController(
     text: widget.initial.supportPhone,
   );
+  late final _email = TextEditingController(text: widget.initial.supportEmail);
+  late final _hours = TextEditingController(text: widget.initial.supportHours);
 
   @override
   void dispose() {
     _price.dispose();
     _phone.dispose();
     _support.dispose();
+    _email.dispose();
+    _hours.dispose();
     super.dispose();
   }
 
@@ -868,37 +875,56 @@ class _SettingsDialogState extends State<_SettingsDialog> {
   Widget build(BuildContext context) {
     return AlertDialog(
       title: const Text('Paiement de l\'abonnement'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          TextField(
-            controller: _price,
-            keyboardType: TextInputType.number,
-            decoration: const InputDecoration(
-              labelText: 'Prix par mois',
-              suffixText: 'FCFA',
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: _price,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                labelText: 'Prix par mois',
+                suffixText: 'FCFA',
+              ),
             ),
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _phone,
-            keyboardType: TextInputType.phone,
-            maxLength: 30,
-            decoration: const InputDecoration(
-              labelText: 'Numéro Mobile Money et WhatsApp',
-              hintText: '+229 01 97 00 00 00',
+            const SizedBox(height: 12),
+            TextField(
+              controller: _phone,
+              keyboardType: TextInputType.phone,
+              maxLength: 30,
+              decoration: const InputDecoration(
+                labelText: 'Numéro Mobile Money et WhatsApp',
+                hintText: '+229 01 97 00 00 00',
+              ),
             ),
-          ),
-          TextField(
-            controller: _support,
-            keyboardType: TextInputType.phone,
-            maxLength: 30,
-            decoration: const InputDecoration(
-              labelText: 'WhatsApp de l\'assistance (facultatif)',
-              helperText: 'Sinon, le numéro ci-dessus est utilisé',
+            TextField(
+              controller: _support,
+              keyboardType: TextInputType.phone,
+              maxLength: 30,
+              decoration: const InputDecoration(
+                labelText: 'WhatsApp de l\'assistance (facultatif)',
+                helperText: 'Sinon, le numéro ci-dessus est utilisé',
+              ),
             ),
-          ),
-        ],
+            TextField(
+              controller: _email,
+              keyboardType: TextInputType.emailAddress,
+              maxLength: 80,
+              decoration: const InputDecoration(
+                labelText: 'E-mail de l\'assistance (facultatif)',
+                hintText: 'assistance@exemple.com',
+              ),
+            ),
+            TextField(
+              controller: _hours,
+              maxLength: 80,
+              decoration: const InputDecoration(
+                labelText: 'Horaires de l\'assistance',
+                hintText: SubscriptionSettings.defaultHours,
+              ),
+            ),
+          ],
+        ),
       ),
       actions: [
         TextButton(
@@ -912,6 +938,8 @@ class _SettingsDialogState extends State<_SettingsDialog> {
               monthlyPrice: (parseAmount(_price.text) ?? 0).clamp(0, 10000000),
               paymentPhone: _phone.text.trim(),
               supportPhone: _support.text.trim(),
+              supportEmail: _email.text.trim(),
+              supportHours: _hours.text.trim(),
             ),
           ),
           child: const Text('Enregistrer'),

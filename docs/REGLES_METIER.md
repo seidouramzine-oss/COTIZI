@@ -146,10 +146,13 @@ tontines, puis invitent leurs **clients**, qui ne font que participer.
 
 ## Aide et assistance
 
-- **Aide et assistance** (bouton « ? » de l'accueil, ou Profil) : explications
-  et bouton pour écrire à l'**assistance COTIZI sur WhatsApp** (numéro réglé
-  par l'administrateur). Un client peut aussi **écrire à son tontinier** depuis
-  la page de son groupe.
+- **Aide et assistance** (bouton « ? » de l'accueil, ou Profil) : carte
+  « AIDE ET SUPPORT — Besoin d'assistance ? Nous sommes à un clic ! » avec un
+  bouton **WhatsApp** (assistance COTIZI) et un bouton **E-mail** (ou
+  « Appeler » si aucun e-mail n'est réglé), et les **horaires** dans un bandeau
+  jaune. Le numéro, l'e-mail et les horaires se règlent dans Administration →
+  « Prix, Mobile Money et assistance ». En dessous : les explications pas à pas.
+- Un client peut aussi **écrire à son tontinier** depuis la page de son groupe.
 
 ## Confiance et anti-fraude
 

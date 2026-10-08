@@ -365,7 +365,12 @@ service cloud.firestore {
     match /settings/{name} {
       allow read: if signedIn();
       allow write: if isAdmin() && name == 'subscription'
-        && incoming().keys().hasOnly(['monthlyPrice', 'paymentPhone', 'supportPhone'])
+        && incoming().keys().hasOnly(['monthlyPrice', 'paymentPhone', 'supportPhone',
+            'supportEmail', 'supportHours'])
+        && incoming().get('supportEmail', '') is string
+        && incoming().get('supportEmail', '').size() <= 80
+        && incoming().get('supportHours', '') is string
+        && incoming().get('supportHours', '').size() <= 80
         && incoming().monthlyPrice is int
         && incoming().monthlyPrice >= 0 && incoming().monthlyPrice <= 10000000
         && incoming().paymentPhone is string && incoming().paymentPhone.size() <= 30
