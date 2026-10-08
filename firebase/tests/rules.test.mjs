@@ -1418,3 +1418,28 @@ test('version 2.6 : abonnement du tontinier expiré, activité en pause', async 
   await t.test('abonnement réactivé : le client déclare de nouveau', () =>
     assertSucceeds(declare('b', G, 1, { method: 'cash' })));
 });
+
+test('version 2.7 : suggestions pour améliorer COTIZI', async (t) => {
+  const suggest = (id, fields = {}) => db(id).collection('suggestions').add({
+    userId: id, fullName: people[id].name, phone: people[id].phone,
+    role: id === 't' ? 'tontinier' : 'membre', kind: 'idee',
+    text: 'Ajouter un rappel par SMS', status: 'new', createdAt: now(), ...fields,
+  });
+  const ref = await assertSucceeds(suggest('t'));
+  await t.test('un client aussi peut faire une suggestion', () => assertSucceeds(suggest('a')));
+  await t.test('suggestion au nom d\'un autre : refusé', () => assertFails(suggest('t', { userId: 'a' })));
+  await t.test('texte trop court : refusé', () => assertFails(suggest('t', { text: 'ok' })));
+  await t.test('catégorie inconnue : refusé', () => assertFails(suggest('t', { kind: 'spam' })));
+  await t.test('déjà « traitée » à la création : refusé', () => assertFails(suggest('t', { status: 'done' })));
+  await t.test('le tontinier relit sa suggestion', () => assertSucceeds(ref.get()));
+  await t.test('lire la suggestion d\'un autre : refusé', () =>
+    assertFails(db('b').doc(`suggestions/${ref.id}`).get()));
+  await t.test('modifier sa suggestion : refusé', () => assertFails(ref.update({ status: 'done' })));
+  const admin = env.authenticatedContext('adm', { email: '22997000003@phone.cotizi.app' }).firestore();
+  await t.test('l\'administrateur lit toutes les suggestions', () =>
+    assertSucceeds(admin.collection('suggestions').get()));
+  await t.test('l\'administrateur la marque comme lue', () =>
+    assertSucceeds(admin.doc(`suggestions/${ref.id}`).update({ status: 'read' })));
+  await t.test('l\'administrateur la supprime', () =>
+    assertSucceeds(admin.doc(`suggestions/${ref.id}`).delete()));
+});

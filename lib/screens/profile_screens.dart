@@ -12,6 +12,7 @@ import '../widgets/common.dart';
 import '../reminders.dart';
 import 'business_screens.dart';
 import 'subscription_screens.dart';
+import 'suggestion_screens.dart';
 
 /// Onglet « Profil » : informations du compte et paramètres.
 class ProfilePage extends StatefulWidget {
@@ -283,6 +284,15 @@ class _ProfilePageState extends State<ProfilePage> {
                   MaterialPageRoute(
                     builder: (_) => HelpScreen(isMember: _p.isMember),
                   ),
+                ),
+              ),
+              ListTile(
+                leading: const Icon(Icons.lightbulb_outline),
+                title: const Text('Suggestions'),
+                subtitle: const Text('Aidez-nous à améliorer COTIZI'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const SuggestionsScreen()),
                 ),
               ),
               ListTile(

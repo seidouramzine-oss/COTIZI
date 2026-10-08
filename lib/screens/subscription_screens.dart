@@ -5,6 +5,7 @@ import '../api.dart';
 import '../format.dart';
 import '../models.dart';
 import '../widgets/common.dart';
+import 'suggestion_screens.dart';
 
 /// Accès d'un tontinier (essai, abonnement, administrateur), prêt à afficher.
 class AccessStatus {
@@ -629,6 +630,20 @@ class _AdminScreenState extends State<AdminScreen> {
                 ),
               ),
           ],
+        ),
+        const SizedBox(height: 8),
+        Card(
+          child: ListTile(
+            leading: const Icon(Icons.lightbulb_outline),
+            title: const Text('Suggestions reçues'),
+            subtitle: const Text(
+              'Idées et problèmes envoyés par les utilisateurs',
+            ),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const AdminSuggestionsScreen()),
+            ),
+          ),
         ),
         if (_requests.isNotEmpty) ...[
           SectionTitle('Demandes d\'abonnement (${_requests.length})'),

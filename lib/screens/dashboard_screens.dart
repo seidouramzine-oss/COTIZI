@@ -6,6 +6,7 @@ import '../format.dart';
 import '../models.dart';
 import '../reminders.dart';
 import '../widgets/common.dart';
+import '../widgets/home_cards.dart';
 import '../widgets/trust.dart';
 import 'carnet_screens.dart';
 import 'group_screens.dart';
@@ -15,29 +16,9 @@ import 'profile_screens.dart' show HelpScreen;
 import 'business_screens.dart';
 import 'subscription_screens.dart';
 import 'tontine_screens.dart';
+import 'suggestion_screens.dart';
 
 String _firstName(Profile p) => p.fullName.trim().split(RegExp(r'\s+')).first;
-
-class _Greeting extends StatelessWidget {
-  const _Greeting(this.profile, this.subtitle);
-
-  final Profile profile;
-  final String subtitle;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Bonjour ${_firstName(profile)}',
-          style: const TextStyle(fontWeight: FontWeight.w700),
-        ),
-        Text(subtitle, style: Theme.of(context).textTheme.bodySmall),
-      ],
-    );
-  }
-}
 
 /// Ligne d'action « à faire » : icône, texte, flèche.
 class _TodoTile extends StatelessWidget {
@@ -246,57 +227,96 @@ class _OwnerDashboardState extends State<OwnerDashboard> with Reloadable {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: FutureBuilder<Business?>(
-          future: _business,
-          builder: (context, snap) =>
-              _Greeting(widget.profile, snap.data?.name ?? 'Espace tontinier'),
-        ),
-        actions: [
-          NotificationBell(
-            unread: _unread,
-            onTap: () => open(const NotificationsScreen()),
-          ),
-          IconButton(
-            tooltip: 'Aide',
-            icon: const Icon(Icons.help_outline),
-            onPressed: () => open(const HelpScreen(isMember: false)),
-          ),
-        ],
-      ),
-      body: RefreshIndicator(
-        onRefresh: () async {
-          reload();
-          await _data;
-        },
-        child: FutureView<OwnerOverview>(
-          future: _data,
-          onRetry: reload,
-          builder: (context, o) => ListView(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
-            children: o.tontineCount == 0 ? _empty(o) : _content(o),
+      body: SafeArea(
+        child: RefreshIndicator(
+          onRefresh: () async {
+            reload();
+            await _data;
+          },
+          child: FutureView<OwnerOverview>(
+            future: _data,
+            onRetry: reload,
+            builder: (context, o) => ListView(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
+              children: o.tontineCount == 0 ? _empty(o) : _content(o),
+            ),
           ),
         ),
       ),
     );
   }
 
-  List<Widget> _empty(OwnerOverview o) => [
-    _accessBanner(),
-    _guide(o),
-    EmptyState(
-      icon: Icons.savings_outlined,
-      title: 'Bienvenue sur COTIZI',
-      message:
-          'Créez votre première tontine à cagnotte ou à carnet, puis invitez '
-          'vos membres en leur envoyant le lien.',
-      action: FilledButton.icon(
-        onPressed: () => openIfCanCreate(const CreateTontineScreen()),
-        icon: const Icon(Icons.add),
-        label: const Text('Créer ma première tontine'),
+  /// En-tête : grand bonjour, nom de l'activité, cloche et aide.
+  Widget _header() => FutureBuilder<Business?>(
+    future: _business,
+    builder: (context, snap) => HomeHeader(
+      name: _firstName(widget.profile),
+      subtitle: snap.data?.name != null
+          ? '${snap.data!.name} · voici le résumé de votre activité'
+          : 'Voici le résumé de votre activité',
+      bell: NotificationBell(
+        unread: _unread,
+        onTap: () => open(const NotificationsScreen()),
       ),
+      onHelp: () => open(const HelpScreen(isMember: false)),
     ),
-    const MoneySafetyCard(isMember: false),
+  );
+
+  /// « Reprenez là où vous vous êtes arrêté » : la chose la plus urgente.
+  Widget _resume(OwnerOverview o) {
+    if (o.tontineCount == 0) {
+      return ResumeCard(
+        icon: Icons.savings_outlined,
+        title: 'Votre première tontine vous attend',
+        subtitle:
+            'Reprenez là où vous vous êtes arrêté : 2 minutes pour la créer.',
+        color: const Color(0xFFB07D00),
+        onTap: () => openIfCanCreate(const CreateTontineScreen()),
+      );
+    }
+    if (o.pending.isEmpty) return const SizedBox.shrink();
+    final n = o.pending.length;
+    return ResumeCard(
+      icon: Icons.receipt_long,
+      title: '$n paiement${n > 1 ? 's' : ''} à valider',
+      subtitle:
+          'Reprenez là où vous vous êtes arrêté : vérifiez la preuve et '
+          'validez.',
+      color: paymentStatusColor(PaymentStatus.pending),
+      onTap: () => _review(o.pending.first),
+    );
+  }
+
+  /// Carte d'action : créer sa première tontine, ou inviter ses clients.
+  Widget _promo(OwnerOverview o) => o.tontineCount == 0
+      ? PromoCard(
+          icon: Icons.rocket_launch_outlined,
+          title: 'Créez votre première tontine',
+          text:
+              'Cagnotte tournante ou carnet de 31 cases : prête en 2 minutes, '
+              'puis invitez vos clients par WhatsApp.',
+          buttonLabel: 'Commencer',
+          onTap: () => openIfCanCreate(const CreateTontineScreen()),
+        )
+      : PromoCard(
+          icon: Icons.group_add_outlined,
+          title: 'Invitez vos clients',
+          text:
+              'Partagez le lien d\'invitation de vos groupes sur WhatsApp : '
+              'vos clients rejoignent en un clic, gratuitement.',
+          buttonLabel: 'Partager un lien',
+          onTap: widget.onShowTontines,
+        );
+
+  List<Widget> _empty(OwnerOverview o) => [
+    _header(),
+    _accessBanner(),
+    _resume(o),
+    _hero(o, 0, 0),
+    _promo(o),
+    const SectionTitle('Actions rapides'),
+    _quickActions(),
+    _guide(o),
     HelpCard(onTap: () => open(const HelpScreen(isMember: false))),
   ];
 
@@ -313,9 +333,12 @@ class _OwnerDashboardState extends State<OwnerDashboard> with Reloadable {
     );
     final todos = _todos(o);
     return [
+      _header(),
       _accessBanner(),
+      _resume(o),
       _hero(o, active.length, lateMembers),
-      const SizedBox(height: 4),
+      _promo(o),
+      const SectionTitle('Actions rapides'),
       _quickActions(),
       _guide(o),
       // --------------------------------------------- Paiements à valider
@@ -426,169 +449,116 @@ class _OwnerDashboardState extends State<OwnerDashboard> with Reloadable {
       // ------------------------------------------------- Confiance
       const SectionTitle('Confiance'),
       TrustCard(ownerId: Api.uid, own: true),
-      const MoneySafetyCard(isMember: false),
+      Card(
+        child: ListTile(
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 6,
+          ),
+          leading: const CircleAvatar(
+            backgroundColor: Color(0xFFFFF3C4),
+            foregroundColor: Color(0xFF7A5A00),
+            child: Icon(Icons.lightbulb_outline),
+          ),
+          title: const Text(
+            'Suggestions',
+            style: TextStyle(fontWeight: FontWeight.w700),
+          ),
+          subtitle: const Text('Aidez-nous à améliorer COTIZI'),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => open(const SuggestionsScreen()),
+        ),
+      ),
       HelpCard(onTap: () => open(const HelpScreen(isMember: false))),
     ];
   }
 
   /// Bandeau principal : encaissé ce mois et chiffres clés.
   Widget _hero(OwnerOverview o, int activeGroups, int lateMembers) {
-    final theme = Theme.of(context);
-    final on = theme.colorScheme.onPrimary;
-    Widget stat(String value, String label, VoidCallback? onTap) => Expanded(
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
-          decoration: BoxDecoration(
-            color: on.withValues(alpha: 0.12),
-            borderRadius: BorderRadius.circular(12),
+    final n = o.pending.length;
+    return FutureBuilder<Gains>(
+      future: _gains,
+      builder: (context, snap) => HeroCard(
+        label: 'Bienvenue sur COTIZI',
+        chip: HeroChip(
+          icon: _hideAmounts
+              ? Icons.visibility_off_outlined
+              : Icons.visibility_outlined,
+          label: _hideAmounts ? 'Afficher' : 'Masquer',
+          tooltip: _hideAmounts
+              ? 'Afficher les chiffres'
+              : 'Masquer les chiffres',
+          onTap: _toggleAmounts,
+        ),
+        headline: 'Vos tontines, enfin claires',
+        reassurance:
+            "L'argent ne passe jamais par COTIZI : vos clients vous paient "
+            'directement.',
+        buttonLabel: n > 0
+            ? 'Valider $n paiement${n > 1 ? 's' : ''}'
+            : o.tontineCount == 0
+            ? 'Créer ma première tontine'
+            : 'Nouvelle tontine',
+        buttonIcon: n > 0 ? Icons.fact_check_outlined : Icons.add,
+        onButton: n > 0
+            ? () => _review(o.pending.first)
+            : () => openIfCanCreate(const CreateTontineScreen()),
+        children: [
+          const SizedBox(height: 14),
+          Text(
+            'Encaissé ce mois-ci',
+            style: TextStyle(color: Colors.white.withValues(alpha: 0.85)),
           ),
-          child: Column(
+          Text(
+            snap.hasData ? _m(snap.data!.collectedThisMonth) : '…',
+            style: Theme.of(context).textTheme.headlineSmall
+                ?.copyWith(color: Colors.white, fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 10),
+          Row(
             children: [
-              Text(
-                value,
-                style: theme.textTheme.titleLarge?.copyWith(
-                  color: on,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-              Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: theme.textTheme.bodySmall?.copyWith(color: on),
+              HeroStat(value: '$n', label: 'à valider'),
+              const SizedBox(width: 8),
+              HeroStat(value: '$lateMembers', label: 'en retard'),
+              const SizedBox(width: 8),
+              HeroStat(
+                value: '$activeGroups',
+                label: activeGroups > 1 ? 'groupes actifs' : 'groupe actif',
+                onTap: widget.onShowTontines,
               ),
             ],
           ),
-        ),
-      ),
-    );
-    return Card(
-      color: theme.colorScheme.primary,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    'Encaissé ce mois-ci',
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      color: on.withValues(alpha: 0.85),
-                    ),
-                  ),
-                ),
-                IconButton(
-                  tooltip: _hideAmounts
-                      ? 'Afficher les chiffres'
-                      : 'Masquer les chiffres',
-                  visualDensity: VisualDensity.compact,
-                  onPressed: _toggleAmounts,
-                  icon: Icon(
-                    _hideAmounts
-                        ? Icons.visibility_off_outlined
-                        : Icons.visibility_outlined,
-                    color: on,
-                  ),
-                ),
-              ],
-            ),
-            FutureBuilder<Gains>(
-              future: _gains,
-              builder: (context, snap) => Text(
-                snap.hasData ? _m(snap.data!.collectedThisMonth) : '…',
-                style: theme.textTheme.headlineMedium?.copyWith(
-                  color: on,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                stat('${o.pending.length}', 'à valider', null),
-                const SizedBox(width: 8),
-                stat(
-                  '$lateMembers',
-                  lateMembers > 1 ? 'en retard' : 'en retard',
-                  null,
-                ),
-                const SizedBox(width: 8),
-                stat(
-                  '$activeGroups',
-                  activeGroups > 1 ? 'groupes actifs' : 'groupe actif',
-                  widget.onShowTontines,
-                ),
-              ],
-            ),
-          ],
-        ),
+        ],
       ),
     );
   }
 
   /// Raccourcis : nouvelle tontine, tontines, gains, profil pro.
-  Widget _quickActions() {
-    final theme = Theme.of(context);
-    Widget action(IconData icon, String label, VoidCallback onTap) => Expanded(
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(14),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          child: Column(
-            children: [
-              Container(
-                width: 52,
-                height: 52,
-                decoration: BoxDecoration(
-                  color: theme.cardTheme.color,
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: theme.colorScheme.outlineVariant),
-                ),
-                child: Icon(icon, color: theme.colorScheme.primary),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                label,
-                textAlign: TextAlign.center,
-                maxLines: 2,
-                style: theme.textTheme.labelMedium?.copyWith(
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ],
-          ),
-        ),
+  Widget _quickActions() => Row(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      QuickTile(
+        icon: Icons.add,
+        label: 'Nouvelle tontine',
+        onTap: () => openIfCanCreate(const CreateTontineScreen()),
       ),
-    );
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        action(
-          Icons.add,
-          'Nouvelle tontine',
-          () => openIfCanCreate(const CreateTontineScreen()),
-        ),
-        action(Icons.savings_outlined, 'Mes tontines', widget.onShowTontines),
-        action(
-          Icons.insights_outlined,
-          'Mes gains',
-          () => open(const GainsScreen()),
-        ),
-        action(
-          Icons.storefront_outlined,
-          'Profil pro',
-          () => open(const BusinessProfileScreen()),
-        ),
-      ],
-    );
-  }
+      QuickTile(
+        icon: Icons.savings_outlined,
+        label: 'Mes tontines',
+        onTap: widget.onShowTontines,
+      ),
+      QuickTile(
+        icon: Icons.insights_outlined,
+        label: 'Mes gains',
+        onTap: () => open(const GainsScreen()),
+      ),
+      QuickTile(
+        icon: Icons.storefront_outlined,
+        label: 'Profil pro',
+        onTap: () => open(const BusinessProfileScreen()),
+      ),
+    ],
+  );
 
   /// Avancée de la cagnotte en cours d'un groupe.
   Widget _groupProgress(Group g, DateTime today) {
@@ -869,51 +839,49 @@ class _MemberDashboardState extends State<MemberDashboard> with Reloadable {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: _Greeting(widget.profile, 'Espace participant'),
-        actions: [
-          NotificationBell(
-            unread: _unread,
-            onTap: () => open(const NotificationsScreen()),
-          ),
-          IconButton(
-            tooltip: 'Aide',
-            icon: const Icon(Icons.help_outline),
-            onPressed: () => open(const HelpScreen(isMember: true)),
-          ),
-        ],
+    final header = HomeHeader(
+      name: _firstName(widget.profile),
+      subtitle: 'Voici le résumé de vos cotisations',
+      bell: NotificationBell(
+        unread: _unread,
+        onTap: () => open(const NotificationsScreen()),
       ),
-      body: RefreshIndicator(
-        onRefresh: () async {
-          reload();
-          await _data;
-        },
-        child: FutureView<MemberOverview>(
-          future: _data,
-          onRetry: reload,
-          builder: (context, o) => ListView(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
-            children: o.groups.isEmpty && o.carnets.isEmpty
-                ? [
-                    EmptyState(
-                      icon: Icons.group_add_outlined,
-                      title: 'Bienvenue sur COTIZI',
-                      message:
-                          'Ouvrez le lien d\'invitation envoyé par votre tontinier, '
-                          'ou saisissez son code pour rejoindre sa tontine.',
-                      action: FilledButton.icon(
-                        onPressed: () => open(const JoinScreen()),
-                        icon: const Icon(Icons.qr_code_2),
-                        label: const Text('Rejoindre avec un code'),
+      onHelp: () => open(const HelpScreen(isMember: true)),
+    );
+    return Scaffold(
+      body: SafeArea(
+        child: RefreshIndicator(
+          onRefresh: () async {
+            reload();
+            await _data;
+          },
+          child: FutureView<MemberOverview>(
+            future: _data,
+            onRetry: reload,
+            builder: (context, o) => ListView(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
+              children: o.groups.isEmpty && o.carnets.isEmpty
+                  ? [
+                      header,
+                      HeroCard(
+                        label: 'Bienvenue sur COTIZI',
+                        headline: 'Votre tontine, enfin claire',
+                        caption:
+                            'Rejoignez votre tontinier : ouvrez le lien d\'invitation envoyé par votre '
+                            'tontinier, ou saisissez son code.',
+                        reassurance:
+                            'Votre argent ne passe jamais par COTIZI : vous '
+                            'payez votre tontinier directement.',
+                        buttonLabel: 'Rejoindre avec un code',
+                        buttonIcon: Icons.qr_code_2,
+                        onButton: () => open(const JoinScreen()),
                       ),
-                    ),
-                    const MoneySafetyCard(isMember: true),
-                    HelpCard(
-                      onTap: () => open(const HelpScreen(isMember: true)),
-                    ),
-                  ]
-                : _content(o),
+                      HelpCard(
+                        onTap: () => open(const HelpScreen(isMember: true)),
+                      ),
+                    ]
+                  : [header, ..._content(o)],
+            ),
           ),
         ),
       ),
@@ -1092,7 +1060,6 @@ class _MemberDashboardState extends State<MemberDashboard> with Reloadable {
 
   /// « Vous êtes à jour » avec la prochaine cotisation.
   Widget _upToDateCard(MemberOverview o) {
-    final theme = Theme.of(context);
     MemberGroupStatus? next;
     DateTime? nextDate;
     for (final s in o.active) {
@@ -1103,56 +1070,22 @@ class _MemberDashboardState extends State<MemberDashboard> with Reloadable {
         next = s;
       }
     }
-    final onPrimary = theme.colorScheme.onPrimary;
-    return Card(
-      color: theme.colorScheme.primary,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              children: [
-                CircleAvatar(
-                  radius: 18,
-                  backgroundColor: onPrimary.withValues(alpha: 0.18),
-                  child: Icon(Icons.check, color: onPrimary),
-                ),
-                const SizedBox(width: 10),
-                Text(
-                  'Vous êtes à jour',
-                  style: theme.textTheme.titleLarge?.copyWith(
-                    color: onPrimary,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            Text(
-              next == null
-                  ? 'Toutes vos cotisations sont payées.'
-                  : 'Prochaine cotisation : ${money(next.group.contributionAmount)} '
-                        '${countdownLabel(nextDate!)} (${dateShort(nextDate)})'
-                        '${o.active.length > 1 ? ' · ${next.group.name}' : ''}. '
-                        'Vous pouvez aussi payer d\'avance.',
-              style: TextStyle(color: onPrimary, height: 1.4),
-            ),
-            if (next != null && o.active.length == 1) ...[
-              const SizedBox(height: 12),
-              FilledButton(
-                onPressed: () => _pay(next!),
-                style: FilledButton.styleFrom(
-                  backgroundColor: onPrimary,
-                  foregroundColor: theme.colorScheme.primary,
-                ),
-                child: const Text('Payer d\'avance'),
-              ),
-            ],
-          ],
-        ),
-      ),
+    final canPay = next != null && o.active.length == 1;
+    return HeroCard(
+      label: 'Bienvenue sur COTIZI',
+      headline: 'Votre tontine, enfin claire',
+      caption: next == null
+          ? 'Vous êtes à jour : toutes vos cotisations sont payées.'
+          : 'Vous êtes à jour. Prochaine cotisation : ${money(next.group.contributionAmount)} '
+                '${countdownLabel(nextDate!)} (${dateShort(nextDate)})'
+                '${o.active.length > 1 ? ' · ${next.group.name}' : ''}. '
+                'Vous pouvez aussi payer d\'avance.',
+      reassurance:
+          'Votre argent ne passe jamais par COTIZI : vous payez votre '
+          'tontinier directement.',
+      buttonLabel: canPay ? 'Payer d\'avance' : null,
+      buttonIcon: Icons.upload,
+      onButton: canPay ? () => _pay(next!) : null,
     );
   }
 

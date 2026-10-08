@@ -335,6 +335,28 @@ service cloud.firestore {
 
     // ---------------------------------------------------- Administration
 
+    // Suggestions pour améliorer COTIZI : chacun écrit les siennes et les
+    // relit ; l'administrateur les lit toutes, les marque comme lues ou les
+    // supprime.
+    match /suggestions/{suggestionId} {
+      allow read: if signedIn() && (existing().userId == uid() || isAdmin());
+      allow create: if signedIn()
+        && incoming().keys().hasOnly(['userId', 'fullName', 'phone', 'role', 'kind',
+            'text', 'status', 'createdAt'])
+        && incoming().userId == uid()
+        && incoming().fullName == me().fullName
+        && incoming().phone == me().phone
+        && incoming().role == me().get('role', 'tontinier')
+        && incoming().kind in ['idee', 'probleme', 'autre']
+        && isText(incoming().text, 5, 1000)
+        && incoming().status == 'new'
+        && incoming().createdAt == request.time;
+      allow update: if isAdmin() && changedOnly(['status'])
+        && incoming().status in ['new', 'read', 'done'];
+      allow delete: if isAdmin();
+    }
+
+
     match /admins/{userId} {
       // Chacun peut vérifier si un compte est administrateur (accès illimité)
       allow get: if signedIn();

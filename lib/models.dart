@@ -1358,3 +1358,62 @@ class AppNotification {
     );
   }
 }
+
+/// Suggestion envoyée pour améliorer COTIZI.
+class Suggestion {
+  const Suggestion({
+    required this.id,
+    required this.userId,
+    required this.fullName,
+    required this.phone,
+    required this.role,
+    required this.kind,
+    required this.text,
+    required this.status,
+    required this.createdAt,
+  });
+
+  final String id;
+  final String userId;
+  final String fullName;
+  final String phone;
+  final String role;
+
+  /// idee, probleme ou autre.
+  final String kind;
+  final String text;
+
+  /// new (nouvelle), read (lue) ou done (prise en compte).
+  final String status;
+  final DateTime createdAt;
+
+  static const kinds = {
+    'idee': 'Idée',
+    'probleme': 'Problème',
+    'autre': 'Autre',
+  };
+
+  static const statuses = {
+    'new': 'Envoyée',
+    'read': 'Lue par COTIZI',
+    'done': 'Prise en compte',
+  };
+
+  String get kindLabel => kinds[kind] ?? 'Autre';
+  String get statusLabel => statuses[status] ?? 'Envoyée';
+
+  factory Suggestion.fromDoc(DocumentSnapshot<Json> doc) {
+    final json = doc.data()!;
+    return Suggestion(
+      id: doc.id,
+      userId: json['userId'] as String? ?? '',
+      fullName: json['fullName'] as String? ?? '',
+      phone: json['phone'] as String? ?? '',
+      role: json['role'] as String? ?? 'tontinier',
+      kind: json['kind'] as String? ?? 'autre',
+      text: json['text'] as String? ?? '',
+      status: json['status'] as String? ?? 'new',
+      createdAt: _time(json['createdAt']),
+    );
+  }
+}

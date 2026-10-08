@@ -1768,6 +1768,52 @@ class Api {
     );
   }
 
+  // ------------------------------------------------- Suggestions
+
+  /// Envoie une suggestion pour améliorer COTIZI.
+  static Future<void> sendSuggestion(String kind, String text) async {
+    final me = await _requireMe();
+    final t = text.trim();
+    if (t.length < 5) {
+      throw const AppException(
+        'Écrivez votre suggestion (5 caractères minimum)',
+      );
+    }
+    await _db.collection('suggestions').add({
+      'userId': uid,
+      'fullName': me.fullName,
+      'phone': me.phone,
+      'role': me.isMember ? 'membre' : 'tontinier',
+      'kind': kind,
+      'text': t.length > 1000 ? t.substring(0, 1000) : t,
+      'status': 'new',
+      'createdAt': _now,
+    });
+  }
+
+  /// Mes suggestions, les plus récentes d'abord.
+  static Future<List<Suggestion>> mySuggestions() async {
+    final snap = await _db
+        .collection('suggestions')
+        .where('userId', isEqualTo: uid)
+        .get();
+    return snap.docs.map(Suggestion.fromDoc).toList()
+      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+  }
+
+  /// Administrateur : toutes les suggestions, les plus récentes d'abord.
+  static Future<List<Suggestion>> allSuggestions() async {
+    final snap = await _db.collection('suggestions').get();
+    return snap.docs.map(Suggestion.fromDoc).toList()
+      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+  }
+
+  static Future<void> setSuggestionStatus(String id, String status) =>
+      _db.doc('suggestions/$id').update({'status': status});
+
+  static Future<void> deleteSuggestion(String id) =>
+      _db.doc('suggestions/$id').delete();
+
   // ------------------------------------------------- Clôtures
 
   /// Le client demande le remboursement de son carnet avant la fin : il

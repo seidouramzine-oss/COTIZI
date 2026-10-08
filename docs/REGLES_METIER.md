@@ -193,6 +193,15 @@ Le bouton en forme d'œil, sur la carte « Encaissé ce mois-ci », masque les
 montants de l'accueil (••••• FCFA), par exemple devant des clients. Le choix
 est mémorisé sur le téléphone.
 
+## Suggestions
+
+« Suggestions (aidez-nous à améliorer COTIZI) » : sur l'accueil du tontinier
+et dans Profil. Chacun choisit Idée, Problème ou Autre, écrit sa suggestion
+(5 à 1 000 caractères) et la retrouve dans « Mes suggestions » avec son état
+(Envoyée, Lue par COTIZI, Prise en compte). L'administrateur les lit toutes
+dans Administration → « Suggestions reçues », les marque comme lues ou prises
+en compte, répond sur WhatsApp ou les supprime. Personne d'autre ne les voit.
+
 ## Notifications (la cloche)
 
 - La **cloche** en haut de l'accueil montre le nombre de nouvelles
