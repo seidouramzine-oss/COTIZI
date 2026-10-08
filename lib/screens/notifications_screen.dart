@@ -28,6 +28,11 @@ import 'group_screens.dart';
   'joined' => (Icons.person_add_alt, const Color(0xFF1D4E89)),
   'rules_accepted' => (Icons.gavel_outlined, const Color(0xFF1D4E89)),
   'started' => (Icons.play_circle_outline, const Color(0xFF1D4E89)),
+  'refund_requested' => (Icons.undo, paymentStatusColor(PaymentStatus.pending)),
+  'carnet_closed' || 'group_closed' => (
+    Icons.task_alt,
+    paymentStatusColor(PaymentStatus.approved),
+  ),
   _ => (Icons.notifications_none, Colors.grey),
 };
 

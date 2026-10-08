@@ -3,6 +3,7 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:crypto/crypto.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:image_picker/image_picker.dart';
 
@@ -1161,14 +1162,19 @@ class Api {
     final memberRef = _db.doc('groups/${group.id}/members/$uid');
     final payRef = _db.collection('groups/${group.id}/payments').doc();
     final ref = method == PaymentMethod.mobileMoney
-        ? _requireReference(reference)
+        ? _optionalReference(reference)
         : null;
     if (ref != null) await _checkReference(ref);
+    final hash = method == PaymentMethod.mobileMoney ? proofHash(proof!) : null;
+    if (hash != null) await _checkReference(hash, _proofUsed);
     var declared = 0;
     await _db.runTransaction((tx) async {
       final member = GroupMember.fromDoc(await tx.get(memberRef));
       if (ref != null) {
         _reserveReference(tx, ref, payRef.path, uid, group.ownerId);
+      }
+      if (hash != null) {
+        _reserveReference(tx, hash, payRef.path, uid, group.ownerId);
       }
       final remaining = group.totalContributions - member.declaredCount;
       if (count > remaining) {
@@ -1210,6 +1216,7 @@ class Api {
         'reviewedAt': null,
         'recordedBy': 'member',
         'reference': ref,
+        'proofHash': hash,
       });
       tx.update(memberRef, {
         'declaredCount': member.declaredCount + count,
@@ -1291,9 +1298,7 @@ class Api {
           : null;
       if (levels != null) tx.update(groupRef, levels);
       // Paiement refusé : sa référence Mobile Money redevient utilisable
-      if (!approve && p.reference != null) {
-        tx.delete(_db.doc('paymentRefs/${p.reference}'));
-      }
+      if (!approve) _freeReferences(tx, p);
       tx
         ..update(
           _db.doc('groups/$groupId/payments/${p.id}'),
@@ -1607,9 +1612,11 @@ class Api {
     final carnetRef = _db.doc('carnets/${carnet.id}');
     final payRef = carnetRef.collection('payments').doc();
     final ref = method == PaymentMethod.mobileMoney
-        ? _requireReference(reference)
+        ? _optionalReference(reference)
         : null;
     if (ref != null) await _checkReference(ref);
+    final hash = method == PaymentMethod.mobileMoney ? proofHash(proof!) : null;
+    if (hash != null) await _checkReference(hash, _proofUsed);
     await _db.runTransaction((tx) async {
       final fresh = Carnet.fromDoc(await tx.get(carnetRef));
       if (caseCount > fresh.remainingCases) {
@@ -1619,6 +1626,9 @@ class Api {
       }
       if (ref != null) {
         _reserveReference(tx, ref, payRef.path, uid, carnet.ownerId);
+      }
+      if (hash != null) {
+        _reserveReference(tx, hash, payRef.path, uid, carnet.ownerId);
       }
       String? proofId;
       if (method == PaymentMethod.mobileMoney) {
@@ -1645,6 +1655,7 @@ class Api {
           'reviewedAt': null,
           'recordedBy': 'member',
           'reference': ref,
+          'proofHash': hash,
         })
         ..update(carnetRef, {
           'usedCases': fresh.usedCases + caseCount,
@@ -1733,9 +1744,7 @@ class Api {
     await _db.runTransaction((tx) async {
       final fresh = Carnet.fromDoc(await tx.get(carnetRef));
       label = fresh.label;
-      if (!approve && p.reference != null) {
-        tx.delete(_db.doc('paymentRefs/${p.reference}'));
-      }
+      if (!approve) _freeReferences(tx, p);
       tx.update(
         carnetRef.collection('payments').doc(p.id),
         _review(approve, reason),
@@ -1757,6 +1766,75 @@ class Api {
                 '(${reason ?? ''}).',
       carnetId: carnetId,
     );
+  }
+
+  // ------------------------------------------------- Clôtures
+
+  /// Le client demande le remboursement de son carnet avant la fin : il
+  /// recevra ses cases payées moins une (commission du tontinier).
+  static Future<void> requestCarnetRefund(Carnet c) async {
+    final me = await _requireMe();
+    await _db.doc('carnets/${c.id}').update({
+      'status': 'refund_requested',
+      'refundRequestedAt': _now,
+    });
+    await _notify(
+      to: c.ownerId,
+      type: 'refund_requested',
+      title: 'Remboursement demandé',
+      body:
+          '${me.fullName} · ${c.label} : ${c.approvedCases} case(s) payée(s). '
+          'À rembourser : ${money(c.refundDue)} (${c.approvedCases - 1} cases).',
+      carnetId: c.id,
+    );
+  }
+
+  /// Le tontinier a remis l'argent (remboursement ou carnet complet) et
+  /// clôture le carnet.
+  static Future<void> closeCarnet(Carnet c) async {
+    await _db.doc('carnets/${c.id}').update({
+      'status': 'closed',
+      'closedAt': _now,
+      'refundAmount': c.refundDue,
+    });
+    await _notify(
+      to: c.clientId,
+      type: 'carnet_closed',
+      title: c.isComplete ? 'Carnet remis' : 'Cotisations remboursées',
+      body:
+          '${c.label} : le tontinier indique vous avoir remis '
+          '${money(c.refundDue)}. Le carnet est clôturé.',
+      carnetId: c.id,
+    );
+  }
+
+  /// Le tontinier clôture le groupe une fois toutes les cagnottes remises.
+  static Future<void> closeGroup(Group g) async {
+    final me = await _requireMe();
+    final (eventRef, eventData) = _eventDoc(
+      g.id,
+      me,
+      'group_closed',
+      'Groupe clôturé : les ${g.memberCount} cagnottes ont été remises',
+    );
+    await (_db.batch()
+          ..update(_db.doc('groups/${g.id}'), {
+            'status': 'closed',
+            'closedAt': _now,
+          })
+          ..set(eventRef, eventData))
+        .commit();
+    for (final id in g.memberIds) {
+      await _notify(
+        to: id,
+        type: 'group_closed',
+        title: 'Tontine terminée',
+        body:
+            '${g.name} : toutes les cagnottes ont été remises, le tontinier a '
+            'clôturé le groupe. Merci !',
+        groupId: g.id,
+      );
+    }
   }
 
   // --------------------------------------------------- Anti-fraude
@@ -1784,16 +1862,37 @@ class Api {
     return _requireReference(input);
   }
 
-  /// Vérifie qu'une référence Mobile Money n'a jamais servi. Une référence
-  /// prise par quelqu'un d'autre n'est pas lisible : le refus le signale.
-  static Future<void> _checkReference(String reference) async {
+  static const _proofUsed = AppException(
+    'Cette capture d\'écran a déjà servi pour un autre paiement. Ajoutez la '
+    'capture de ce paiement-ci.',
+  );
+
+  /// Empreinte d'une capture d'écran : une même capture ne peut servir qu'à
+  /// un seul paiement.
+  static String proofHash(Uint8List bytes) =>
+      'IMG${sha256.convert(bytes).toString().substring(0, 32).toUpperCase()}';
+
+  /// Vérifie qu'une référence (ou une empreinte de capture) n'a jamais
+  /// servi. Prise par quelqu'un d'autre, elle n'est pas lisible : le refus
+  /// le signale.
+  static Future<void> _checkReference(
+    String reference, [
+    AppException used = _referenceUsed,
+  ]) async {
     try {
       if ((await _db.doc('paymentRefs/$reference').get()).exists) {
-        throw _referenceUsed;
+        throw used;
       }
     } on FirebaseException catch (e) {
-      if (e.code == 'permission-denied') throw _referenceUsed;
+      if (e.code == 'permission-denied') throw used;
       rethrow;
+    }
+  }
+
+  /// Paiement refusé : sa référence et sa capture redeviennent utilisables.
+  static void _freeReferences(Transaction tx, Payment p) {
+    for (final r in [p.reference, p.proofHash]) {
+      if (r != null) tx.delete(_db.doc('paymentRefs/$r'));
     }
   }
 

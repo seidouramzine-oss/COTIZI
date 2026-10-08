@@ -161,8 +161,25 @@ class _CarnetScreenState extends State<CarnetScreen> {
                     ),
                   ),
                 ],
-                if (c.isComplete) _completeBanner(c, isOwner),
-                if (!isOwner && c.remainingCases > 0) ...[
+                if (c.isClosed)
+                  _closedBanner(c, isOwner)
+                else if (c.refundRequested)
+                  _refundBanner(c, isOwner)
+                else if (c.isComplete)
+                  _completeBanner(c, isOwner),
+                if (isOwner && c.canClose) ...[
+                  const SizedBox(height: 8),
+                  FilledButton.icon(
+                    onPressed: () => _close(c),
+                    icon: const Icon(Icons.task_alt),
+                    label: Text(
+                      c.refundRequested
+                          ? 'Cotisations remboursées · clôturer'
+                          : 'Carnet remis · clôturer',
+                    ),
+                  ),
+                ],
+                if (!isOwner && c.isActive && c.remainingCases > 0) ...[
                   const SizedBox(height: 8),
                   FilledButton.icon(
                     onPressed: () => _declare(c),
@@ -170,7 +187,18 @@ class _CarnetScreenState extends State<CarnetScreen> {
                     label: const Text('Déclarer un paiement'),
                   ),
                 ],
-                if (isOwner && c.clientId != null && c.remainingCases > 0) ...[
+                if (!isOwner && c.isActive && !c.isComplete) ...[
+                  const SizedBox(height: 8),
+                  OutlinedButton.icon(
+                    onPressed: () => _askRefund(c),
+                    icon: const Icon(Icons.undo),
+                    label: const Text('Demander le remboursement'),
+                  ),
+                ],
+                if (isOwner &&
+                    c.isActive &&
+                    c.clientId != null &&
+                    c.remainingCases > 0) ...[
                   const SizedBox(height: 8),
                   FilledButton.tonalIcon(
                     onPressed: () => _record(c),
@@ -253,6 +281,92 @@ class _CarnetScreenState extends State<CarnetScreen> {
       ),
     );
   }
+
+  /// Le client arrête son carnet : cases payées moins une (commission).
+  Future<void> _askRefund(Carnet c) async {
+    if (c.pendingCases > 0) {
+      showInfo(
+        context,
+        'Attendez que le tontinier valide vos paiements en attente.',
+      );
+      return;
+    }
+    if (c.approvedCases == 0) {
+      showInfo(context, 'Aucune case payée : rien à rembourser.');
+      return;
+    }
+    if (!await confirm(
+      context,
+      title: 'Demander le remboursement',
+      message:
+          'Vous avez payé ${c.approvedCases} case(s) '
+          '(${money(c.approvedCases * c.caseAmount)}). Vous recevrez '
+          '${c.approvedCases - 1} case(s), soit ${money(c.refundDue)} : la '
+          'dernière case revient au tontinier (commission). Vous ne pourrez '
+          'plus payer sur ce carnet.',
+      confirmLabel: 'Demander',
+    )) {
+      return;
+    }
+    try {
+      await Api.requestCarnetRefund(c);
+      if (mounted) {
+        showInfo(context, 'Demande envoyée à votre tontinier.');
+        _reload();
+      }
+    } catch (e) {
+      if (mounted) showError(context, e);
+    }
+  }
+
+  /// Le tontinier a remis l'argent : il clôture le carnet.
+  Future<void> _close(Carnet c) async {
+    if (!await confirm(
+      context,
+      title: c.refundRequested ? 'Cotisations remboursées' : 'Carnet remis',
+      message:
+          'Confirmez-vous avoir remis ${money(c.refundDue)} '
+          '(${c.approvedCases - 1} cases) à ${c.client?.fullName ?? 'votre client'} ? '
+          'Votre commission : ${money(c.caseAmount)} (1 case). '
+          'Le carnet sera clôturé.',
+      confirmLabel: 'Oui, clôturer',
+    )) {
+      return;
+    }
+    try {
+      await Api.closeCarnet(c);
+      if (mounted) {
+        showInfo(context, 'Carnet clôturé.');
+        _reload();
+      }
+    } catch (e) {
+      if (mounted) showError(context, e);
+    }
+  }
+
+  Widget _refundBanner(Carnet c, bool isOwner) => StatusCard(
+    icon: Icons.undo,
+    title: 'Remboursement demandé',
+    message: isOwner
+        ? '${c.client?.fullName ?? 'Le client'} arrête son carnet après '
+              '${c.approvedCases} case(s). Remettez-lui ${money(c.refundDue)} '
+              '(${c.approvedCases - 1} cases), la dernière case est votre '
+              'commission, puis clôturez le carnet.'
+        : 'Demande envoyée${c.refundRequestedAt == null ? '' : ' le ${dateShort(c.refundRequestedAt!)}'}. '
+              'Votre tontinier doit vous remettre ${money(c.refundDue)} '
+              '(${c.approvedCases - 1} cases).',
+    color: paymentStatusColor(PaymentStatus.pending),
+  );
+
+  Widget _closedBanner(Carnet c, bool isOwner) => StatusCard(
+    icon: Icons.task_alt,
+    title: 'Carnet clôturé',
+    message:
+        '${isOwner ? 'Remis au client' : 'Vous avez reçu'} : '
+        '${money(c.refundAmount)}'
+        '${c.closedAt == null ? '' : ' le ${dateShort(c.closedAt!)}'}.',
+    color: paymentStatusColor(PaymentStatus.approved),
+  );
 
   Widget _completeBanner(Carnet c, bool isOwner) {
     final color = paymentStatusColor(PaymentStatus.approved);

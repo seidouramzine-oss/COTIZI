@@ -199,7 +199,6 @@ class _DeclarePaymentScreenState extends State<DeclarePaymentScreen> {
   late int _units = widget.initialUnits.clamp(1, max(1, widget.maxUnits));
   PaymentMethod _method = PaymentMethod.mobileMoney;
   final _note = TextEditingController();
-  final _reference = TextEditingController();
   bool _busy = false;
 
   int get _penalty => widget.penaltyFor?.call(_units) ?? 0;
@@ -208,7 +207,6 @@ class _DeclarePaymentScreenState extends State<DeclarePaymentScreen> {
   @override
   void dispose() {
     _note.dispose();
-    _reference.dispose();
     super.dispose();
   }
 
@@ -234,13 +232,6 @@ class _DeclarePaymentScreenState extends State<DeclarePaymentScreen> {
 
   Future<void> _submit() async {
     final cash = _method == PaymentMethod.cash;
-    if (!cash && Api.normalizeReference(_reference.text) == null) {
-      showInfo(
-        context,
-        'Entrez la référence de la transaction (sur le SMS de Mobile Money)',
-      );
-      return;
-    }
     if (!cash && _preview == null) {
       showInfo(context, 'Ajoutez la capture d\'écran de votre paiement');
       return;
@@ -253,7 +244,7 @@ class _DeclarePaymentScreenState extends State<DeclarePaymentScreen> {
         cash ? null : _preview,
         cash ? null : _mime,
         _note.text,
-        cash ? null : _reference.text,
+        null,
       );
       if (!mounted) return;
       showInfo(
@@ -382,26 +373,9 @@ class _DeclarePaymentScreenState extends State<DeclarePaymentScreen> {
             ),
             const SizedBox(height: 12),
             Text(
-              '2. Recopiez la référence de la transaction, écrite sur le SMS '
-              'de confirmation de Mobile Money.',
-              style: theme.textTheme.bodyMedium,
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: _reference,
-              textCapitalization: TextCapitalization.characters,
-              maxLength: 40,
-              decoration: const InputDecoration(
-                labelText: 'Référence de la transaction',
-                hintText: 'Ex. MP240101.1234.A56789',
-                helperText: 'Une référence ne peut servir qu\'une seule fois.',
-                prefixIcon: Icon(Icons.tag),
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              '3. Ajoutez la capture d\'écran de l\'envoi. Le tontinier la '
-              'vérifiera avant de valider.',
+              '2. Ajoutez la capture d\'écran de l\'envoi (obligatoire). Le '
+              'tontinier la vérifiera avant de valider. Une même capture ne '
+              'peut servir qu\'à un seul paiement.',
               style: theme.textTheme.bodyMedium,
             ),
             const SizedBox(height: 12),
@@ -864,6 +838,26 @@ class _ReviewPaymentScreenState extends State<ReviewPaymentScreen> {
                 ),
               ),
             const SectionTitle('Preuve de paiement'),
+            if (p.proofHash != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.verified_outlined,
+                      size: 18,
+                      color: paymentStatusColor(PaymentStatus.approved),
+                    ),
+                    const SizedBox(width: 8),
+                    const Expanded(
+                      child: Text(
+                        'Capture vérifiée par COTIZI : elle n\'a servi à '
+                        'aucun autre paiement.',
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ProofImage(p.proofId, height: 420),
             const SizedBox(height: 4),
             Text(

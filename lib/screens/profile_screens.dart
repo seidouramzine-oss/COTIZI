@@ -588,9 +588,9 @@ class HelpScreen extends StatelessWidget {
       (
         Icons.verified_user_outlined,
         'Contre la fraude',
-        'COTIZI ne touche jamais l\'argent. Une référence Mobile Money ne '
-            'peut servir qu\'à un seul paiement : la même capture ne peut pas '
-            'être déclarée deux fois. Un paiement validé ou une remise ne '
+        'COTIZI ne touche jamais l\'argent. Une capture d\'écran ne peut '
+            'servir qu\'à un seul paiement : la même capture ne peut pas être '
+            'déclarée deux fois. Un paiement validé ou une remise ne '
             'peuvent plus être modifiés ni supprimés, et chaque reçu porte un '
             'numéro unique (CZ-…). La note de confiance du tontinier '
             '(cagnottes remises, confirmées par les bénéficiaires, problèmes '
@@ -616,15 +616,18 @@ class HelpScreen extends StatelessWidget {
         Icons.menu_book_outlined,
         'Tontine à carnet',
         'Le client paie les 31 cases de son carnet. Il récupère 30 cases ; la '
-            'dernière case revient au tontinier comme commission.',
+            'dernière case revient au tontinier comme commission. Il peut '
+            'aussi arrêter avant la fin avec « Demander le remboursement » : '
+            'il récupère ses cases payées moins une (ex. 20 cases payées, 19 '
+            'rendues). Le tontinier remet l\'argent puis clôture le carnet.',
       ),
       (
         Icons.receipt_long,
         'Déclarer un paiement',
         'Appuyez sur « Payer », choisissez le nombre de cotisations puis le '
             'mode : Mobile Money (les numéros du tontinier s\'affichent ; '
-            'recopiez la référence de la transaction écrite sur le SMS et '
-            'ajoutez la capture de l\'envoi) ou espèces (remises en main '
+            'ajoutez la capture de l\'envoi, obligatoire) ou espèces '
+            '(remises en main '
             'propre). Le paiement reste « En attente » jusqu\'à ce que le '
             'tontinier le valide. En cas de retard, des pénalités peuvent '
             's\'ajouter si le règlement les prévoit (montant fixe ou '

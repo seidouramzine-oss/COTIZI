@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:cotizi/api.dart';
 import 'package:cotizi/format.dart';
 import 'package:cotizi/models.dart';
@@ -498,6 +500,13 @@ void main() {
       expect(Api.normalizeReference(null), isNull);
     });
 
+    test('empreinte de capture : identique pour la même image', () {
+      final a = Api.proofHash(Uint8List.fromList([1, 2, 3]));
+      expect(a, Api.proofHash(Uint8List.fromList([1, 2, 3])));
+      expect(a, isNot(Api.proofHash(Uint8List.fromList([1, 2, 4]))));
+      expect(RegExp(r'^IMG[0-9A-F]{32}$').hasMatch(a), isTrue);
+    });
+
     test('numéros de reçu', () {
       expect(receiptCode('abcd1234xyz'), 'CZ-ABCD-1234');
       expect(receiptCode('ab'), 'CZ-AB00-0000');
@@ -522,6 +531,51 @@ void main() {
       );
       expect(p.unconfirmedSince(2, DateTime(2026, 10, 2, 12)), isFalse);
       expect(p.unconfirmedSince(2, DateTime(2026, 10, 3, 11)), isTrue);
+    });
+  });
+
+  group('Version 2.5 remboursement du carnet', () {
+    Carnet carnet(int approved, {int used = -1, String status = 'active'}) =>
+        Carnet(
+          id: 'c',
+          tontineId: 't',
+          tontineName: 'Carnets',
+          ownerId: 'o',
+          ownerName: 'Tontinier',
+          label: 'Carnet n°1',
+          caseAmount: 300,
+          caseCount: 31,
+          clientId: 'a',
+          client: const Profile(fullName: 'Awa', phone: '+229'),
+          inviteCode: 'ABC234',
+          usedCases: used < 0 ? approved : used,
+          approvedCases: approved,
+          status: status,
+        );
+
+    test('20 cases payées : 19 rendues', () {
+      final c = carnet(20);
+      expect(c.refundDue, 19 * 300);
+      expect(c.canRequestRefund, isTrue);
+      expect(c.canClose, isFalse);
+    });
+
+    test('paiement en attente : demande impossible', () {
+      expect(carnet(20, used: 21).canRequestRefund, isFalse);
+    });
+
+    test('demande faite : le tontinier peut clôturer', () {
+      final c = carnet(20, status: 'refund_requested');
+      expect(c.canRequestRefund, isFalse);
+      expect(c.canClose, isTrue);
+    });
+
+    test('carnet complet : 30 cases rendues, clôture possible', () {
+      final c = carnet(31);
+      expect(c.refundDue, 30 * 300);
+      expect(c.canRequestRefund, isFalse);
+      expect(c.canClose, isTrue);
+      expect(carnet(31, status: 'closed').canClose, isFalse);
     });
   });
 }

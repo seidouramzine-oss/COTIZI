@@ -255,7 +255,16 @@ class Group {
     this.rulesText = '',
     this.termsVersion,
     this.accepted = const {},
+    this.closedAt,
   });
+
+  /// Clôture par le tontinier, une fois toutes les cagnottes remises.
+  final DateTime? closedAt;
+
+  bool get isClosed => closedAt != null;
+
+  /// Toutes les cagnottes sont remises : le tontinier peut clôturer.
+  bool get canClose => !isLegacy && !isClosed && status == GroupStatus.finished;
 
   /// Pénalité en montant fixe ([penaltyAmount] FCFA) ou en pourcentage
   /// ([penaltyAmount] % de la cotisation due).
@@ -555,6 +564,7 @@ class Group {
     rulesText: rulesText,
     termsVersion: termsVersion,
     accepted: accepted,
+    closedAt: closedAt,
   );
 
   factory Group.fromDoc(DocumentSnapshot<Json> doc) {
@@ -579,6 +589,8 @@ class Group {
       status = drawnCount < memberCount
           ? GroupStatus.drawing
           : GroupStatus.active;
+    } else if (raw == 'closed') {
+      status = GroupStatus.finished;
     } else if (raw == 'active') {
       status = paidOut >= memberCount
           ? GroupStatus.finished
@@ -636,6 +648,9 @@ class Group {
                 e.key as String: _int(e.value),
             }
           : const {},
+      closedAt: json['closedAt'] is Timestamp
+          ? (json['closedAt'] as Timestamp).toDate()
+          : null,
     );
   }
 }
@@ -872,7 +887,12 @@ class Payment {
     this.note,
     this.recordedByOwner = false,
     this.reference,
+    this.proofHash,
   });
+
+  /// Empreinte de la capture d'écran (unique : une même capture ne peut pas
+  /// servir à deux paiements).
+  final String? proofHash;
 
   /// Référence de la transaction Mobile Money (unique : une même référence
   /// ne peut pas servir à deux paiements).
@@ -937,6 +957,7 @@ class Payment {
       note: json['note'] as String?,
       recordedByOwner: json['recordedBy'] == 'owner',
       reference: json['reference'] as String?,
+      proofHash: json['proofHash'] as String?,
     );
   }
 }
@@ -956,7 +977,40 @@ class Carnet {
     required this.inviteCode,
     required this.usedCases,
     required this.approvedCases,
+    this.status = 'active',
+    this.refundRequestedAt,
+    this.closedAt,
+    this.refundAmount = 0,
   });
+
+  /// active, refund_requested (remboursement demandé) ou closed (clôturé).
+  final String status;
+  final DateTime? refundRequestedAt;
+  final DateTime? closedAt;
+
+  /// Montant rendu au client à la clôture.
+  final int refundAmount;
+
+  bool get isActive => status == 'active';
+  bool get refundRequested => status == 'refund_requested';
+  bool get isClosed => status == 'closed';
+
+  /// Remboursement : les cases payées moins une (la commission).
+  int get refundDue => max(0, approvedCases - 1) * caseAmount;
+
+  /// Le client peut demander le remboursement avant la fin du carnet.
+  bool get canRequestRefund =>
+      isActive &&
+      clientId != null &&
+      approvedCases >= 1 &&
+      !isComplete &&
+      pendingCases == 0;
+
+  /// Le tontinier peut rembourser (ou remettre le carnet complet) et clôturer.
+  bool get canClose =>
+      clientId != null &&
+      pendingCases == 0 &&
+      (refundRequested || (isActive && isComplete));
 
   final String id;
   final String tontineId;
@@ -1004,6 +1058,14 @@ class Carnet {
       inviteCode: json['inviteCode'] as String,
       usedCases: _int(json['usedCases']),
       approvedCases: _int(json['approvedCases']),
+      status: json['status'] as String? ?? 'active',
+      refundRequestedAt: json['refundRequestedAt'] is Timestamp
+          ? (json['refundRequestedAt'] as Timestamp).toDate()
+          : null,
+      closedAt: json['closedAt'] is Timestamp
+          ? (json['closedAt'] as Timestamp).toDate()
+          : null,
+      refundAmount: _int(json['refundAmount']),
     );
   }
 }

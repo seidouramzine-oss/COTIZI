@@ -141,18 +141,19 @@ tontines, puis invitent leurs **clients**, qui ne font que participer.
 
 - **COTIZI ne touche jamais l'argent** : les clients paient le tontinier
   (Mobile Money ou espèces) et déclarent le paiement ; le tontinier valide.
-- **Référence Mobile Money unique** : pour un paiement Mobile Money, le client
-  recopie la référence de la transaction (sur le SMS) en plus de la capture.
-  Une référence ne peut servir qu'à **un seul paiement** dans tout COTIZI
-  (vérifié par le serveur) : la même capture ne peut pas être déclarée deux
-  fois. Si le tontinier **refuse** le paiement, la référence redevient libre.
-  Quand le tontinier encaisse lui-même un paiement Mobile Money, il peut aussi
-  saisir la référence (conseillé).
+- **Capture d'écran obligatoire et unique** : pour un paiement Mobile Money,
+  le client ajoute la capture de l'envoi (obligatoire). COTIZI calcule son
+  empreinte : **une même capture ne peut servir qu'à un seul paiement** dans
+  tout COTIZI (vérifié par le serveur). Si le tontinier **refuse** le paiement,
+  la capture redevient utilisable.
+- **Référence Mobile Money (tontinier)** : quand le tontinier encaisse lui-même
+  un paiement Mobile Money, il peut saisir la référence du SMS (facultatif) ;
+  une référence ne peut servir qu'une fois.
 - **Rien ne s'efface** : un paiement validé et une remise ne peuvent plus être
   modifiés ni supprimés, par personne.
 - **Reçus numérotés** : chaque paiement validé a un numéro de reçu unique
   (CZ-XXXX-XXXX) ; chaque remise aussi (CZ-XXXX-XXXX-n). Le reçu indique la
-  référence Mobile Money et si le bénéficiaire a confirmé la réception.
+  référence Mobile Money (si elle a été saisie) et si le bénéficiaire a confirmé la réception.
 - **Note de confiance du tontinier**, visible par tous avant de rejoindre
   (écran « Rejoindre » après la vérification du code) et sur la page du
   groupe : cagnottes remises, pourcentage confirmé par les bénéficiaires,
@@ -165,6 +166,13 @@ tontines, puis invitent leurs **clients**, qui ne font que participer.
 - **Guide « Démarrer avec COTIZI »** (accueil du tontinier) : profil pro et
   numéros Mobile Money, première tontine, invitation des clients, premier
   paiement validé.
+
+## Clôture d'un groupe (cagnotte)
+
+Quand **toutes les cagnottes ont été remises**, le tontinier clôture le groupe
+(« Clôturer le groupe », rappelé dans « À faire aujourd'hui »). Le groupe
+devient « Groupe clôturé » et plus rien ne peut y être modifié ; les
+participants sont prévenus.
 
 ## Notifications (la cloche)
 
@@ -212,6 +220,16 @@ reste bloquée par l'application tant que la collecte n'est pas complète.
 
 Exemple : case à 500 FCFA → le client paie 15 500 FCFA et reçoit 15 000 FCFA ;
 commission 500 FCFA.
+
+- **Remboursement avant la fin** : le client peut arrêter son carnet à tout
+  moment (« Demander le remboursement », sans paiement en attente). Il reçoit
+  ses **cases payées moins une** : la dernière case payée revient au tontinier
+  (ex. 20 cases payées → 19 cases rendues). Plus aucun paiement n'est possible
+  ensuite.
+- **Clôture** : quand il a remis l'argent (remboursement, ou carnet complet de
+  31 cases → 30 cases rendues), le tontinier appuie sur « Cotisations
+  remboursées · clôturer » (ou « Carnet remis · clôturer »). Le montant rendu
+  est vérifié par le serveur ; le client est prévenu.
 
 ## Confidentialité des données
 

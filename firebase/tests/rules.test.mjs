@@ -174,7 +174,7 @@ async function moveTrust(batch, fs, field, payoutPath, ownerId = 't') {
 // Déclare [count] cotisations : paiement + compteur du membre dans le même envoi
 async function declare(id, groupId, count,
   { amount, counter = true, payment = true, method = 'mobile_money', penalty = 0, proofId,
-    reference, registerRef = true } = {}) {
+    reference = null, registerRef = true, proofHash, registerHash = true } = {}) {
   const fs = db(id);
   const g = await adminGet(`groups/${groupId}`);
   const m = await adminGet(`groups/${groupId}/members/${id}`);
@@ -186,7 +186,8 @@ async function declare(id, groupId, count,
     proofRef = pRef.id;
   }
   const payRef = fs.collection(`groups/${groupId}/payments`).doc();
-  const ref = reference === undefined ? (method === 'mobile_money' ? nextRef() : null) : reference;
+  const ref = reference;
+  const hash = proofHash === undefined ? (method === 'mobile_money' ? 'IMG' + nextRef() : null) : proofHash;
   if (payment) {
     batch.set(payRef, {
       userId: id, payerName: people[id].name, payerPhone: people[id].phone, count,
@@ -194,9 +195,10 @@ async function declare(id, groupId, count,
       note: method === 'cash' ? 'Remis au marché' : null,
       proofId: proofId === undefined ? proofRef : proofId, status: 'pending',
       rejectionReason: null, declaredAt: now(), reviewedAt: null, recordedBy: 'member',
-      reference: ref,
+      reference: ref, proofHash: hash,
     });
     if (ref && registerRef) setRef(batch, fs, ref, `groups/${groupId}/payments/${payRef.id}`, id, g.ownerId);
+    if (hash && registerHash) setRef(batch, fs, hash, `groups/${groupId}/payments/${payRef.id}`, id, g.ownerId);
   }
   if (counter) {
     batch.update(fs.doc(`groups/${groupId}/members/${id}`), {
@@ -576,7 +578,7 @@ test('scénario complet', async (t) => {
       tx.set(payRef, {
         userId: id, payerName: people[id].name, payerPhone: people[id].phone, caseCount: cases,
         amount: amount ?? cases * c.caseAmount, proofId: pRef.id, status: 'pending',
-        rejectionReason: null, declaredAt: now(), reviewedAt: null, reference: ref,
+        rejectionReason: null, declaredAt: now(), reviewedAt: null, proofHash: ref,
       });
       tx.set(fs.doc(`paymentRefs/${ref}`), {
         payment: `carnets/${carnetRef.id}/payments/${payRef.id}`, payerId: id, ownerId: 't', at: now(),
@@ -1202,8 +1204,31 @@ test('version 2.4 : référence Mobile Money utilisable une seule fois', async (
   await env.withSecurityRulesDisabled((ctx) => ctx.firestore().doc(`groups/${G}`).update({
     status: 'active', startedAt: new Date(), levels: { '0': 2 },
   }));
-  await t.test('Mobile Money sans référence : refusé', () =>
-    assertFails(declare('a', G, 1, { reference: null })));
+  await t.test('Mobile Money sans empreinte de capture : refusé', () =>
+    assertFails(declare('a', G, 1, { proofHash: null })));
+  await t.test('empreinte de capture non enregistrée : refusé', () =>
+    assertFails(declare('a', G, 1, { proofHash: 'IMGABCDEF01', registerHash: false })));
+  const pHash = await assertSucceeds(declare('a', G, 1, { proofHash: 'IMGABCDEF01' }));
+  await t.test('la même capture une 2e fois : refusé', () =>
+    assertFails(declare('b', G, 1, { proofHash: 'IMGABCDEF01' })));
+  // Paiement refusé : l'empreinte est libérée
+  const mh = await adminGet(`groups/${G}/members/a`);
+  await assertSucceeds(T.batch()
+    .update(T.doc(`groups/${G}/payments/${pHash}`), {
+      status: 'rejected', rejectionReason: 'Capture illisible', reviewedAt: now(),
+    })
+    .update(T.doc(`groups/${G}/members/a`), { declaredCount: mh.declaredCount - 1 })
+    .delete(T.doc('paymentRefs/IMGABCDEF01'))
+    .commit());
+  await t.test('Mobile Money sans référence (facultative) : accepté', () =>
+    assertSucceeds(declare('b', G, 1)));
+  const mb = await adminGet(`groups/${G}/members/b`);
+  const pb = (await T.collection(`groups/${G}/payments`).where('userId', '==', 'b').get()).docs[0];
+  await assertSucceeds(T.batch()
+    .update(pb.ref, { status: 'rejected', rejectionReason: 'Test', reviewedAt: now() })
+    .update(T.doc(`groups/${G}/members/b`), { declaredCount: mb.declaredCount - 1 })
+    .delete(T.doc(`paymentRefs/${pb.data().proofHash}`))
+    .commit());
   await t.test('référence mal écrite : refusé', () =>
     assertFails(declare('a', G, 1, { reference: 'ab 12' })));
   await t.test('référence non enregistrée : refusé', () =>
@@ -1244,4 +1269,72 @@ test('version 2.4 : référence Mobile Money utilisable une seule fois', async (
     assertFails(db('z').doc('trust/z').set({
       payoutsDone: 10, payoutsConfirmed: 10, payoutsDisputed: 0, last: null,
     })));
+});
+
+test('version 2.5 : remboursement du carnet, clôture du groupe', async (t) => {
+  const T = db('t');
+  const ct = T.collection('tontines').doc();
+  await assertSucceeds(ct.set({
+    ownerId: 't', ownerName: 'Tontinier', name: 'Carnets', type: 'carnet', createdAt: now(),
+  }));
+  const cRef = T.collection('carnets').doc();
+  await assertSucceeds(T.batch().set(cRef, {
+    tontineId: ct.id, tontineName: 'Carnets', ownerId: 't', ownerName: 'Tontinier',
+    label: 'Carnet R', caseAmount: 300, caseCount: 31, clientId: null, clientName: null,
+    clientPhone: null, inviteCode: 'RMB234', usedCases: 0, approvedCases: 0,
+    lastPaymentId: null, createdAt: now(),
+  }).set(T.collection('invites').doc('RMB234'), { kind: 'carnet', targetId: cRef.id, ownerId: 't' }).commit());
+  await assertSucceeds(db('a').doc(`carnets/${cRef.id}`).update({
+    clientId: 'a', clientName: 'Alice', clientPhone: people.a.phone,
+  }));
+  const record = (cases) => (async () => {
+    const c = await adminGet(`carnets/${cRef.id}`);
+    await T.batch()
+      .set(T.collection(`carnets/${cRef.id}/payments`).doc(), {
+        userId: 'a', payerName: 'Alice', payerPhone: people.a.phone, caseCount: cases,
+        amount: cases * 300, method: 'cash', note: null, proofId: null, status: 'approved',
+        rejectionReason: null, declaredAt: now(), reviewedAt: now(), recordedBy: 'owner',
+      })
+      .update(T.doc(`carnets/${cRef.id}`), {
+        usedCases: c.usedCases + cases, approvedCases: c.approvedCases + cases,
+      })
+      .commit();
+  })();
+  const ask = (id) => db(id).doc(`carnets/${cRef.id}`).update({
+    status: 'refund_requested', refundRequestedAt: now(),
+  });
+  const close = (fs, amount) => fs.doc(`carnets/${cRef.id}`).update({
+    status: 'closed', closedAt: now(), refundAmount: amount,
+  });
+  await t.test('remboursement demandé sans case payée : refusé', () => assertFails(ask('a')));
+  await assertSucceeds(record(20));
+  await t.test('clôturer un carnet en cours sans demande : refusé', () =>
+    assertFails(close(T, 19 * 300)));
+  await t.test('le tontinier demande à la place du client : refusé', () => assertFails(ask('t')));
+  await assertSucceeds(ask('a'));
+  await t.test('encaisser après la demande : refusé', () => assertFails(record(1)));
+  await t.test('le client clôture lui-même : refusé', () => assertFails(close(db('a'), 19 * 300)));
+  await t.test('rembourser 20 cases (sans commission) : refusé', () =>
+    assertFails(close(T, 20 * 300)));
+  await t.test('le tontinier rembourse 19 cases et clôture', () =>
+    assertSucceeds(close(T, 19 * 300)));
+  await t.test('déclarer sur un carnet clôturé : refusé', () =>
+    assertFails(db('a').doc(`carnets/${cRef.id}`).update({ usedCases: 21, lastPaymentId: 'x' })));
+
+  // Groupe : clôture quand toutes les cagnottes sont remises
+  const tontine = T.collection('tontines').doc();
+  await assertSucceeds(tontine.set({
+    ownerId: 't', ownerName: 'Tontinier', name: 'Tontine du marché', type: 'cagnotte', createdAt: now(),
+  }));
+  const G = await createGroup(T, tontine.id, 'CLO234', { memberCount: 2 });
+  await assertSucceeds(joinGroup('a', G));
+  await assertSucceeds(joinGroup('b', G));
+  await env.withSecurityRulesDisabled((ctx) => ctx.firestore().doc(`groups/${G}`).update({
+    status: 'active', startedAt: new Date(), paidOutCount: 1,
+  }));
+  const closeGroup = (fs) => fs.doc(`groups/${G}`).update({ status: 'closed', closedAt: now() });
+  await t.test('clôturer avant la dernière remise : refusé', () => assertFails(closeGroup(T)));
+  await env.withSecurityRulesDisabled((ctx) => ctx.firestore().doc(`groups/${G}`).update({ paidOutCount: 2 }));
+  await t.test('un participant clôture le groupe : refusé', () => assertFails(closeGroup(db('a'))));
+  await t.test('le tontinier clôture le groupe terminé', () => assertSucceeds(closeGroup(T)));
 });

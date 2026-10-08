@@ -206,6 +206,27 @@ class _GroupScreenState extends State<GroupScreen> {
     }
   }
 
+  /// Toutes les cagnottes sont remises : le tontinier clôture le groupe.
+  Future<void> _closeGroup(_GroupData d) async {
+    final g = d.group;
+    final open = d.payouts.values.where(
+      (p) => !p.confirmed && !(g.beneficiaryOf(p.pot)?.managed ?? true),
+    );
+    if (!await confirm(
+      context,
+      title: 'Clôturer le groupe',
+      message:
+          'Les ${g.memberCount} cagnottes ont été remises. '
+          '${open.isEmpty ? '' : '${open.length} remise(s) ne sont pas encore confirmées par les bénéficiaires. '}'
+          'Le groupe passera dans les tontines terminées et ne pourra plus '
+          'être modifié.',
+      confirmLabel: 'Clôturer',
+    )) {
+      return;
+    }
+    await _run(() => Api.closeGroup(g), done: 'Groupe clôturé');
+  }
+
   Future<void> _push(Widget screen) async {
     final changed = await Navigator.of(context)
         .push<bool>(MaterialPageRoute(builder: (_) => screen));
@@ -1015,12 +1036,21 @@ class _GroupScreenState extends State<GroupScreen> {
       if (g.status == GroupStatus.finished)
         StatusCard(
           icon: Icons.verified_outlined,
-          title: 'Tontine terminée',
+          title: g.isClosed ? 'Groupe clôturé' : 'Tontine terminée',
           message:
               'Les ${g.memberCount} cagnottes ont été remises '
-              '(${periodLabel(g.startDate, g.endDate)}).',
+              '(${periodLabel(g.startDate, g.endDate)}).'
+              '${g.isClosed ? ' Clôturé le ${dateShort(g.closedAt!)}.' : ''}',
           color: paymentStatusColor(PaymentStatus.approved),
         ),
+      if (isOwner && g.canClose) ...[
+        FilledButton.icon(
+          onPressed: _busy ? null : () => _closeGroup(d),
+          icon: const Icon(Icons.task_alt),
+          label: const Text('Clôturer le groupe'),
+        ),
+        const SizedBox(height: 8),
+      ],
       if (isOwner && g.status == GroupStatus.active) ..._shortfallSection(d),
       if (!isOwner && me != null) ..._mySituation(d, me),
       if (isOwner) ..._pendingSection(d),

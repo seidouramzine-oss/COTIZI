@@ -698,6 +698,17 @@ class _OwnerDashboardState extends State<OwnerDashboard> with Reloadable {
       }
     }
     for (final g in o.groups) {
+      if (g.canClose) {
+        items.add(
+          _TodoTile(
+            icon: Icons.task_alt,
+            title: '« ${g.name} » : toutes les cagnottes sont remises',
+            subtitle: 'Clôturez le groupe',
+            color: paymentStatusColor(PaymentStatus.approved),
+            onTap: () => open(GroupScreen(groupId: g.id)),
+          ),
+        );
+      }
       if (!g.isStarted && g.pendingAcceptanceCount > 0 && g.joinedCount > 0) {
         final n = g.pendingAcceptanceCount;
         items.add(
@@ -745,7 +756,21 @@ class _OwnerDashboardState extends State<OwnerDashboard> with Reloadable {
       }
     }
     for (final c in o.carnets) {
-      if (c.isComplete) {
+      if (c.isClosed) continue;
+      if (c.refundRequested) {
+        items.add(
+          _TodoTile(
+            icon: Icons.undo,
+            title: 'Remboursement demandé · ${c.label}',
+            subtitle:
+                '${c.client?.fullName ?? 'Le client'} : remettez '
+                '${money(c.refundDue)} (${c.approvedCases - 1} cases) puis '
+                'clôturez le carnet',
+            color: paymentStatusColor(PaymentStatus.pending),
+            onTap: () => open(CarnetScreen(carnetId: c.id)),
+          ),
+        );
+      } else if (c.isComplete) {
         items.add(
           _TodoTile(
             icon: Icons.payments_outlined,
@@ -928,7 +953,19 @@ class _MemberDashboardState extends State<MemberDashboard> with Reloadable {
       // ------------------------------------------------------ Mes cagnottes
       if (current.isNotEmpty) const SectionTitle('Mes cagnottes'),
       for (final s in current) _groupCard(s, good, bad),
-      for (final c in o.carnets.where((c) => c.remainingCases > 0))
+      for (final c in o.carnets.where((c) => c.refundRequested))
+        _TodoTile(
+          icon: Icons.undo,
+          title: '${c.label} : remboursement demandé',
+          subtitle:
+              'Votre tontinier doit vous remettre ${money(c.refundDue)} '
+              '(${c.approvedCases - 1} cases)',
+          color: paymentStatusColor(PaymentStatus.pending),
+          onTap: () => open(CarnetScreen(carnetId: c.id)),
+        ),
+      for (final c in o.carnets.where(
+        (c) => c.isActive && c.remainingCases > 0,
+      ))
         _TodoTile(
           icon: Icons.menu_book_outlined,
           title: '${c.label} : ${c.remainingCases} case(s) à payer',
