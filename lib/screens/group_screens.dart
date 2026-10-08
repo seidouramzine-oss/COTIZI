@@ -422,11 +422,15 @@ class _GroupScreenState extends State<GroupScreen> {
               isThreeLine: true,
             ),
             const Divider(),
-            if (g.status == GroupStatus.active && s.remaining > 0)
+            // Seul un participant sans application ne peut pas déclarer
+            // lui-même : le tontinier encaisse pour lui.
+            if (g.status == GroupStatus.active && s.remaining > 0 && m.managed)
               ListTile(
                 leading: const Icon(Icons.point_of_sale),
                 title: const Text('Encaisser un paiement'),
-                subtitle: const Text('Espèces ou Mobile Money reçus'),
+                subtitle: const Text(
+                  'Participant sans application : vous encaissez pour lui',
+                ),
                 onTap: () => Navigator.pop(context, 'record'),
               ),
             if (s.late > 0)

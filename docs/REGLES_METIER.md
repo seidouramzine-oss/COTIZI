@@ -111,9 +111,10 @@ tontines, puis invitent leurs **clients**, qui ne font que participer.
    - le **valide** (« Argent reçu » pour les espèces) : un **reçu** est alors
      disponible à partager ;
    - ou le **refuse en indiquant la raison** (les cotisations sont à repayer).
-9. Le tontinier peut aussi **encaisser** lui-même un paiement reçu (espèces ou
-   Mobile Money) pour un participant : il est validé directement et un reçu est
-   créé.
+9. **C'est toujours le participant qui déclare son paiement** ; le tontinier
+   valide ou refuse. Seule exception : un participant **sans application**
+   (ajouté par le tontinier) ne peut pas déclarer, le tontinier **encaisse pour
+   lui** (validé directement, avec un reçu).
 10. **« Vous êtes à jour »** : toutes les cotisations arrivées à échéance
     (celle du jour comprise) sont déclarées. Un participant n'est **en retard**
     que pour les cotisations déjà dues et non déclarées : les cotisations à
@@ -127,8 +128,8 @@ tontines, puis invitent leurs **clients**, qui ne font que participer.
     validées). Avant, le bouton de remise est verrouillé ; l'écran montre les
     **participants en retard** pour cette cagnotte, avec un bouton pour relancer
     chacun sur WhatsApp, ou tout le groupe en un message. Si un participant ne
-    paie pas, le tontinier peut **encaisser pour lui** (il avance l'argent) pour
-    débloquer la remise. Le serveur vérifie aussi cette règle.
+    paie pas, il faut qu'il déclare son paiement (ou, pour un participant sans
+    application, que le tontinier encaisse pour lui) pour débloquer la remise. Le serveur vérifie aussi cette règle.
 13. Collecte complète : le tontinier appuie sur **« Remettre la cagnotte »**,
     vérifie le récapitulatif (collecte, sa commission, montant à remettre) et
     choisit le mode de remise (**espèces** ou **Mobile Money**). Le
@@ -159,9 +160,9 @@ tontines, puis invitent leurs **clients**, qui ne font que participer.
   empreinte : **une même capture ne peut servir qu'à un seul paiement** dans
   tout COTIZI (vérifié par le serveur). Si le tontinier **refuse** le paiement,
   la capture redevient utilisable.
-- **Référence Mobile Money (tontinier)** : quand le tontinier encaisse lui-même
-  un paiement Mobile Money, il peut saisir la référence du SMS (facultatif) ;
-  une référence ne peut servir qu'une fois.
+- **Référence Mobile Money (tontinier)** : quand le tontinier encaisse pour un
+  participant sans application un paiement Mobile Money, il peut saisir la
+  référence du SMS (facultatif) ; une référence ne peut servir qu'une fois.
 - **Rien ne s'efface** : un paiement validé et une remise ne peuvent plus être
   modifiés ni supprimés, par personne.
 - **Reçus numérotés** : chaque paiement validé a un numéro de reçu unique
@@ -241,8 +242,8 @@ reste bloquée par l'application tant que la collecte n'est pas complète.
    le titulaire du carnet (un seul client par carnet).
 3. Le client **déclare ses paiements** (une ou plusieurs cases à la fois), par
    Mobile Money avec preuve ou en espèces ; le tontinier valide ou refuse avec
-   une raison, comme pour la cagnotte. Le tontinier peut aussi **encaisser** des
-   cases lui-même.
+   une raison, comme pour la cagnotte. Le tontinier n'encaisse pas lui-même :
+   c'est toujours le client qui déclare.
 4. Le client paie **31 cases** et **récupère 30 cases** ; la **dernière case est la
    commission** du tontinier.
 

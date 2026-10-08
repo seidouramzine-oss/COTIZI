@@ -95,31 +95,6 @@ class _CarnetScreenState extends State<CarnetScreen> {
     ),
   );
 
-  /// Le tontinier encaisse lui-même des cases.
-  void _record(Carnet c) => _push(
-    RecordPaymentScreen(
-      payerName: c.client?.fullName ?? 'le client',
-      details: [
-        ('Client', c.client?.fullName ?? '—'),
-        ('Carnet', c.label),
-        ('Cases restantes', '${c.remainingCases}'),
-      ],
-      unitAmount: c.caseAmount,
-      maxUnits: c.remainingCases,
-      unitsLabel: 'Nombre de cases',
-      onSubmit: (cases, method, penalty, note, reference) async {
-        final p = await Api.recordCarnetPayment(
-          carnet: c,
-          caseCount: cases,
-          method: method,
-          note: note,
-          reference: reference,
-        );
-        return carnetReceipt(c, p, _business);
-      },
-    ),
-  );
-
   Future<void> _statement(Carnet c, List<Payment> payments) async {
     try {
       await shareCarnetStatement(
@@ -202,17 +177,6 @@ class _CarnetScreenState extends State<CarnetScreen> {
                     onPressed: () => _askRefund(c),
                     icon: const Icon(Icons.undo),
                     label: const Text('Demander le remboursement'),
-                  ),
-                ],
-                if (isOwner &&
-                    c.isActive &&
-                    c.clientId != null &&
-                    c.remainingCases > 0) ...[
-                  const SizedBox(height: 8),
-                  FilledButton.tonalIcon(
-                    onPressed: () => _record(c),
-                    icon: const Icon(Icons.point_of_sale),
-                    label: const Text('Encaisser des cases'),
                   ),
                 ],
                 if (c.clientId != null) ...[
