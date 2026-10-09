@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../api.dart';
 import '../format.dart';
@@ -195,18 +194,144 @@ class SubscriptionScreen extends StatefulWidget {
   State<SubscriptionScreen> createState() => _SubscriptionScreenState();
 }
 
-class _SubscriptionScreenState extends State<SubscriptionScreen> {
-  late Future<(AccessStatus, SubscriptionSettings)> _data = _load();
+typedef _PlanData = (AccessStatus, SubscriptionSettings, SubscriptionRequest?);
 
-  static Future<(AccessStatus, SubscriptionSettings)> _load() async {
+/// « Mon plan » : un plan à la fois (Gratuit, Pro, Business), prix au mois
+/// ou à l'année (2 mois offerts), puis « Contactez-nous » pour l'activer.
+class _SubscriptionScreenState extends State<SubscriptionScreen> {
+  late Future<_PlanData> _data = _load();
+  String? _plan;
+  bool _yearly = false;
+  bool _busy = false;
+
+  static Future<_PlanData> _load() async {
     final results = await Future.wait([
       Api.reloadProfile(),
       Api.isAdmin(),
       Api.subscriptionSettings(),
+      Api.myRequest(),
     ]);
     return (
       AccessStatus(results[0] as Profile, isAdmin: results[1] as bool),
       results[2] as SubscriptionSettings,
+      results[3] as SubscriptionRequest?,
+    );
+  }
+
+  void _reload() => setState(() => _data = _load());
+
+  /// Annuel : 12 mois pour le prix de 10.
+  static const yearMonthsPaid = 10;
+
+  int _monthly(SubscriptionSettings s, String plan) =>
+      plan == 'business' ? s.businessPrice : s.monthlyPrice;
+
+  int _amount(SubscriptionSettings s, String plan) =>
+      _monthly(s, plan) * (_yearly ? yearMonthsPaid : 1);
+
+  String _planTitle(String plan) => switch (plan) {
+    'business' => 'COTIZI Business',
+    'pro' => 'COTIZI Pro',
+    _ => 'COTIZI Gratuit',
+  };
+
+  Future<void> _contact(AccessStatus status, SubscriptionSettings s) async {
+    final plan = _plan!;
+    final months = _yearly ? 12 : 1;
+    final amount = _amount(s, plan);
+    final name = plan == 'business' ? 'Business' : 'Pro';
+    setState(() => _busy = true);
+    try {
+      await Api.requestSubscription(months, amount, plan: plan);
+      if (!mounted) return;
+      _reload();
+      await openWhatsApp(
+        context,
+        s.contactPhone,
+        'Bonjour, je souhaite activer le plan $name de COTIZI '
+        '(${_yearly ? 'annuel, 12 mois' : 'mensuel, 1 mois'})'
+        '${amount > 0 ? ' : ${money(amount)}' : ''}.\n'
+        'Nom : ${status.profile.fullName}\n'
+        'Numéro COTIZI : ${status.profile.phone}',
+      );
+    } catch (e) {
+      if (mounted) showError(context, e);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  void _howTo(SubscriptionSettings s) {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) {
+        final theme = Theme.of(context);
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Comment activer mon abonnement ?',
+                  style: theme.textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                for (final (n, text) in [
+                  (
+                    1,
+                    'Choisissez votre plan (Pro ou Business) et la durée : '
+                        'mensuel, ou annuel avec 2 mois offerts.',
+                  ),
+                  (
+                    2,
+                    'Appuyez sur « Contactez-nous pour activer l\'abonnement » : '
+                        'WhatsApp s\'ouvre vers l\'équipe COTIZI.',
+                  ),
+                  (
+                    3,
+                    s.paymentPhone.isNotEmpty
+                        ? 'Payez par Mobile Money au ${s.paymentPhone}.'
+                        : 'Payez par Mobile Money au numéro que nous vous '
+                              'indiquons.',
+                  ),
+                  (
+                    4,
+                    'Dès réception du paiement, nous activons votre plan. '
+                        'Fermez et rouvrez COTIZI pour le voir.',
+                  ),
+                ])
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        CircleAvatar(
+                          radius: 13,
+                          backgroundColor: theme.colorScheme.primaryContainer,
+                          child: Text(
+                            '$n',
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w800,
+                              color: theme.colorScheme.onPrimaryContainer,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(child: Text(text)),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -214,76 +339,191 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Mon plan')),
-      body: FutureView<(AccessStatus, SubscriptionSettings)>(
+      body: FutureView<_PlanData>(
         future: _data,
-        onRetry: () => setState(() => _data = _load()),
+        onRetry: _reload,
         builder: (context, data) {
-          final (status, settings) = data;
-          return ListView(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
+          final (status, s, request) = data;
+          final plan = _plan ??= status.isBusiness ? 'business' : 'pro';
+          final current = switch (plan) {
+            'business' => status.isBusiness,
+            'pro' =>
+              status.isPro &&
+                  !status.isBusiness &&
+                  !status.isAdmin &&
+                  !status.profile.isTrial,
+            _ => !status.isPro && !status.isAdmin,
+          };
+          final canAsk =
+              plan != 'free' && !status.isAdmin && s.contactPhone.isNotEmpty;
+          return Column(
             children: [
-              if (status.realAdmin)
-                _AdminTestCard(
-                  onChanged: () => setState(() => _data = _load()),
+              Expanded(
+                child: ListView(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+                  children: [
+                    if (status.realAdmin) _AdminTestCard(onChanged: _reload),
+                    _CurrentPlan(status),
+                    const SizedBox(height: 16),
+                    _Pills(
+                      options: const [
+                        ('free', 'Gratuit'),
+                        ('pro', 'Pro'),
+                        ('business', 'Business'),
+                      ],
+                      selected: plan,
+                      onChanged: (v) => setState(() => _plan = v),
+                    ),
+                    if (plan != 'free') ...[
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _Pills(
+                              options: const [
+                                ('month', 'Mensuel'),
+                                ('year', 'Annuel'),
+                              ],
+                              selected: _yearly ? 'year' : 'month',
+                              onChanged: (v) =>
+                                  setState(() => _yearly = v == 'year'),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 8,
+                            ),
+                            decoration: BoxDecoration(
+                              color: paymentStatusColor(PaymentStatus.approved)
+                                  .withValues(alpha: 0.12),
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Text(
+                              '2 mois offerts',
+                              style: TextStyle(
+                                color: paymentStatusColor(
+                                  PaymentStatus.approved,
+                                ),
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                    const SizedBox(height: 16),
+                    _PlanCard(
+                      title: _planTitle(plan),
+                      price: plan == 'free'
+                          ? '0 FCFA'
+                          : _monthly(s, plan) > 0
+                          ? money(_amount(s, plan))
+                          : 'Prix sur demande',
+                      unit: plan == 'free'
+                          ? 'pour toujours'
+                          : '${plan == 'business' ? 'par entreprise' : 'par tontinier'}'
+                                '/${_yearly ? 'an' : 'mois'}',
+                      note: plan != 'free' && _yearly && _monthly(s, plan) > 0
+                          ? '12 mois pour le prix de 10, soit '
+                                '${money((_amount(s, plan) / 12).round())} / mois'
+                          : null,
+                      current: current,
+                      sections: switch (plan) {
+                        'business' => const [
+                          [
+                            'Tout le plan Pro, pour vous et votre équipe',
+                            'Tontiniers (agents) illimités',
+                          ],
+                          [
+                            'Activité de chaque agent, mois par mois',
+                            'Salaires : fixe, commission ou les deux',
+                            'Fiches de paie pour vos agents',
+                            'Bénéfice de l\'entreprise',
+                            'Recrutement de tontiniers Pro (bientôt)',
+                          ],
+                        ],
+                        'pro' => const [
+                          [
+                            'Toutes les fonctionnalités incluses',
+                            'Groupes, carnets et clients illimités',
+                          ],
+                          [
+                            'Comptabilité : entrées, sorties, dépenses, bénéfice',
+                            'Statistiques avancées',
+                            'Badge « Vérifié » visible de vos clients',
+                            'Relevés PDF pour vous et vos clients',
+                            'Offres d\'emploi des entreprises (bientôt)',
+                          ],
+                        ],
+                        _ => [
+                          const [
+                            'Sans limite de temps',
+                            'Paiements, reçus, règlement et anti-fraude',
+                          ],
+                          [
+                            '${s.freeGroups} groupe(s) en cours',
+                            '${s.freeCarnets} carnet(s) en cours',
+                            '${s.freeClients} clients au maximum',
+                            'Note de confiance et rappels',
+                          ],
+                        ],
+                      },
+                    ),
+                    if (plan != 'free')
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: TextButton(
+                          onPressed: () => _howTo(s),
+                          child: const Text(
+                            'Comment activer mon abonnement ?',
+                            style: TextStyle(
+                              decoration: TextDecoration.underline,
+                              fontSize: 16,
+                            ),
+                          ),
+                        ),
+                      ),
+                    if (request != null)
+                      StatusCard(
+                        icon: Icons.hourglass_top,
+                        title: 'Demande envoyée',
+                        message:
+                            'Plan ${request.planLabel}, ${request.months} mois'
+                            '${request.amount > 0 ? ' · ${money(request.amount)}' : ''}, '
+                            'le ${dateLong(request.requestedAt)}. Votre plan sera '
+                            'activé dès réception du paiement.',
+                        color: paymentStatusColor(PaymentStatus.pending),
+                      ),
+                  ],
                 ),
-              _StatusCard(status),
-              const SectionTitle('Les plans COTIZI'),
-              _PlanCard(
-                name: 'Gratuit',
-                price: '0 F',
-                current: !status.isPro && !status.isAdmin,
-                icon: Icons.rocket_launch_outlined,
-                features: [
-                  '${settings.freeGroups} groupe(s) en cours',
-                  '${settings.freeCarnets} carnet(s) en cours',
-                  '${settings.freeClients} clients au maximum',
-                  'Paiements, reçus, règlement et anti-fraude',
-                ],
               ),
-              _PlanCard(
-                name: 'Pro',
-                price: settings.monthlyPrice > 0
-                    ? '${money(settings.monthlyPrice)} / mois'
-                    : 'Prix sur demande',
-                current: status.isPro && !status.isBusiness && !status.isAdmin,
-                highlighted: true,
-                icon: Icons.workspace_premium,
-                features: const [
-                  'Groupes, carnets et clients illimités',
-                  'Comptabilité : entrées, sorties, dépenses, bénéfice',
-                  'Statistiques avancées',
-                  'Badge vérifié ✔',
-                  'Accès aux offres d\'emploi des entreprises (bientôt)',
-                ],
-              ),
-              _PlanCard(
-                name: 'Business',
-                price: settings.businessPrice > 0
-                    ? '${money(settings.businessPrice)} / mois'
-                    : 'Prix sur demande',
-                current: status.isBusiness,
-                icon: Icons.business_center_outlined,
-                features: const [
-                  'Pour les entreprises de tontine',
-                  'Tout le plan Pro, pour vous et votre équipe',
-                  'Votre équipe de tontiniers (agents)',
-                  'Activité de chaque agent, mois par mois',
-                  'Salaires : fixe, commission ou les deux',
-                  'Recrutement de tontiniers Pro (bientôt)',
-                ],
-              ),
-              if (!status.isAdmin) ...[
-                SectionTitle(
-                  status.isPro && !status.profile.isTrial
-                      ? 'Prolonger ou changer de plan'
-                      : 'Passer à Pro ou Business',
+              if (canAsk)
+                SafeArea(
+                  top: false,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+                    child: SizedBox(
+                      width: double.infinity,
+                      height: 60,
+                      child: FilledButton.icon(
+                        style: FilledButton.styleFrom(
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(18),
+                          ),
+                        ),
+                        onPressed: _busy ? null : () => _contact(status, s),
+                        icon: const Icon(Icons.support_agent),
+                        label: const Text(
+                          'Contactez-nous pour activer l\'abonnement',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(fontSize: 16),
+                        ),
+                      ),
+                    ),
+                  ),
                 ),
-                _RenewCard(
-                  settings: settings,
-                  profile: status.profile,
-                  initialPlan: status.isBusiness ? 'business' : 'pro',
-                ),
-              ],
             ],
           );
         },
@@ -352,8 +592,9 @@ class _AdminTestCard extends StatelessWidget {
   }
 }
 
-class _StatusCard extends StatelessWidget {
-  const _StatusCard(this.status);
+/// Plan actuel, en une ligne.
+class _CurrentPlan extends StatelessWidget {
+  const _CurrentPlan(this.status);
 
   final AccessStatus status;
 
@@ -361,295 +602,203 @@ class _StatusCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final color = status.color(theme.colorScheme);
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          children: [
-            CircleAvatar(
-              radius: 28,
-              backgroundColor: color.withValues(alpha: 0.12),
-              foregroundColor: color,
-              child: Icon(status.icon, size: 30),
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Row(
+        children: [
+          Icon(status.icon, color: color),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  status.title,
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w800,
+                    color: color,
+                  ),
+                ),
+                Text(status.detail, style: theme.textTheme.bodySmall),
+              ],
             ),
-            const SizedBox(height: 12),
-            Text(
-              status.title,
-              textAlign: TextAlign.center,
-              style: theme.textTheme.titleLarge?.copyWith(
-                fontWeight: FontWeight.w700,
-                color: color,
-              ),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              status.detail,
-              textAlign: TextAlign.center,
-              style: theme.textTheme.bodyMedium,
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
 }
 
-/// Carte d'un plan : nom, prix, avantages, plan actuel.
-class _PlanCard extends StatelessWidget {
-  const _PlanCard({
-    required this.name,
-    required this.price,
-    required this.current,
-    required this.icon,
-    required this.features,
-    this.highlighted = false,
+/// Choix en pastilles (comme un interrupteur) : la pastille choisie est
+/// blanche sur fond gris.
+class _Pills extends StatelessWidget {
+  const _Pills({
+    required this.options,
+    required this.selected,
+    required this.onChanged,
   });
 
-  final String name;
+  final List<(String, String)> options;
+  final String selected;
+  final ValueChanged<String> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(30),
+      ),
+      child: Row(
+        children: [
+          for (final (value, label) in options)
+            Expanded(
+              child: Semantics(
+                button: true,
+                selected: value == selected,
+                label: label,
+                excludeSemantics: true,
+                onTap: () => onChanged(value),
+                child: GestureDetector(
+                  onTap: () => onChanged(value),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 180),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    decoration: BoxDecoration(
+                      color: value == selected
+                          ? scheme.surface
+                          : Colors.transparent,
+                      borderRadius: BorderRadius.circular(26),
+                      border: value == selected
+                          ? Border.all(color: scheme.outlineVariant)
+                          : null,
+                      boxShadow: value == selected
+                          ? [
+                              BoxShadow(
+                                color: Colors.black.withValues(alpha: 0.06),
+                                blurRadius: 6,
+                                offset: const Offset(0, 2),
+                              ),
+                            ]
+                          : null,
+                    ),
+                    child: Text(
+                      label,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: value == selected
+                            ? FontWeight.w800
+                            : FontWeight.w500,
+                        color: value == selected
+                            ? scheme.onSurface
+                            : scheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Carte d'un plan : nom, grand prix, avantages cochés.
+class _PlanCard extends StatelessWidget {
+  const _PlanCard({
+    required this.title,
+    required this.price,
+    required this.unit,
+    required this.sections,
+    required this.current,
+    this.note,
+  });
+
+  final String title;
   final String price;
+  final String unit;
+  final String? note;
+  final List<List<String>> sections;
   final bool current;
-  final IconData icon;
-  final List<String> features;
-  final bool highlighted;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final accent = highlighted ? scheme.primary : scheme.onSurfaceVariant;
-    return Card(
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(20),
-        side: BorderSide(
-          color: current || highlighted
-              ? scheme.primary
-              : scheme.outlineVariant,
+    return Container(
+      decoration: BoxDecoration(
+        color: scheme.surface,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(
+          color: current ? scheme.primary : scheme.outlineVariant,
           width: current ? 2 : 1,
         ),
       ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(icon, color: accent),
-                const SizedBox(width: 8),
-                Text(
-                  name,
-                  style: theme.textTheme.titleLarge?.copyWith(
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                if (current) StatusChip('Votre plan', scheme.primary),
-                const Spacer(),
-                Text(
-                  price,
-                  style: theme.textTheme.titleSmall?.copyWith(
-                    fontWeight: FontWeight.w800,
-                    color: accent,
-                  ),
-                ),
-              ],
-            ),
+      padding: const EdgeInsets.fromLTRB(24, 20, 24, 20),
+      child: Column(
+        children: [
+          if (current) ...[
+            StatusChip('Votre plan actuel', scheme.primary),
             const SizedBox(height: 8),
-            for (final f in features)
+          ],
+          Text(
+            title,
+            style: theme.textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 6),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(
+              price,
+              style: theme.textTheme.displaySmall?.copyWith(
+                fontWeight: FontWeight.w800,
+                color: scheme.onSurface,
+              ),
+            ),
+          ),
+          Text(
+            unit,
+            style: theme.textTheme.titleMedium?.copyWith(
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
+          if (note != null) ...[
+            const SizedBox(height: 4),
+            Text(
+              note!,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: paymentStatusColor(PaymentStatus.approved),
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+          for (final section in sections) ...[
+            const Divider(height: 32),
+            for (final f in section)
               Padding(
-                padding: const EdgeInsets.symmetric(vertical: 2),
+                padding: const EdgeInsets.symmetric(vertical: 5),
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Icon(Icons.check, size: 18, color: accent),
-                    const SizedBox(width: 8),
-                    Expanded(child: Text(f)),
+                    Icon(Icons.check, size: 22, color: scheme.primary),
+                    const SizedBox(width: 12),
+                    Expanded(child: Text(f, style: theme.textTheme.bodyLarge)),
                   ],
                 ),
               ),
           ],
-        ),
-      ),
-    );
-  }
-}
-
-/// Demande d'abonnement : on choisit la durée, on écrit à COTIZI sur
-/// WhatsApp, on paie par Mobile Money, puis l'équipe active l'abonnement.
-class _RenewCard extends StatefulWidget {
-  const _RenewCard({
-    required this.settings,
-    required this.profile,
-    this.initialPlan = 'pro',
-  });
-
-  final SubscriptionSettings settings;
-  final Profile profile;
-  final String initialPlan;
-
-  @override
-  State<_RenewCard> createState() => _RenewCardState();
-}
-
-class _RenewCardState extends State<_RenewCard> {
-  int _months = 1;
-  late String _plan = widget.initialPlan;
-  late Future<SubscriptionRequest?> _request = Api.myRequest();
-  bool _busy = false;
-
-  bool get _business => _plan == 'business';
-
-  String get _planName => _business ? 'Business' : 'Pro';
-
-  int get _price =>
-      _business ? widget.settings.businessPrice : widget.settings.monthlyPrice;
-
-  int get _amount => _price * _months;
-
-  Future<void> _ask() async {
-    final phone = widget.settings.contactPhone;
-    setState(() => _busy = true);
-    try {
-      await Api.requestSubscription(_months, _amount, plan: _plan);
-      if (!mounted) return;
-      setState(() => _request = Api.myRequest());
-      await openWhatsApp(
-        context,
-        phone,
-        'Bonjour, je souhaite le plan $_planName de COTIZI pour $_months mois'
-        '${_amount > 0 ? ' (${money(_amount)})' : ''}.\n'
-        'Nom : ${widget.profile.fullName}\n'
-        'Numéro COTIZI : ${widget.profile.phone}',
-      );
-    } catch (e) {
-      if (mounted) showError(context, e);
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final settings = widget.settings;
-    final phone = settings.contactPhone;
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text(
-              'Plan',
-              style: theme.textTheme.titleSmall?.copyWith(
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            const SizedBox(height: 8),
-            SegmentedButton<String>(
-              segments: const [
-                ButtonSegment(value: 'pro', label: Text('Pro')),
-                ButtonSegment(value: 'business', label: Text('Business')),
-              ],
-              selected: {_plan},
-              onSelectionChanged: (v) => setState(() => _plan = v.first),
-            ),
-            const SizedBox(height: 12),
-            Text(
-              'Durée',
-              style: theme.textTheme.titleSmall?.copyWith(
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            const SizedBox(height: 8),
-            SegmentedButton<int>(
-              segments: const [
-                ButtonSegment(value: 1, label: Text('1 mois')),
-                ButtonSegment(value: 3, label: Text('3 mois')),
-                ButtonSegment(value: 12, label: Text('12 mois')),
-              ],
-              selected: {_months},
-              onSelectionChanged: (v) => setState(() => _months = v.first),
-            ),
-            if (_price > 0) ...[
-              const SizedBox(height: 12),
-              InfoRow('Montant à payer', money(_amount), bold: true),
-            ],
-            const SizedBox(height: 12),
-            for (final (n, text) in [
-              (1, 'Écrivez-nous sur WhatsApp avec le bouton ci-dessous.'),
-              (
-                2,
-                settings.paymentPhone.isNotEmpty
-                    ? 'Payez par Mobile Money au ${settings.paymentPhone}.'
-                    : 'Payez par Mobile Money au numéro que nous vous indiquons.',
-              ),
-              (
-                3,
-                'Dès réception du paiement, nous activons votre plan '
-                    '$_planName.',
-              ),
-            ])
-              Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    CircleAvatar(
-                      radius: 12,
-                      backgroundColor: theme.colorScheme.primaryContainer,
-                      child: Text(
-                        '$n',
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w800,
-                          color: theme.colorScheme.onPrimaryContainer,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(child: Text(text)),
-                  ],
-                ),
-              ),
-            FutureBuilder<SubscriptionRequest?>(
-              future: _request,
-              builder: (context, snap) {
-                final r = snap.data;
-                if (r == null) return const SizedBox.shrink();
-                return Padding(
-                  padding: const EdgeInsets.only(top: 4, bottom: 8),
-                  child: StatusCard(
-                    icon: Icons.hourglass_top,
-                    title: 'Demande envoyée',
-                    message:
-                        'Plan ${r.planLabel}, ${r.months} mois${r.amount > 0 ? ' · ${money(r.amount)}' : ''}, '
-                        'le ${dateLong(r.requestedAt)}. Votre abonnement sera '
-                        'activé dès réception du paiement.',
-                    color: paymentStatusColor(PaymentStatus.pending),
-                  ),
-                );
-              },
-            ),
-            const SizedBox(height: 8),
-            if (phone.isNotEmpty) ...[
-              FilledButton.icon(
-                onPressed: _busy ? null : _ask,
-                icon: const Icon(Icons.chat_outlined),
-                label: Text('Demander le plan $_planName sur WhatsApp'),
-              ),
-              const SizedBox(height: 8),
-              OutlinedButton.icon(
-                onPressed: () => launchUrl(
-                  Uri.parse('tel:+${phone.replaceAll(RegExp(r'\D'), '')}'),
-                ),
-                icon: const Icon(Icons.call_outlined),
-                label: const Text('Appeler COTIZI'),
-              ),
-            ] else
-              const Text('Contactez l\'équipe COTIZI pour vous abonner.'),
-          ],
-        ),
+        ],
       ),
     );
   }
