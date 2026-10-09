@@ -12,6 +12,7 @@ import '../widgets/common.dart';
 import '../reminders.dart';
 import 'business_screens.dart';
 import 'company_screens.dart';
+import 'recruit_screens.dart';
 import 'pro_screens.dart';
 import 'subscription_screens.dart';
 import 'suggestion_screens.dart';
@@ -285,6 +286,23 @@ class _ProfilePageState extends State<ProfilePage> {
                       ),
                       trailing: const Icon(Icons.chevron_right),
                       onTap: () => _push(const EnterpriseScreen()),
+                    ),
+                    ListTile(
+                      leading: const Icon(Icons.work_outline),
+                      title: Row(
+                        children: [
+                          const Text('Espace recrutement'),
+                          if (!status.isPro) ...[
+                            const SizedBox(width: 8),
+                            StatusChip('PRO', scheme.primary),
+                          ],
+                        ],
+                      ),
+                      subtitle: const Text(
+                        'Offres d\'emploi des entreprises de tontine',
+                      ),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () => _push(const RecruitmentScreen()),
                     ),
                     ListTile(
                       leading: const Icon(Icons.workspace_premium_outlined),

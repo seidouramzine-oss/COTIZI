@@ -95,6 +95,31 @@ Réservés au plan Pro (essai Pro compris). En plan Gratuit, ils sont marqués
 - **Badge vérifié** : visible aussi dans **Mon profil pro** et à côté du nom
   de l'activité en haut des groupes et des carnets vus par les clients.
 
+## Espace recrutement (version 3.3)
+
+- **Profil → Espace recrutement** : les offres d'emploi des entreprises de
+  tontine. **Réservé aux tontiniers Pro** (essai Pro compris) : un tontinier
+  au plan Gratuit voit « Réservé aux tontiniers Pro » et ne peut ni voir les
+  offres ni postuler (vérifié par le serveur). Les clients n'y ont pas accès.
+- Une entreprise au plan Business publie une offre (Mon entreprise →
+  « Recruter des tontiniers » → « Publier une offre ») : poste, lieu, salaire
+  proposé, description. Elle peut la fermer ou la rouvrir.
+- Le tontinier Pro ouvre l'offre (avec la note de confiance et le badge de
+  l'entreprise), puis « Postuler » avec un message. Une candidature par
+  offre ; il peut la retirer tant qu'elle n'a pas de réponse.
+- L'entreprise voit les candidats (badge vérifié, note de confiance,
+  message) et répond « Accepter » ou « Refuser ». En acceptant, WhatsApp
+  s'ouvre avec le **code d'équipe** : le tontinier l'entre dans Mon
+  entreprise pour devenir agent.
+
+## Page « Mon plan »
+
+Un plan à la fois (pastilles Gratuit / Pro / Business), **Mensuel** ou
+**Annuel** (12 mois pour le prix de 10 : « 2 mois offerts »), grande carte
+avec le prix et les avantages cochés, lien « Comment activer mon
+abonnement ? » et bouton « Contactez-nous pour activer l'abonnement » (la
+demande est enregistrée et WhatsApp s'ouvre vers COTIZI).
+
 ## Mode test de l'administrateur
 
 Dans **Mon plan**, l'administrateur choisit « Voir COTIZI comme » : **Admin**

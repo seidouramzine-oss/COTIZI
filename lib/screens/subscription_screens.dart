@@ -441,7 +441,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
                             'Salaires : fixe, commission ou les deux',
                             'Fiches de paie pour vos agents',
                             'Bénéfice de l\'entreprise',
-                            'Recrutement de tontiniers Pro (bientôt)',
+                            'Recrutement : offres vues par les tontiniers Pro',
                           ],
                         ],
                         'pro' => const [
@@ -454,7 +454,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
                             'Statistiques avancées',
                             'Badge « Vérifié » visible de vos clients',
                             'Relevés PDF pour vous et vos clients',
-                            'Offres d\'emploi des entreprises (bientôt)',
+                            'Espace recrutement : offres d\'emploi des entreprises',
                           ],
                         ],
                         _ => [

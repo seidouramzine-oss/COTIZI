@@ -591,6 +591,68 @@ service cloud.firestore {
       allow delete: if signedIn() && (agentId == uid() || existing().bossId == uid());
     }
 
+    // ------------------------------------------- Recrutement (plan Business)
+
+    // Tontinier au plan Pro (essai Pro compris) ou Business
+    function isProUser(u) {
+      return u.get('role', 'tontinier') == 'tontinier'
+        && (u.get('subscriptionEnd', null) != null
+          ? u.subscriptionEnd > request.time
+          : u.createdAt + duration.value(30, 'd') > request.time);
+    }
+
+    // Offres d'emploi publiées par les entreprises : seuls les tontiniers
+    // Pro les voient.
+    match /jobs/{jobId} {
+      allow read: if signedIn()
+        && (existing().bossId == uid() || isAdmin()
+          || (existing().status == 'open' && isProUser(me())));
+      allow create: if signedIn()
+        && incoming().keys().hasOnly(['bossId', 'companyName', 'title', 'city',
+            'salary', 'description', 'status', 'createdAt'])
+        && incoming().bossId == uid()
+        && (isBusiness(me()) || isAdmin())
+        && exists(doc('companies/' + uid()))
+        && incoming().companyName == get(doc('companies/' + uid())).data.name
+        && isText(incoming().title, 3, 80)
+        && incoming().city is string && incoming().city.size() <= 40
+        && incoming().salary is string && incoming().salary.size() <= 80
+        && isText(incoming().description, 10, 1500)
+        && incoming().status == 'open'
+        && incoming().createdAt == request.time;
+      allow update: if signedIn() && existing().bossId == uid()
+        && changedOnly(['status'])
+        && incoming().status in ['open', 'closed'];
+      allow delete: if signedIn() && existing().bossId == uid();
+    }
+
+    // Candidatures : une par tontinier et par offre (id = offre_candidat).
+    // Le candidat et l'entreprise les voient ; l'entreprise répond.
+    match /applications/{applicationId} {
+      allow read: if signedIn()
+        && (existing().userId == uid() || existing().bossId == uid());
+      allow create: if signedIn()
+        && incoming().keys().hasOnly(['jobId', 'jobTitle', 'bossId', 'companyName',
+            'userId', 'fullName', 'phone', 'message', 'status', 'createdAt'])
+        && applicationId == incoming().jobId + '_' + uid()
+        && incoming().userId == uid()
+        && incoming().userId != incoming().bossId
+        && isProUser(me())
+        && incoming().fullName == me().fullName
+        && incoming().phone == me().phone
+        && get(doc('jobs/' + incoming().jobId)).data.status == 'open'
+        && get(doc('jobs/' + incoming().jobId)).data.bossId == incoming().bossId
+        && incoming().companyName is string && incoming().companyName.size() <= 60
+        && isText(incoming().jobTitle, 3, 80)
+        && incoming().message is string && incoming().message.size() <= 500
+        && incoming().status == 'sent'
+        && incoming().createdAt == request.time;
+      allow update: if signedIn() && existing().bossId == uid()
+        && changedOnly(['status'])
+        && incoming().status in ['accepted', 'rejected'];
+      allow delete: if signedIn() && existing().userId == uid();
+    }
+
     // ---------------------------------------------------------- Tontines
 
     match /tontines/{tontineId} {

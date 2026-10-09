@@ -23,6 +23,8 @@ const people = {
   boss: { phone: '+22997000090', name: 'Patron Business' },
   ag: { phone: '+22997000091', name: 'Agent Koffi' },
   ag2: { phone: '+22997000092', name: 'Agent Ama' },
+  pro1: { phone: '+22997000093', name: 'Pro Sena' },
+  free1: { phone: '+22997000094', name: 'Gratuit Yao' },
 };
 
 let env;
@@ -1626,4 +1628,61 @@ test('version 3.2 : plan Business, équipe, salaires', async (t) => {
   });
   await t.test('après son départ, le patron ne lit plus ses groupes', () =>
     assertFails(boss.collection('groups').where('ownerId', '==', 'ag').get()));
+});
+
+test('version 3.3 : recrutement réservé aux tontiniers Pro', async (t) => {
+  const Timestamp = firebase.firestore.Timestamp;
+  await env.withSecurityRulesDisabled(async (ctx) => {
+    const fs = ctx.firestore();
+    await fs.doc('users/pro1').set({ fullName: people.pro1.name, phone: people.pro1.phone,
+      role: 'tontinier', createdAt: Timestamp.fromDate(new Date(Date.now() - 90 * 864e5)),
+      subscriptionEnd: Timestamp.fromDate(new Date(Date.now() + 20 * 864e5)) });
+    await fs.doc('users/free1').set({ fullName: people.free1.name, phone: people.free1.phone,
+      role: 'tontinier', createdAt: Timestamp.fromDate(new Date(Date.now() - 90 * 864e5)) });
+  });
+  const boss = db('boss');
+  const job = (fs, fields = {}) => fs.collection('jobs').add({
+    bossId: 'boss', companyName: 'Tontines Express', title: 'Collecteur à Cotonou',
+    city: 'Cotonou', salary: '40 000 F + commission', description: 'Collecte journalière des carnets au marché.',
+    status: 'open', createdAt: now(), ...fields,
+  });
+  await t.test('un tontinier Pro sans entreprise ne publie pas', () =>
+    assertFails(db('pro1').collection('jobs').add({ bossId: 'pro1', companyName: 'X', title: 'Collecteur',
+      city: '', salary: '', description: 'Une description assez longue', status: 'open', createdAt: now() })));
+  await t.test('nom d\'entreprise faux : refusé', () => assertFails(job(boss, { companyName: 'Autre' })));
+  const ref = await assertSucceeds(job(boss));
+  await t.test('le tontinier Pro voit l\'offre', () =>
+    assertSucceeds(db('pro1').collection('jobs').where('status', '==', 'open').get()));
+  await t.test('le tontinier Gratuit ne voit pas les offres', () =>
+    assertFails(db('free1').collection('jobs').where('status', '==', 'open').get()));
+  await t.test('un client ne voit pas les offres', () =>
+    assertFails(db('a').doc(`jobs/${ref.id}`).get()));
+
+  const apply = (id, fields = {}) => db(id).doc(`applications/${ref.id}_${id}`).set({
+    jobId: ref.id, jobTitle: 'Collecteur à Cotonou', bossId: 'boss', companyName: 'Tontines Express',
+    userId: id, fullName: people[id].name, phone: people[id].phone,
+    message: 'Disponible tout de suite', status: 'sent', createdAt: now(), ...fields,
+  });
+  await t.test('le tontinier Gratuit ne postule pas', () => assertFails(apply('free1')));
+  await t.test('candidature déjà acceptée : refusé', () => assertFails(apply('pro1', { status: 'accepted' })));
+  await t.test('le tontinier Pro postule', () => assertSucceeds(apply('pro1')));
+  await t.test('le candidat relit sa candidature', () =>
+    assertSucceeds(db('pro1').collection('applications').where('userId', '==', 'pro1').get()));
+  await t.test('l\'entreprise voit les candidatures', () =>
+    assertSucceeds(boss.collection('applications').where('bossId', '==', 'boss').get()));
+  await t.test('un autre ne voit pas les candidatures', () =>
+    assertFails(db('free1').collection('applications').where('bossId', '==', 'boss').get()));
+  await t.test('le candidat s\'accepte lui-même : refusé', () =>
+    assertFails(db('pro1').doc(`applications/${ref.id}_pro1`).update({ status: 'accepted' })));
+  await t.test('l\'entreprise accepte la candidature', () =>
+    assertSucceeds(boss.doc(`applications/${ref.id}_pro1`).update({ status: 'accepted' })));
+  await t.test('l\'entreprise ferme l\'offre', () =>
+    assertSucceeds(boss.doc(`jobs/${ref.id}`).update({ status: 'closed' })));
+  await t.test('offre fermée : plus visible des tontiniers', () =>
+    assertFails(db('pro1').doc(`jobs/${ref.id}`).get()));
+  await t.test('offre fermée : plus de candidature', () =>
+    assertFails(db('ag').doc(`applications/${ref.id}_ag`).set({
+      jobId: ref.id, jobTitle: 'Collecteur à Cotonou', bossId: 'boss', companyName: 'Tontines Express',
+      userId: 'ag', fullName: people.ag.name, phone: people.ag.phone, message: '', status: 'sent', createdAt: now(),
+    })));
 });

@@ -9,6 +9,7 @@ import '../format.dart';
 import '../models.dart';
 import '../settings.dart';
 import '../widgets/common.dart';
+import 'recruit_screens.dart';
 import 'subscription_screens.dart';
 
 String _monthLabel(DateTime m) {
@@ -377,6 +378,26 @@ class _BossScreenState extends State<_BossScreen> {
                     ),
                   ],
                 ),
+              ),
+            ),
+            Card(
+              child: ListTile(
+                leading: const Icon(Icons.campaign_outlined),
+                title: const Text(
+                  'Recruter des tontiniers',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
+                subtitle: const Text(
+                  'Publier une offre vue par les tontiniers Pro',
+                ),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: widget.active
+                    ? () => Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => MyJobsScreen(company: c),
+                        ),
+                      )
+                    : null,
               ),
             ),
             const SizedBox(height: 8),
