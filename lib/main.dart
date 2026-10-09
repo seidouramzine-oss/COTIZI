@@ -43,8 +43,17 @@ class CotiziApp extends StatelessWidget {
     return ValueListenableBuilder<ThemeMode>(
       valueListenable: themeMode,
       builder: (context, mode, _) => MaterialApp(
-        title: 'COTIZI',
+        title: isTestBuild ? 'COTIZI Test' : 'COTIZI',
         debugShowCheckedModeBanner: false,
+        // Version de test : bandeau « TEST » pour ne pas la confondre.
+        builder: isTestBuild
+            ? (context, child) => Banner(
+                message: 'TEST',
+                location: BannerLocation.topEnd,
+                color: const Color(0xFFF28C28),
+                child: child!,
+              )
+            : null,
         locale: const Locale('fr'),
         supportedLocales: const [Locale('fr')],
         localizationsDelegates: const [

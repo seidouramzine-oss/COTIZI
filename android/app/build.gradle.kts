@@ -30,6 +30,22 @@ android {
         versionName = flutter.versionName
     }
 
+    // prod : la vraie application (com.cotizi.app, projet Firebase « cotizi »).
+    // staging : « COTIZI Test » (com.cotizi.app.test, projet « cotizi-test »),
+    // installée à côté de la vraie pour essayer les nouveautés.
+    flavorDimensions += "env"
+    productFlavors {
+        create("prod") {
+            dimension = "env"
+            manifestPlaceholders["appName"] = "COTIZI"
+        }
+        create("staging") {
+            dimension = "env"
+            applicationIdSuffix = ".test"
+            manifestPlaceholders["appName"] = "COTIZI Test"
+        }
+    }
+
     buildTypes {
         release {
             // TODO: Add your own signing config for the release build.

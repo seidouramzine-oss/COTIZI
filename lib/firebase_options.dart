@@ -1,5 +1,10 @@
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/services.dart' show appFlavor;
+
+/// Version de test (« COTIZI Test », flavor staging) : projet « cotizi-test »,
+/// séparé des vraies données. Construite avec --flavor staging.
+bool get isTestBuild => appFlavor == 'staging';
 
 /// Configuration du projet Firebase de COTIZI.
 /// Les valeurs viennent de google-services.json (Android) et du bloc
@@ -10,7 +15,8 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 /// de tester l'application avec les émulateurs Firebase
 /// (flutter run --dart-define=USE_EMULATOR=true).
 class DefaultFirebaseOptions {
-  static FirebaseOptions get currentPlatform => kIsWeb ? web : android;
+  static FirebaseOptions get currentPlatform =>
+      kIsWeb ? web : (isTestBuild ? androidTest : android);
 
   // Projet Firebase « cotizi » (application Android com.cotizi.app)
   static const android = FirebaseOptions(
@@ -18,6 +24,14 @@ class DefaultFirebaseOptions {
     appId: '1:357292235465:android:518da13a256af7fa118b18',
     messagingSenderId: '357292235465',
     projectId: 'cotizi',
+  );
+
+  // Projet Firebase « cotizi-test » (application Android com.cotizi.app.test)
+  static const androidTest = FirebaseOptions(
+    apiKey: 'AIzaSyBSFV7yTnLESTb9larhLE9hnxyv9M5hkeU',
+    appId: '1:163157055197:android:21fbee981eda43ab44ed34',
+    messagingSenderId: '163157055197',
+    projectId: 'cotizi-test',
   );
 
   static const web = FirebaseOptions(
