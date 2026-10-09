@@ -83,8 +83,11 @@ class Profile {
   DateTime? get accessEnd =>
       subscriptionEnd ?? createdAt?.add(const Duration(days: trialDays));
 
-  bool canCreateAt(DateTime now) =>
-      !isMember && (accessEnd?.isAfter(now) ?? false);
+  /// Un tontinier crée toujours (plan Gratuit limité, ou Pro).
+  bool canCreateAt(DateTime now) => !isMember;
+
+  /// Plan Pro en cours : essai de 30 jours ou abonnement payé.
+  bool isProAt(DateTime now) => !isMember && (accessEnd?.isAfter(now) ?? false);
 
   /// Jours restants (0 le dernier jour, négatif une fois expiré).
   int daysLeft(DateTime now) {
@@ -136,7 +139,23 @@ class SubscriptionSettings {
     this.supportPhone = '',
     this.supportEmail = '',
     this.supportHours = '',
+    this.businessPrice = 0,
+    this.freeGroups = defaultFreeGroups,
+    this.freeCarnets = defaultFreeCarnets,
+    this.freeClients = defaultFreeClients,
   });
+
+  /// Prix du plan Business par mois (le prix Pro est [monthlyPrice]).
+  final int businessPrice;
+
+  /// Limites du plan Gratuit (réglées dans Administration).
+  final int freeGroups;
+  final int freeCarnets;
+  final int freeClients;
+
+  static const defaultFreeGroups = 2;
+  static const defaultFreeCarnets = 3;
+  static const defaultFreeClients = 30;
 
   /// E-mail de l'assistance COTIZI (facultatif).
   final String supportEmail;
@@ -167,6 +186,10 @@ class SubscriptionSettings {
     supportPhone: json?['supportPhone'] as String? ?? '',
     supportEmail: json?['supportEmail'] as String? ?? '',
     supportHours: json?['supportHours'] as String? ?? '',
+    businessPrice: (json?['businessPrice'] as num?)?.toInt() ?? 0,
+    freeGroups: (json?['freeGroups'] as num?)?.toInt() ?? defaultFreeGroups,
+    freeCarnets: (json?['freeCarnets'] as num?)?.toInt() ?? defaultFreeCarnets,
+    freeClients: (json?['freeClients'] as num?)?.toInt() ?? defaultFreeClients,
   );
 }
 
@@ -1429,6 +1452,29 @@ class Suggestion {
       text: json['text'] as String? ?? '',
       status: json['status'] as String? ?? 'new',
       createdAt: _time(json['createdAt']),
+    );
+  }
+}
+
+/// Utilisation du plan Gratuit : groupes et carnets en cours, clients.
+class PlanUsage {
+  const PlanUsage({this.groups = 0, this.carnets = 0, this.clients = 0});
+
+  final int groups;
+  final int carnets;
+  final int clients;
+
+  /// Groupes non terminés et carnets non clôturés d'un tontinier ; les
+  /// clients sont les places des groupes en cours et les carnets.
+  factory PlanUsage.of(List<Group> groups, List<Carnet> carnets) {
+    final open = groups.where(
+      (g) => !g.isLegacy && g.status != GroupStatus.finished,
+    );
+    final openCarnets = carnets.where((c) => !c.isClosed);
+    return PlanUsage(
+      groups: open.length,
+      carnets: openCarnets.length,
+      clients: open.fold(0, (n, g) => n + g.memberCount) + openCarnets.length,
     );
   }
 }

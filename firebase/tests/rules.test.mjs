@@ -649,23 +649,8 @@ test('abonnement des tontiniers et administration', async (t) => {
     ownerId: 'ancien', ownerName: 'Ancien', name: 'Ancienne', type: 'cagnotte',
     createdAt: ts(Date.now() - 20 * DAY),
   }));
-  await t.test('essai terminé : création de tontine refusée', () =>
-    assertFails(newTontine(ancien, 'ancien', 'Ancien')));
-  await t.test('essai terminé : création de groupe refusée', async () => {
-    const ref = ancien.collection('groups').doc();
-    const batch = ancien.batch();
-    batch.set(ref, {
-      tontineId: vieilleTontine, tontineName: 'Ancienne', ownerId: 'ancien', ownerName: 'Ancien',
-      name: 'G', memberCount: 3, contributionAmount: 1000, frequency: 'weekly',
-      startDate: '2026-10-10', contributionsPerPot: 1, firstPayoutDate: '2026-10-10',
-      paidOutCount: 0, orderMode: 'draw', penaltyAmount: 0, penaltyGraceDays: 0,
-      startedAt: null, commissionType: 'percent', commissionValue: 5,
-      inviteCode: 'OLD234', status: 'recruiting', joinedCount: 0, drawnCount: 0,
-      memberIds: [], createdAt: now(),
-    });
-    batch.set(ancien.collection('invites').doc('OLD234'), { kind: 'group', targetId: ref.id, ownerId: 'ancien' });
-    await assertFails(batch.commit());
-  });
+  await t.test('essai terminé : plan Gratuit, création de tontine autorisée', () =>
+    assertSucceeds(newTontine(ancien, 'ancien', 'Ancien')));
   await t.test('essai terminé : son tableau de bord reste lisible', () =>
     assertSucceeds(ancien.collection('tontines').where('ownerId', '==', 'ancien').get()));
 
@@ -713,8 +698,8 @@ test('abonnement des tontiniers et administration', async (t) => {
 
   // Arrêt de l'abonnement (fin = maintenant)
   await assertSucceeds(admin.doc('users/neuf').update({ subscriptionEnd: now() }));
-  await t.test('abonnement arrêté : création refusée même pendant l\'essai', () =>
-    assertFails(newTontine(neuf, 'neuf', 'Nouveau')));
+  await t.test('abonnement arrêté : retour au plan Gratuit, création autorisée', () =>
+    assertSucceeds(newTontine(neuf, 'neuf', 'Nouveau')));
 
   // Prix et numéro de paiement
   const settings = { monthlyPrice: 5000, paymentPhone: '+229 01 97 00 00 00' };
@@ -1165,6 +1150,19 @@ test('version 2.2 : règlement accepté, pénalité en pourcentage, demandes d\'
       monthlyPrice: 5000, paymentPhone: '+22901000000', supportPhone: '+22901000001',
       supportEmail: 'assistance@cotizi.app', supportHours: 'du lundi au vendredi (9 h 00 - 17 h 00)',
     })));
+  await t.test('prix Business et limites du plan Gratuit dans les réglages', () =>
+    assertSucceeds(admin.doc('settings/subscription').set({
+      monthlyPrice: 3000, paymentPhone: '+22901000000', businessPrice: 15000,
+      freeGroups: 2, freeCarnets: 3, freeClients: 30,
+    })));
+  await t.test('limite négative : refusé', () =>
+    assertFails(admin.doc('settings/subscription').set({
+      monthlyPrice: 3000, paymentPhone: '+22901000000', freeGroups: -1,
+    })));
+  await t.test('un tontinier règle les limites : refusé', () =>
+    assertFails(db('t').doc('settings/subscription').set({
+      monthlyPrice: 0, paymentPhone: '', freeGroups: 999,
+    })));
   await t.test('horaires trop longs : refusé', () =>
     assertFails(admin.doc('settings/subscription').set({
       monthlyPrice: 5000, paymentPhone: '+22901000000', supportHours: 'x'.repeat(200),
@@ -1350,7 +1348,7 @@ test('version 2.5 : remboursement du carnet, clôture du groupe', async (t) => {
   await t.test('le tontinier clôture le groupe terminé', () => assertSucceeds(closeGroup(T)));
 });
 
-test('version 2.6 : abonnement du tontinier expiré, activité en pause', async (t) => {
+test('version 3.0 : abonnement terminé, plan Gratuit, l\'activité continue', async (t) => {
   const T = db('t');
   const tontine = T.collection('tontines').doc();
   await assertSucceeds(tontine.set({
@@ -1389,18 +1387,8 @@ test('version 2.6 : abonnement du tontinier expiré, activité en pause', async 
     assertSucceeds(db('a').doc('users/t').get()));
   await t.test('lire le profil d\'un autre client : refusé', () =>
     assertFails(db('a').doc('users/b').get()));
-  await t.test('expiré : le client ne peut plus déclarer', () =>
-    assertFails(declare('b', G, 1, { method: 'cash' })));
-  const pending = (await T.collection(`groups/${G}/payments`).where('status', '==', 'pending').get()).docs[0];
-  await t.test('expiré : le tontinier ne peut plus valider', async () => {
-    const m = await adminGet(`groups/${G}/members/a`);
-    await assertFails(T.batch()
-      .update(pending.ref, { status: 'approved', rejectionReason: null, reviewedAt: now() })
-      .update(T.doc(`groups/${G}/members/a`), { approvedCount: (m.approvedCount ?? 0) + 1 })
-      .commit());
-  });
-  await t.test('expiré : le carnet ne reçoit plus de paiement', () =>
-    assertFails(db('b').doc(`carnets/${cRef.id}`).update({ usedCases: 6, lastPaymentId: 'x' })));
+  await t.test('expiré (plan Gratuit) : le client déclare toujours', () =>
+    assertSucceeds(declare('b', G, 1, { method: 'cash' })));
   await t.test('expiré : le bénéficiaire peut encore confirmer sa cagnotte', async () => {
     const tr = await adminGet('trust/t');
     const fa = db('a');

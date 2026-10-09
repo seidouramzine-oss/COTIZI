@@ -189,13 +189,13 @@ class _TontineScreenState extends State<TontineScreen> {
   }
 
   Future<void> _createGroup() async {
-    if (await checkCanCreate(context) && mounted) {
+    if (await checkCanCreate(context, kind: 'group') && mounted) {
       await _open(GroupFormScreen(tontine: widget.tontine));
     }
   }
 
   Future<void> _createCarnet(int existing) async {
-    if (!await checkCanCreate(context) || !mounted) return;
+    if (!await checkCanCreate(context, kind: 'carnet') || !mounted) return;
     final carnetId = await showDialog<String>(
       context: context,
       builder: (_) => _CreateCarnetDialog(
@@ -397,7 +397,11 @@ class _CreateCarnetDialogState extends State<_CreateCarnetDialog> {
       );
       if (mounted) Navigator.pop(context, carnetId);
     } catch (e) {
-      if (mounted) showError(context, e);
+      if (mounted) {
+        e is PlanLimitReached
+            ? await showPlanLimit(context, e.message)
+            : showError(context, e);
+      }
       if (mounted) setState(() => _busy = false);
     }
   }

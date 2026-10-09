@@ -915,14 +915,7 @@ class _MemberDashboardState extends State<MemberDashboard> with Reloadable {
         ))
           (s.group, p),
     ];
-    // Tontiniers dont l'abonnement est terminé : activité en pause
-    final owners = <String, String>{
-      for (final s in o.groups) s.group.ownerId: s.group.ownerName,
-      for (final c in o.carnets) c.ownerId: c.ownerName,
-    };
     return [
-      for (final e in owners.entries)
-        PausedBanner(ownerId: e.key, ownerName: e.value, isOwner: false),
       // ------------------------------------------- Cagnottes à confirmer
       for (final s in o.groups.where((s) => s.payoutToConfirm != null))
         StatusCard(

@@ -7,7 +7,8 @@ import '../models.dart';
 import '../widgets/common.dart';
 import 'suggestion_screens.dart';
 
-/// Accès d'un tontinier (essai, abonnement, administrateur), prêt à afficher.
+/// Plan d'un tontinier (Gratuit, essai Pro, Pro, administrateur), prêt à
+/// afficher.
 class AccessStatus {
   AccessStatus(this.profile, {required this.isAdmin, DateTime? now})
     : now = now ?? DateTime.now();
@@ -16,83 +17,99 @@ class AccessStatus {
   final bool isAdmin;
   final DateTime now;
 
-  bool get canCreate => isAdmin || profile.canCreateAt(now);
+  /// Plan Pro en cours (essai de 30 jours ou abonnement payé).
+  bool get isPro => isAdmin || profile.isProAt(now);
+
+  /// Un tontinier crée toujours : en Gratuit, dans les limites du plan.
+  bool get canCreate => isAdmin || !profile.isMember;
 
   int get daysLeft => profile.daysLeft(now);
 
-  /// À signaler sur l'accueil : essai en cours, fin proche ou terminé.
+  /// À signaler sur l'accueil : plan Gratuit, essai, ou fin proche.
   bool get needsAttention =>
-      !isAdmin && (!canCreate || profile.isTrial || daysLeft <= 7);
+      !isAdmin && (!isPro || profile.isTrial || daysLeft <= 7);
+
+  String get planName => isAdmin
+      ? 'Administrateur'
+      : !isPro
+      ? 'Gratuit'
+      : profile.isTrial
+      ? 'Essai Pro'
+      : 'Pro';
 
   String get title {
     if (isAdmin) return 'Administrateur : accès illimité';
-    if (!canCreate) {
-      return profile.isTrial ? 'Essai gratuit terminé' : 'Abonnement terminé';
-    }
+    if (!isPro) return 'Plan Gratuit';
     final d = daysLeft;
     final left = d <= 0
         ? 'dernier jour'
         : '$d jour${d > 1 ? 's' : ''} restant${d > 1 ? 's' : ''}';
-    return profile.isTrial ? 'Essai gratuit : $left' : 'Abonnement : $left';
+    return profile.isTrial ? 'Essai Pro gratuit : $left' : 'Plan Pro : $left';
   }
 
   String get detail {
-    if (isAdmin) return 'Vous gérez COTIZI : aucun abonnement nécessaire.';
-    final end = profile.accessEnd;
-    if (canCreate) return 'Jusqu\'au ${dateLong(end!)}';
-    return 'Votre activité est en pause : ni vous ni vos clients ne pouvez '
-        'déclarer, valider ou encaisser de paiement, remettre une cagnotte ou '
-        'créer une tontine. L\'historique reste consultable. Renouvelez votre '
-        'abonnement pour tout reprendre.';
+    if (isAdmin) return 'Vous gérez COTIZI : aucun plan nécessaire.';
+    if (isPro) {
+      return 'Jusqu\'au ${dateLong(profile.accessEnd!)}'
+          '${profile.isTrial ? ', puis plan Gratuit si vous ne passez pas à Pro' : ''}.';
+    }
+    return 'Groupes, carnets et clients limités. Passez à Pro pour tout '
+        'débloquer. Vos groupes en cours continuent toujours.';
   }
 
-  IconData get icon => !canCreate
-      ? Icons.lock_clock_outlined
+  IconData get icon => !isPro
+      ? Icons.rocket_launch_outlined
       : profile.isTrial && !isAdmin
       ? Icons.card_giftcard_outlined
-      : Icons.verified_outlined;
+      : Icons.workspace_premium;
 
-  Color color(ColorScheme scheme) => !canCreate
-      ? scheme.error
+  Color color(ColorScheme scheme) => !isPro
+      ? scheme.primary
       : !isAdmin && daysLeft <= 7
       ? paymentStatusColor(PaymentStatus.pending)
       : paymentStatusColor(PaymentStatus.approved);
 }
 
-/// Vérifie qu'un tontinier peut créer (essai ou abonnement en cours).
-/// Sinon, propose de renouveler l'abonnement.
-Future<bool> checkCanCreate(BuildContext context) async {
+/// Vérifie qu'un tontinier peut créer un groupe ([kind] = 'group') ou un
+/// carnet ([kind] = 'carnet') : en Gratuit, dans les limites du plan. Sinon,
+/// propose de passer à Pro.
+Future<bool> checkCanCreate(BuildContext context, {String? kind}) async {
   try {
-    await Api.ensureCanCreate();
+    await Api.ensureCanCreate(kind: kind);
     return true;
-  } on SubscriptionExpired catch (e) {
+  } on PlanLimitReached catch (e) {
     if (!context.mounted) return false;
-    final renew = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        icon: const Icon(Icons.lock_clock_outlined),
-        title: const Text('Abonnement terminé'),
-        content: Text(e.message),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Plus tard'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Renouveler'),
-          ),
-        ],
-      ),
-    );
-    if (renew == true && context.mounted) {
-      await Navigator.of(context)
-          .push(MaterialPageRoute(builder: (_) => const SubscriptionScreen()));
-    }
+    await showPlanLimit(context, e.message);
     return false;
   } catch (e) {
     if (context.mounted) showError(context, e);
     return false;
+  }
+}
+
+/// « Limite du plan Gratuit » : propose de passer à Pro.
+Future<void> showPlanLimit(BuildContext context, String message) async {
+  final upgrade = await showDialog<bool>(
+    context: context,
+    builder: (context) => AlertDialog(
+      icon: const Icon(Icons.rocket_launch_outlined),
+      title: const Text('Limite du plan Gratuit'),
+      content: Text(message),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context, false),
+          child: const Text('Plus tard'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(context, true),
+          child: const Text('Passer à Pro'),
+        ),
+      ],
+    ),
+  );
+  if (upgrade == true && context.mounted) {
+    await Navigator.of(context)
+        .push(MaterialPageRoute(builder: (_) => const SubscriptionScreen()));
   }
 }
 
@@ -120,9 +137,7 @@ class AccessBanner extends StatelessWidget {
           status.title,
           style: TextStyle(color: color, fontWeight: FontWeight.w700),
         ),
-        subtitle: Text(
-          status.canCreate ? status.detail : 'Activité en pause pour vous et vos clients. Appuyez ici pour renouveler.',
-        ),
+        subtitle: Text(status.detail),
         trailing: const Icon(Icons.chevron_right),
         onTap: onTap,
       ),
@@ -130,7 +145,7 @@ class AccessBanner extends StatelessWidget {
   }
 }
 
-// ======================================================== Mon abonnement
+// ============================================================ Mon plan
 
 class SubscriptionScreen extends StatefulWidget {
   const SubscriptionScreen({super.key});
@@ -157,7 +172,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Mon abonnement')),
+      appBar: AppBar(title: const Text('Mon plan')),
       body: FutureView<(AccessStatus, SubscriptionSettings)>(
         future: _data,
         onRetry: () => setState(() => _data = _load()),
@@ -167,46 +182,55 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
             children: [
               _StatusCard(status),
-              const SectionTitle('Ce que comprend l\'abonnement'),
-              const Card(
-                child: Padding(
-                  padding: EdgeInsets.symmetric(vertical: 8),
-                  child: Column(
-                    children: [
-                      _Feature(
-                        Icons.groups_outlined,
-                        'Vos clients utilisent COTIZI gratuitement : un seul '
-                        'abonnement, le vôtre',
-                      ),
-                      _Feature(
-                        Icons.savings_outlined,
-                        'Tontines à cagnotte et à carnet sans limite',
-                      ),
-                      _Feature(
-                        Icons.share_outlined,
-                        'Invitation de vos clients par lien WhatsApp',
-                      ),
-                      _Feature(
-                        Icons.fact_check_outlined,
-                        'Paiements Mobile Money ou espèces, validés par vous',
-                      ),
-                      _Feature(
-                        Icons.gavel_outlined,
-                        'Règlement, pénalités et remises sécurisées',
-                      ),
-                      _Feature(
-                        Icons.picture_as_pdf_outlined,
-                        'Reçus, relevés PDF, rappels et suivi des gains',
-                      ),
-                    ],
-                  ),
-                ),
+              const SectionTitle('Les plans COTIZI'),
+              _PlanCard(
+                name: 'Gratuit',
+                price: '0 F',
+                current: !status.isPro && !status.isAdmin,
+                icon: Icons.rocket_launch_outlined,
+                features: [
+                  '${settings.freeGroups} groupe(s) en cours',
+                  '${settings.freeCarnets} carnet(s) en cours',
+                  '${settings.freeClients} clients au maximum',
+                  'Paiements, reçus, règlement et anti-fraude',
+                ],
+              ),
+              _PlanCard(
+                name: 'Pro',
+                price: settings.monthlyPrice > 0
+                    ? '${money(settings.monthlyPrice)} / mois'
+                    : 'Prix sur demande',
+                current: status.isPro && !status.isAdmin,
+                highlighted: true,
+                icon: Icons.workspace_premium,
+                features: const [
+                  'Groupes, carnets et clients illimités',
+                  'Comptabilité complète (bientôt)',
+                  'Statistiques avancées (bientôt)',
+                  'Badge vérifié ✔ (bientôt)',
+                  'Accès aux offres d\'emploi des entreprises (bientôt)',
+                ],
+              ),
+              _PlanCard(
+                name: 'Business',
+                price: settings.businessPrice > 0
+                    ? '${money(settings.businessPrice)} / mois'
+                    : 'Prix sur demande',
+                current: false,
+                icon: Icons.business_center_outlined,
+                badge: 'Bientôt',
+                features: const [
+                  'Pour les entreprises de tontine',
+                  'Une équipe de tontiniers',
+                  'Salaires calculés chaque mois',
+                  'Recrutement de tontiniers Pro',
+                ],
               ),
               if (!status.isAdmin) ...[
                 SectionTitle(
-                  status.canCreate
-                      ? 'Prolonger mon abonnement'
-                      : 'Renouveler mon abonnement',
+                  status.isPro && !status.profile.isTrial
+                      ? 'Prolonger mon plan Pro'
+                      : 'Passer à Pro',
                 ),
                 _RenewCard(settings: settings, profile: status.profile),
               ],
@@ -260,18 +284,87 @@ class _StatusCard extends StatelessWidget {
   }
 }
 
-class _Feature extends StatelessWidget {
-  const _Feature(this.icon, this.text);
+/// Carte d'un plan : nom, prix, avantages, plan actuel.
+class _PlanCard extends StatelessWidget {
+  const _PlanCard({
+    required this.name,
+    required this.price,
+    required this.current,
+    required this.icon,
+    required this.features,
+    this.highlighted = false,
+    this.badge,
+  });
 
+  final String name;
+  final String price;
+  final bool current;
   final IconData icon;
-  final String text;
+  final List<String> features;
+  final bool highlighted;
+  final String? badge;
 
   @override
   Widget build(BuildContext context) {
-    return ListTile(
-      dense: true,
-      leading: Icon(icon, color: Theme.of(context).colorScheme.primary),
-      title: Text(text),
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final accent = highlighted ? scheme.primary : scheme.onSurfaceVariant;
+    return Card(
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(20),
+        side: BorderSide(
+          color: current || highlighted
+              ? scheme.primary
+              : scheme.outlineVariant,
+          width: current ? 2 : 1,
+        ),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(icon, color: accent),
+                const SizedBox(width: 8),
+                Text(
+                  name,
+                  style: theme.textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                if (current)
+                  StatusChip('Votre plan', scheme.primary)
+                else if (badge != null)
+                  StatusChip(badge!, scheme.onSurfaceVariant),
+                const Spacer(),
+                Text(
+                  price,
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w800,
+                    color: accent,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            for (final f in features)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(Icons.check, size: 18, color: accent),
+                    const SizedBox(width: 8),
+                    Expanded(child: Text(f)),
+                  ],
+                ),
+              ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -305,7 +398,7 @@ class _RenewCardState extends State<_RenewCard> {
       await openWhatsApp(
         context,
         phone,
-        'Bonjour, je souhaite m\'abonner à COTIZI pour $_months mois'
+        'Bonjour, je souhaite passer au plan Pro de COTIZI pour $_months mois'
         '${_amount > 0 ? ' (${money(_amount)})' : ''}.\n'
         'Nom : ${widget.profile.fullName}\n'
         'Numéro COTIZI : ${widget.profile.phone}',
@@ -357,7 +450,7 @@ class _RenewCardState extends State<_RenewCard> {
                     ? 'Payez par Mobile Money au ${settings.paymentPhone}.'
                     : 'Payez par Mobile Money au numéro que nous vous indiquons.',
               ),
-              (3, 'Dès réception du paiement, nous activons votre abonnement.'),
+              (3, 'Dès réception du paiement, nous activons votre plan Pro.'),
             ])
               Padding(
                 padding: const EdgeInsets.only(bottom: 8),
@@ -405,7 +498,7 @@ class _RenewCardState extends State<_RenewCard> {
               FilledButton.icon(
                 onPressed: _busy ? null : _ask,
                 icon: const Icon(Icons.chat_outlined),
-                label: const Text('Demander mon abonnement sur WhatsApp'),
+                label: const Text('Demander le plan Pro sur WhatsApp'),
               ),
               const SizedBox(height: 8),
               OutlinedButton.icon(
@@ -696,16 +789,19 @@ class _AdminScreenState extends State<AdminScreen> {
               ),
             ),
         ],
-        const SectionTitle('Paiement de l\'abonnement'),
+        const SectionTitle('Plans, paiement et assistance'),
         Card(
           child: ListTile(
             leading: const Icon(Icons.payments_outlined),
-            title: const Text('Prix, Mobile Money et assistance'),
+            title: const Text(
+              'Prix des plans, limites, Mobile Money et assistance',
+            ),
             subtitle: Text(
               _settings.isSet
                   ? [
-                      if (_settings.monthlyPrice > 0)
-                        '${money(_settings.monthlyPrice)} par mois',
+                      'Pro : ${_settings.monthlyPrice > 0 ? '${money(_settings.monthlyPrice)} / mois' : 'prix non réglé'}',
+                      'Business : ${_settings.businessPrice > 0 ? '${money(_settings.businessPrice)} / mois' : 'prix non réglé'}',
+                      'Gratuit : ${_settings.freeGroups} groupe(s), ${_settings.freeCarnets} carnet(s), ${_settings.freeClients} clients',
                       if (_settings.paymentPhone.isNotEmpty)
                         'Mobile Money : ${_settings.paymentPhone}',
                       if (_settings.supportPhone.isNotEmpty)
@@ -859,6 +955,20 @@ class _SettingsDialogState extends State<_SettingsDialog> {
     text: widget.initial.supportPhone,
   );
   late final _email = TextEditingController(text: widget.initial.supportEmail);
+  late final _business = TextEditingController(
+    text: widget.initial.businessPrice > 0
+        ? '${widget.initial.businessPrice}'
+        : '',
+  );
+  late final _freeGroups = TextEditingController(
+    text: '${widget.initial.freeGroups}',
+  );
+  late final _freeCarnets = TextEditingController(
+    text: '${widget.initial.freeCarnets}',
+  );
+  late final _freeClients = TextEditingController(
+    text: '${widget.initial.freeClients}',
+  );
   late final _hours = TextEditingController(text: widget.initial.supportHours);
 
   @override
@@ -867,6 +977,10 @@ class _SettingsDialogState extends State<_SettingsDialog> {
     _phone.dispose();
     _support.dispose();
     _email.dispose();
+    _business.dispose();
+    _freeGroups.dispose();
+    _freeCarnets.dispose();
+    _freeClients.dispose();
     _hours.dispose();
     super.dispose();
   }
@@ -874,7 +988,7 @@ class _SettingsDialogState extends State<_SettingsDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('Paiement de l\'abonnement'),
+      title: const Text('Plans, paiement et assistance'),
       content: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -883,10 +997,56 @@ class _SettingsDialogState extends State<_SettingsDialog> {
               controller: _price,
               keyboardType: TextInputType.number,
               decoration: const InputDecoration(
-                labelText: 'Prix par mois',
+                labelText: 'Prix du plan Pro par mois',
                 suffixText: 'FCFA',
               ),
             ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _business,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                labelText: 'Prix du plan Business par mois',
+                suffixText: 'FCFA',
+              ),
+            ),
+            const SizedBox(height: 16),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'Limites du plan Gratuit',
+                style: Theme.of(context).textTheme.titleSmall,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _freeGroups,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(labelText: 'Groupes'),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: TextField(
+                    controller: _freeCarnets,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(labelText: 'Carnets'),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: TextField(
+                    controller: _freeClients,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(labelText: 'Clients'),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
             const SizedBox(height: 12),
             TextField(
               controller: _phone,
@@ -940,6 +1100,16 @@ class _SettingsDialogState extends State<_SettingsDialog> {
               supportPhone: _support.text.trim(),
               supportEmail: _email.text.trim(),
               supportHours: _hours.text.trim(),
+              businessPrice: (parseAmount(_business.text) ?? 0).clamp(
+                0,
+                10000000,
+              ),
+              freeGroups: (parseAmount(_freeGroups.text) ?? 0).clamp(0, 1000),
+              freeCarnets: (parseAmount(_freeCarnets.text) ?? 0).clamp(0, 1000),
+              freeClients: (parseAmount(_freeClients.text) ?? 0).clamp(
+                0,
+                100000,
+              ),
             ),
           ),
           child: const Text('Enregistrer'),

@@ -303,7 +303,7 @@ class _RolePicker extends StatelessWidget {
                 icon: Icons.storefront_outlined,
                 title: 'Tontinier',
                 subtitle:
-                    'Je crée et je gère des tontines. Essai gratuit de '
+                    'Je crée et je gère des tontines. Essai Pro gratuit de '
                     '${Profile.trialDays} jours.',
               ),
               const SizedBox(height: 8),

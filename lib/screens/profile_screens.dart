@@ -147,8 +147,8 @@ class _ProfilePageState extends State<ProfilePage> {
                   if (_p.isMember) ...[
                     const SizedBox(height: 8),
                     Text(
-                      'COTIZI est gratuit pour vous : c\'est votre tontinier '
-                      'qui a l\'abonnement.',
+                      'COTIZI est gratuit pour vous : vous n\'avez jamais de '
+                      'plan à prendre.',
                       style: theme.textTheme.bodySmall,
                     ),
                   ],
@@ -220,7 +220,7 @@ class _ProfilePageState extends State<ProfilePage> {
                     ),
                     ListTile(
                       leading: const Icon(Icons.workspace_premium_outlined),
-                      title: const Text('Mon abonnement'),
+                      title: const Text('Mon plan'),
                       subtitle: Text(
                         status.title,
                         style: TextStyle(color: status.color(scheme)),
@@ -566,15 +566,15 @@ class HelpScreen extends StatelessWidget {
       if (!isMember)
         (
           Icons.workspace_premium_outlined,
-          'Essai gratuit et abonnement',
-          'Un seul abonnement : celui du tontinier. Vos clients utilisent '
-              'COTIZI gratuitement tant que votre abonnement est actif. Un '
-              'nouveau tontinier a 30 jours d\'essai gratuit. Pour continuer : '
-              'Profil → Mon abonnement → choisissez la durée et écrivez-nous '
+          'Les plans : Gratuit, Pro, Business',
+          'Plan Gratuit : sans limite de temps, avec un nombre limité de '
+              'groupes, carnets et clients. Plan Pro : tout illimité ; un '
+              'nouveau tontinier a 30 jours d\'essai Pro gratuit. Pour passer '
+              'à Pro : Profil → Mon plan → choisissez la durée et écrivez-nous '
               'sur WhatsApp ; vous payez par Mobile Money, puis nous activons '
-              'votre abonnement. S\'il se termine, votre activité et celle de '
-              'vos clients est en pause (consultation seulement) jusqu\'au '
-              'renouvellement.',
+              'votre plan. S\'il se termine, vous revenez au plan Gratuit : '
+              'rien n\'est bloqué, vos groupes et carnets en cours continuent. '
+              'Vos clients n\'ont jamais de plan à prendre.',
         ),
       if (!isMember)
         (

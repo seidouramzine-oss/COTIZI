@@ -7,6 +7,7 @@ import '../api.dart';
 import '../format.dart';
 import '../models.dart';
 import '../widgets/common.dart';
+import 'subscription_screens.dart';
 
 /// Création (ou modification pendant les inscriptions) d'un groupe à
 /// cagnotte, en 4 étapes, avec le montant de la cagnotte toujours visible
@@ -181,7 +182,11 @@ class _GroupFormScreenState extends State<GroupFormScreen> {
       }
       if (mounted) Navigator.pop(context, true);
     } catch (e) {
-      if (mounted) showError(context, e);
+      if (mounted) {
+        e is PlanLimitReached
+            ? await showPlanLimit(context, e.message)
+            : showError(context, e);
+      }
       if (mounted) setState(() => _busy = false);
     }
   }

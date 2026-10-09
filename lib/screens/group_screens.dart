@@ -14,7 +14,6 @@ import '../widgets/trust.dart';
 import 'group_actions.dart';
 import 'group_form.dart';
 import 'payment_screens.dart';
-import 'subscription_screens.dart';
 
 /// Nom affiché du tontinier : son activité s'il l'a renseignée.
 String ownerLabel(Group g, Business? b) => b?.name ?? g.ownerName;
@@ -570,13 +569,6 @@ class _GroupScreenState extends State<GroupScreen> {
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
               children: [
                 _header(g, d.business, isOwner),
-                if (!g.isLegacy && !g.isClosed)
-                  PausedBanner(
-                    ownerId: g.ownerId,
-                    ownerName: g.ownerName,
-                    isOwner: isOwner,
-                    onRenew: () => _push(const SubscriptionScreen()),
-                  ),
                 if (g.isLegacy) ...[
                   _legacyNotice(),
                   ..._membersSection(g, isOwner: false),

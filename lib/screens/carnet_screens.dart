@@ -6,9 +6,7 @@ import '../invite_link.dart';
 import '../models.dart';
 import '../reports.dart';
 import '../widgets/common.dart';
-import '../widgets/trust.dart';
 import 'payment_screens.dart';
-import 'subscription_screens.dart';
 
 /// Paiement d'un carnet ouvert par le tontinier (validation) ou par le
 /// client (consultation, reçu).
@@ -126,13 +124,6 @@ class _CarnetScreenState extends State<CarnetScreen> {
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
               children: [
                 _header(c, isOwner),
-                if (!c.isClosed)
-                  PausedBanner(
-                    ownerId: c.ownerId,
-                    ownerName: c.ownerName,
-                    isOwner: isOwner,
-                    onRenew: () => _push(const SubscriptionScreen()),
-                  ),
                 if (isOwner && c.clientId == null) ...[
                   const SizedBox(height: 8),
                   InviteCodeCard(

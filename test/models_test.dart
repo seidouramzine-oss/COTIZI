@@ -252,13 +252,14 @@ void main() {
       final p = tontinier(created: DateTime(2026, 9, 20, 12));
       expect(p.isTrial, isTrue);
       expect(p.accessEnd, DateTime(2026, 10, 20, 12));
-      expect(p.canCreateAt(now), isTrue);
+      expect(p.isProAt(now), isTrue);
       expect(p.daysLeft(now), 13);
     });
 
-    test('essai terminé', () {
+    test('essai terminé : plan Gratuit, il crée toujours', () {
       final p = tontinier(created: DateTime(2026, 9, 1));
-      expect(p.canCreateAt(now), isFalse);
+      expect(p.isProAt(now), isFalse);
+      expect(p.canCreateAt(now), isTrue);
       expect(p.daysLeft(now), isNegative);
     });
 
@@ -268,17 +269,17 @@ void main() {
         end: DateTime(2026, 12, 31),
       );
       expect(paid.isTrial, isFalse);
-      expect(paid.canCreateAt(now), isTrue);
+      expect(paid.isProAt(now), isTrue);
       final stopped = tontinier(created: DateTime(2026, 10, 1), end: now);
-      expect(stopped.canCreateAt(now), isFalse);
+      expect(stopped.isProAt(now), isFalse);
+      expect(stopped.canCreateAt(now), isTrue);
     });
 
-    test('un client ne crée jamais, un ancien compte sans date non plus', () {
-      expect(
-        tontinier(created: now, role: Role.membre).canCreateAt(now),
-        isFalse,
-      );
-      expect(tontinier().canCreateAt(now), isFalse);
+    test('un client ne crée jamais et n\'est jamais Pro', () {
+      final c = tontinier(created: now, role: Role.membre);
+      expect(c.canCreateAt(now), isFalse);
+      expect(c.isProAt(now), isFalse);
+      expect(tontinier().isProAt(now), isFalse);
     });
 
     test('ajout de mois : le 31 devient le dernier jour du mois', () {
@@ -576,6 +577,63 @@ void main() {
       expect(c.canRequestRefund, isFalse);
       expect(c.canClose, isTrue);
       expect(carnet(31, status: 'closed').canClose, isFalse);
+    });
+  });
+
+  group('Version 3.0 plans', () {
+    test(
+      'utilisation du plan Gratuit : groupes, carnets et clients en cours',
+      () {
+        final g = _group(members: 5);
+        final c = Carnet(
+          id: 'c',
+          tontineId: 't',
+          tontineName: 'Carnets',
+          ownerId: 'o',
+          ownerName: 'T',
+          label: 'Carnet',
+          caseAmount: 300,
+          caseCount: 31,
+          clientId: 'a',
+          client: const Profile(fullName: 'A', phone: '+229'),
+          inviteCode: 'ABC234',
+          usedCases: 0,
+          approvedCases: 0,
+        );
+        final closed = Carnet(
+          id: 'd',
+          tontineId: 't',
+          tontineName: 'Carnets',
+          ownerId: 'o',
+          ownerName: 'T',
+          label: 'Carnet 2',
+          caseAmount: 300,
+          caseCount: 31,
+          clientId: 'b',
+          client: const Profile(fullName: 'B', phone: '+229'),
+          inviteCode: 'ABC235',
+          usedCases: 31,
+          approvedCases: 31,
+          status: 'closed',
+        );
+        final u = PlanUsage.of([g], [c, closed]);
+        expect(u.groups, 1);
+        expect(u.carnets, 1);
+        expect(u.clients, 6);
+      },
+    );
+
+    test('limites par défaut du plan Gratuit', () {
+      const s = SubscriptionSettings();
+      expect(s.freeGroups, 2);
+      expect(s.freeCarnets, 3);
+      expect(s.freeClients, 30);
+      final custom = SubscriptionSettings.fromJson({
+        'freeGroups': 5,
+        'businessPrice': 15000,
+      });
+      expect(custom.freeGroups, 5);
+      expect(custom.businessPrice, 15000);
     });
   });
 }

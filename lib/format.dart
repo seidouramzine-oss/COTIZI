@@ -184,9 +184,7 @@ String errorMessage(Object e) {
   }
   if (e is FirebaseException) {
     return switch (e.code) {
-      'permission-denied' =>
-        'Action refusée. Si l\'abonnement COTIZI du tontinier est terminé, '
-            'les opérations sont en pause jusqu\'à son renouvellement.',
+      'permission-denied' => 'Action non autorisée',
       'unavailable' || 'deadline-exceeded' => 'Pas de connexion internet',
       'not-found' => 'Élément introuvable',
       _ => 'Une erreur est survenue (${e.code})',

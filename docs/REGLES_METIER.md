@@ -14,35 +14,36 @@ tontines, puis invitent leurs **clients**, qui ne font que participer.
   - **Tontinier** : peut créer des tontines et aussi rejoindre celles d'un autre
     tontinier (« Je participe »).
 
-## Essai gratuit et abonnement des tontiniers
+## Les plans COTIZI (Gratuit, Pro, Business)
 
-- Un nouveau tontinier a **30 jours d'essai gratuit** à partir de son inscription.
-- Ensuite, il faut un **abonnement** pour créer de nouvelles tontines, groupes et
-  carnets. Sans abonnement, les groupes et carnets en cours **continuent** : le
-  tontinier peut toujours valider ou refuser les paiements de ses clients.
-- Dans **Profil → Mon abonnement**, le tontinier choisit la durée (1, 3 ou 12
-  mois) et appuie sur **« Demander mon abonnement sur WhatsApp »** : sa demande
-  est enregistrée et WhatsApp s'ouvre vers COTIZI. Il paie par Mobile Money au
-  numéro indiqué ; dès réception, l'administrateur **active** l'abonnement.
-- L'**administrateur** de COTIZI (Profil → Administration) voit les
-  **demandes d'abonnement** (bouton « Paiement reçu : activer ») et tous les
-  tontiniers ; il prolonge l'abonnement de 1, 3 ou 12 mois (à partir de la fin
-  en cours, sinon d'aujourd'hui) ou l'arrête, et règle le prix, le numéro
-  Mobile Money et le WhatsApp de l'assistance. Il n'a pas besoin
-  d'abonnement.
-
-- **Un seul abonnement : celui du tontinier.** Ses clients utilisent COTIZI
-  gratuitement : ils n'ont jamais d'abonnement à prendre.
-- Tant que l'essai ou l'abonnement du tontinier est en cours, lui et tous ses
-  clients travaillent normalement.
-- **Abonnement terminé : activité en pause** (vérifié par le serveur), pour le
-  tontinier comme pour ses clients : plus de déclaration, de validation ni
-  d'encaissement de paiement, plus de remise de cagnotte, plus de nouveau
-  participant ni de nouvelle tontine. L'historique reste consultable. Pour
-  protéger les clients, deux actions restent possibles : **confirmer une
-  cagnotte reçue** (ou signaler un problème) et **demander / rembourser un
-  carnet**. Un bandeau « Activité en pause » l'explique au tontinier et à ses
-  clients. Tout reprend dès que l'administrateur réactive l'abonnement.
+- **Plan Gratuit** : sans limite de temps, mais avec des **limites** : un nombre
+  maximum de groupes en cours, de carnets en cours et de clients (par défaut
+  2 groupes, 3 carnets, 30 clients). Les groupes clôturés et les carnets fermés
+  ne comptent plus.
+- **Plan Pro** : tout illimité. Un nouveau tontinier a **30 jours d'essai Pro
+  gratuit** à partir de son inscription, puis il passe au plan Gratuit s'il ne
+  prend pas Pro.
+- **Plan Business** (bientôt) : pour les entreprises de tontine (plusieurs
+  tontiniers, salaires, recrutement réservé aux tontiniers Pro).
+- **Les prix et les limites sont réglés par l'administrateur** dans
+  Profil → Administration → « Plans, paiement et assistance » : prix du plan
+  Pro par mois, prix du plan Business par mois, limites du plan Gratuit
+  (groupes, carnets, clients), numéro Mobile Money, WhatsApp, e-mail et horaires
+  de l'assistance.
+- Quand une limite est atteinte, la création est refusée avec le message
+  « Limite du plan Gratuit » et un bouton **« Passer à Pro »**.
+- **Rien n'est jamais mis en pause** : quand le plan Pro se termine, le
+  tontinier revient au plan Gratuit. Ses groupes et carnets en cours continuent,
+  ses clients déclarent et il valide normalement ; seules les nouvelles
+  créations au-delà des limites sont refusées.
+- Dans **Profil → Mon plan**, le tontinier voit les 3 plans, choisit la durée
+  (1, 3 ou 12 mois) et appuie sur **« Demander le plan Pro sur WhatsApp »** :
+  sa demande est enregistrée et WhatsApp s'ouvre vers COTIZI. Il paie par
+  Mobile Money ; dès réception, l'administrateur **active** le plan Pro.
+- L'**administrateur** voit les demandes (bouton « Paiement reçu : activer »)
+  et tous les tontiniers ; il prolonge le plan Pro de 1, 3 ou 12 mois ou
+  l'arrête. Il n'a pas besoin de plan.
+- **Les clients n'ont jamais de plan à prendre** : COTIZI est gratuit pour eux.
 
 ## Profil pro du tontinier
 

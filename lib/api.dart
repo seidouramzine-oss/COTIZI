@@ -20,13 +20,9 @@ class AppException implements Exception {
   String toString() => message;
 }
 
-/// Essai ou abonnement du tontinier terminé : création impossible.
-class SubscriptionExpired extends AppException {
-  const SubscriptionExpired()
-    : super(
-        'Votre essai gratuit ou votre abonnement est terminé. '
-        'Renouvelez-le pour créer de nouvelles tontines.',
-      );
+/// Limite du plan Gratuit atteinte : création impossible sans Pro.
+class PlanLimitReached extends AppException {
+  const PlanLimitReached(super.message);
 }
 
 /// Accès aux données COTIZI (Firebase Auth + Firestore).
@@ -167,19 +163,60 @@ class Api {
     }
   }
 
-  /// Création de tontine, groupe ou carnet : réservée aux tontiniers dont
-  /// l'essai ou l'abonnement est en cours (et à l'administrateur).
-  static Future<void> ensureCanCreate() async {
+  /// Création de tontine, groupe ([kind] = 'group', [newClients] places) ou
+  /// carnet ([kind] = 'carnet') : toujours possible en Pro ; en Gratuit,
+  /// dans les limites réglées par l'administrateur.
+  static Future<void> ensureCanCreate({
+    String? kind,
+    int newClients = 0,
+  }) async {
     final me = await _requireMe();
     if (me.isMember) {
       throw const AppException(
         'Votre compte client sert à participer aux tontines de votre tontinier.',
       );
     }
-    if (me.canCreateAt(DateTime.now()) || await isAdmin()) return;
+    if (kind == null || await isAdmin()) return;
+    if (me.isProAt(DateTime.now())) return;
     final fresh = await reloadProfile();
-    if (fresh != null && fresh.canCreateAt(DateTime.now())) return;
-    throw const SubscriptionExpired();
+    if (fresh != null && fresh.isProAt(DateTime.now())) return;
+    final results = await Future.wait([subscriptionSettings(), planUsage()]);
+    final s = results[0] as SubscriptionSettings;
+    final u = results[1] as PlanUsage;
+    if (kind == 'group' && u.groups >= s.freeGroups) {
+      throw PlanLimitReached(
+        'Le plan Gratuit permet ${s.freeGroups} groupe(s) en cours. Vous en '
+        'avez déjà ${u.groups}. Passez à Pro pour en créer autant que vous '
+        'voulez.',
+      );
+    }
+    if (kind == 'carnet' && u.carnets >= s.freeCarnets) {
+      throw PlanLimitReached(
+        'Le plan Gratuit permet ${s.freeCarnets} carnet(s) en cours. Vous en '
+        'avez déjà ${u.carnets}. Passez à Pro pour en créer autant que vous '
+        'voulez.',
+      );
+    }
+    final add = kind == 'carnet' ? 1 : newClients;
+    if (u.clients + add > s.freeClients) {
+      throw PlanLimitReached(
+        'Le plan Gratuit permet ${s.freeClients} clients. Vous en avez déjà '
+        '${u.clients}${add > 0 ? ', et ce ${kind == 'carnet' ? 'carnet' : 'groupe'} en ajoute $add' : ''}. '
+        'Passez à Pro pour avoir autant de clients que vous voulez.',
+      );
+    }
+  }
+
+  /// Groupes et carnets en cours du tontinier, et nombre de clients.
+  static Future<PlanUsage> planUsage() async {
+    final results = await Future.wait([
+      _db.collection('groups').where('ownerId', isEqualTo: uid).get(),
+      _db.collection('carnets').where('ownerId', isEqualTo: uid).get(),
+    ]);
+    return PlanUsage.of(
+      results[0].docs.map(Group.fromDoc).toList(),
+      results[1].docs.map(Carnet.fromDoc).toList(),
+    );
   }
 
   static Future<Profile> _requireMe() async =>
@@ -280,6 +317,10 @@ class Api {
         'supportPhone': s.supportPhone.trim(),
         'supportEmail': s.supportEmail.trim(),
         'supportHours': s.supportHours.trim(),
+        'businessPrice': s.businessPrice,
+        'freeGroups': s.freeGroups,
+        'freeCarnets': s.freeCarnets,
+        'freeClients': s.freeClients,
       });
 
   /// Le tontinier demande un abonnement de [months] mois : la demande
@@ -812,7 +853,7 @@ class Api {
   };
 
   static Future<String> createGroup(Tontine tontine, GroupTerms terms) async {
-    await ensureCanCreate();
+    await ensureCanCreate(kind: 'group', newClients: terms.memberCount);
     final me = await _requireMe();
     return _createWithInvite(
       'groups',
@@ -1568,7 +1609,7 @@ class Api {
     required String label,
     required int caseAmount,
   }) async {
-    await ensureCanCreate();
+    await ensureCanCreate(kind: 'carnet');
     final me = await _requireMe();
     return _createWithInvite(
       'carnets',
@@ -1977,33 +2018,6 @@ class Api {
       }
     }
     return ref;
-  }
-
-  static final _activeOwners = <String, (bool, DateTime)>{};
-
-  /// Abonnement (ou essai) du tontinier en cours : lui et ses clients peuvent
-  /// travailler. Sinon son activité est en pause (vérifié par le serveur).
-  static Future<bool> tontinierActive(String ownerId) async {
-    final cached = _activeOwners[ownerId];
-    if (cached != null &&
-        DateTime.now().difference(cached.$2) < const Duration(minutes: 5)) {
-      return cached.$1;
-    }
-    try {
-      final results = await Future.wait([
-        _db.doc('users/$ownerId').get(),
-        _db.doc('admins/$ownerId').get(),
-      ]);
-      final user = results[0];
-      final admin = results[1].exists;
-      final end = user.exists ? Profile.fromJson(user.data()!).accessEnd : null;
-      final active = admin || (end?.isAfter(DateTime.now()) ?? true);
-      _activeOwners[ownerId] = (active, DateTime.now());
-      return active;
-    } on FirebaseException {
-      // Inconnu (hors ligne…) : on ne bloque pas l'affichage
-      return true;
-    }
   }
 
   /// Note de confiance d'un tontinier, lisible par tous.
