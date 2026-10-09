@@ -8,6 +8,7 @@ import '../format.dart';
 import '../models.dart';
 import '../pro.dart';
 import '../reports.dart';
+import '../settings.dart';
 import '../widgets/common.dart';
 import 'subscription_screens.dart';
 
@@ -29,7 +30,10 @@ Future<void> openPro(BuildContext context, Widget screen) async {
   final profile = results[0] as Profile?;
   final admin = results[1] as bool;
   final agent = results[2] as bool;
-  if (admin || agent || (profile?.isProAt(DateTime.now()) ?? false)) {
+  final allowed = admin
+      ? adminPlanView.value != 'free'
+      : agent || (profile?.isProAt(DateTime.now()) ?? false);
+  if (allowed) {
     await Navigator.of(context).push(MaterialPageRoute(builder: (_) => screen));
     return;
   }

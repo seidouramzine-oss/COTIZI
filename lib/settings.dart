@@ -6,6 +6,20 @@ final themeMode = ValueNotifier<ThemeMode>(ThemeMode.system);
 
 const _themeKey = 'theme_mode';
 
+/// Mode test de l'administrateur : voir COTIZI comme un tontinier au plan
+/// « free », « pro » ou « business » (« admin » : accès illimité).
+final adminPlanView = ValueNotifier<String>('admin');
+
+const _adminViewKey = 'admin_plan_view';
+
+Future<void> setAdminPlanView(String view) async {
+  adminPlanView.value = view;
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_adminViewKey, view);
+  } catch (_) {}
+}
+
 Future<void> loadSettings() async {
   try {
     final prefs = await SharedPreferences.getInstance();
@@ -14,6 +28,10 @@ Future<void> loadSettings() async {
       (m) => m.name == saved,
       orElse: () => ThemeMode.system,
     );
+    final view = prefs.getString(_adminViewKey);
+    if (const ['admin', 'free', 'pro', 'business'].contains(view)) {
+      adminPlanView.value = view!;
+    }
   } catch (_) {
     // Préférences indisponibles : thème du téléphone
   }

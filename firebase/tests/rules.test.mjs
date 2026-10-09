@@ -1558,6 +1558,12 @@ test('version 3.2 : plan Business, équipe, salaires', async (t) => {
   await t.test('code pris par un autre : refusé', () =>
     assertFails(ag.doc('companyCodes/BXSS22').delete()));
 
+  await t.test('l\'administrateur crée une entreprise de test', async () => {
+    await env.withSecurityRulesDisabled((ctx) => ctx.firestore().doc('admins/ag2').set({ note: 'test' }));
+    await env.withSecurityRulesDisabled((ctx) => ctx.firestore().doc('users/ag2').update({ plan: 'pro' }));
+    await assertSucceeds(company(db('ag2'), 'ag2', 'ADMN22'));
+  });
+
   // Agent
   const join = (fs, id, code, fields = {}) => {
     const b = fs.batch();

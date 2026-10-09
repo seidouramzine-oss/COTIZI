@@ -7,6 +7,7 @@ import '../api.dart';
 import '../business.dart';
 import '../format.dart';
 import '../models.dart';
+import '../settings.dart';
 import '../widgets/common.dart';
 import 'subscription_screens.dart';
 
@@ -24,7 +25,7 @@ class EnterpriseScreen extends StatefulWidget {
   State<EnterpriseScreen> createState() => _EnterpriseScreenState();
 }
 
-typedef _Hub = (Profile, Company?, (Company, Agent)?);
+typedef _Hub = (Profile, Company?, (Company, Agent)?, bool);
 
 class _EnterpriseScreenState extends State<EnterpriseScreen> {
   late Future<_Hub> _data = _load();
@@ -34,11 +35,13 @@ class _EnterpriseScreenState extends State<EnterpriseScreen> {
       Api.reloadProfile(),
       BusinessApi.myCompany(),
       BusinessApi.myEmployer(),
+      Api.isAdmin(),
     ]);
     return (
       results[0] as Profile,
       results[1] as Company?,
       results[2] as (Company, Agent)?,
+      results[3] as bool,
     );
   }
 
@@ -61,9 +64,12 @@ class _EnterpriseScreenState extends State<EnterpriseScreen> {
             body: const Center(child: CircularProgressIndicator()),
           );
         }
-        final (profile, company, employer) = snap.data!;
-        final business = profile.isBusinessAt(DateTime.now());
-        if (company != null || business) {
+        final (profile, company, employer, admin) = snap.data!;
+        // Administrateur : Business, sauf en mode test Gratuit ou Pro
+        final business = admin
+            ? const ['admin', 'business'].contains(adminPlanView.value)
+            : profile.isBusinessAt(DateTime.now());
+        if (business || (company != null && !admin)) {
           return _BossScreen(
             company: company,
             active: business,

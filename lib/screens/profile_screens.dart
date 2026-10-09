@@ -35,6 +35,23 @@ class _ProfilePageState extends State<ProfilePage> {
   Profile get _p => widget.profile;
   final Future<bool> _isAdmin = Api.isAdmin();
 
+  // Mode test de l'administrateur : le plan affiché change aussitôt
+  void _onPlanView() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    adminPlanView.addListener(_onPlanView);
+  }
+
+  @override
+  void dispose() {
+    adminPlanView.removeListener(_onPlanView);
+    super.dispose();
+  }
+
   void _push(Widget screen) =>
       Navigator.of(context).push(MaterialPageRoute(builder: (_) => screen));
 

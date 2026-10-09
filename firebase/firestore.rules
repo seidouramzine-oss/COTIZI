@@ -515,7 +515,8 @@ service cloud.firestore {
     // inviter des tontiniers dans l'équipe.
     match /companies/{bossId} {
       allow read: if signedIn();
-      allow create, update: if signedIn() && bossId == uid() && isBusiness(me())
+      allow create, update: if signedIn() && bossId == uid()
+        && (isBusiness(me()) || isAdmin())
         && incoming().keys().hasOnly(['name', 'city', 'phone', 'inviteCode', 'updatedAt'])
         && isText(incoming().name, 2, 60)
         && incoming().city is string && incoming().city.size() <= 40
@@ -576,7 +577,7 @@ service cloud.firestore {
       allow create: if signedIn() && code.matches('^[A-HJ-NP-Z2-9]{6}$')
         && incoming().keys().hasOnly(['bossId'])
         && incoming().bossId == uid()
-        && isBusiness(me());
+        && (isBusiness(me()) || isAdmin());
       allow delete: if signedIn() && existing().bossId == uid();
     }
 

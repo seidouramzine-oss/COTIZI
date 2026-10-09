@@ -4,6 +4,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../api.dart';
 import '../format.dart';
 import '../models.dart';
+import '../settings.dart';
 import '../widgets/common.dart';
 import 'pro_screens.dart';
 import 'suggestion_screens.dart';
@@ -11,18 +12,34 @@ import 'suggestion_screens.dart';
 /// Plan d'un tontinier (Gratuit, essai Pro, Pro, administrateur), prêt à
 /// afficher.
 class AccessStatus {
-  AccessStatus(this.profile, {required this.isAdmin, DateTime? now})
-    : now = now ?? DateTime.now();
+  AccessStatus(this.profile, {required bool isAdmin, DateTime? now})
+    : now = now ?? DateTime.now(),
+      realAdmin = isAdmin,
+      simulated = isAdmin && adminPlanView.value != 'admin'
+          ? adminPlanView.value
+          : null;
 
   final Profile profile;
-  final bool isAdmin;
   final DateTime now;
 
+  /// Compte administrateur de COTIZI (même en mode test).
+  final bool realAdmin;
+
+  /// Mode test de l'administrateur : plan essayé (free, pro, business).
+  final String? simulated;
+
+  /// Accès illimité d'administrateur (hors mode test).
+  bool get isAdmin => realAdmin && simulated == null;
+
   /// Plan Pro en cours (essai de 30 jours ou abonnement payé).
-  bool get isPro => isAdmin || profile.isProAt(now);
+  bool get isPro =>
+      isAdmin ||
+      (simulated != null ? simulated != 'free' : profile.isProAt(now));
 
   /// Plan Business en cours (comprend le plan Pro).
-  bool get isBusiness => !isAdmin && profile.isBusinessAt(now);
+  bool get isBusiness => simulated != null
+      ? simulated == 'business'
+      : !isAdmin && profile.isBusinessAt(now);
 
   /// Un tontinier crée toujours : en Gratuit, dans les limites du plan.
   bool get canCreate => isAdmin || !profile.isMember;
@@ -30,11 +47,18 @@ class AccessStatus {
   int get daysLeft => profile.daysLeft(now);
 
   /// À signaler sur l'accueil : plan Gratuit, essai, ou fin proche.
-  bool get needsAttention =>
-      !isAdmin && (!isPro || profile.isTrial || daysLeft <= 7);
+  bool get needsAttention => simulated != null
+      ? simulated == 'free'
+      : !isAdmin && (!isPro || profile.isTrial || daysLeft <= 7);
 
   String get planName => isAdmin
       ? 'Administrateur'
+      : simulated != null
+      ? (isBusiness
+            ? 'Business'
+            : isPro
+            ? 'Pro'
+            : 'Gratuit')
       : !isPro
       ? 'Gratuit'
       : profile.isTrial
@@ -45,6 +69,7 @@ class AccessStatus {
 
   String get title {
     if (isAdmin) return 'Administrateur : accès illimité';
+    if (simulated != null) return 'Mode test : plan $planName';
     if (!isPro) return 'Plan Gratuit';
     final d = daysLeft;
     final left = d <= 0
@@ -59,6 +84,10 @@ class AccessStatus {
 
   String get detail {
     if (isAdmin) return 'Vous gérez COTIZI : aucun plan nécessaire.';
+    if (simulated != null) {
+      return 'Vous voyez COTIZI comme un tontinier au plan $planName. '
+          'Changez de plan d\'essai dans Mon plan.';
+    }
     if (isPro) {
       return 'Jusqu\'au ${dateLong(profile.accessEnd!)}'
           '${profile.isTrial ? ', puis plan Gratuit si vous ne passez pas à Pro' : ''}.';
@@ -77,7 +106,7 @@ class AccessStatus {
 
   Color color(ColorScheme scheme) => !isPro
       ? scheme.primary
-      : !isAdmin && daysLeft <= 7
+      : !isAdmin && simulated == null && daysLeft <= 7
       ? paymentStatusColor(PaymentStatus.pending)
       : paymentStatusColor(PaymentStatus.approved);
 }
@@ -193,6 +222,10 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
           return ListView(
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
             children: [
+              if (status.realAdmin)
+                _AdminTestCard(
+                  onChanged: () => setState(() => _data = _load()),
+                ),
               _StatusCard(status),
               const SectionTitle('Les plans COTIZI'),
               _PlanCard(
@@ -254,6 +287,66 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
             ],
           );
         },
+      ),
+    );
+  }
+}
+
+/// Mode test de l'administrateur : essayer COTIZI dans chaque plan.
+class _AdminTestCard extends StatelessWidget {
+  const _AdminTestCard({required this.onChanged});
+
+  final VoidCallback onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      color: const Color(0xFFFFF3E0),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.science_outlined, color: Color(0xFFE07B00)),
+                const SizedBox(width: 8),
+                Text(
+                  'Mode test administrateur',
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w800,
+                    color: const Color(0xFF7A4300),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            const Text(
+              'Voir et utiliser COTIZI comme un tontinier de ce plan. '
+              'L\'Administration reste toujours accessible.',
+              style: TextStyle(color: Color(0xFF7A4300)),
+            ),
+            const SizedBox(height: 10),
+            ValueListenableBuilder<String>(
+              valueListenable: adminPlanView,
+              builder: (context, view, _) => SegmentedButton<String>(
+                showSelectedIcon: false,
+                segments: const [
+                  ButtonSegment(value: 'admin', label: Text('Admin')),
+                  ButtonSegment(value: 'free', label: Text('Gratuit')),
+                  ButtonSegment(value: 'pro', label: Text('Pro')),
+                  ButtonSegment(value: 'business', label: Text('Business')),
+                ],
+                selected: {view},
+                onSelectionChanged: (v) async {
+                  await setAdminPlanView(v.first);
+                  onChanged();
+                },
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

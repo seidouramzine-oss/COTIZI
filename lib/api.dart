@@ -9,6 +9,7 @@ import 'package:image_picker/image_picker.dart';
 
 import 'format.dart';
 import 'models.dart';
+import 'settings.dart';
 
 /// Erreur métier avec un message prêt à afficher.
 class AppException implements Exception {
@@ -190,11 +191,16 @@ class Api {
         'Votre compte client sert à participer aux tontines de votre tontinier.',
       );
     }
-    if (kind == null || await isAdmin()) return;
-    if (me.isProAt(DateTime.now())) return;
-    final fresh = await reloadProfile();
-    if (fresh != null && fresh.isProAt(DateTime.now())) return;
-    if (await coveredByCompany()) return;
+    if (kind == null) return;
+    if (await isAdmin()) {
+      // Mode test : seul le plan Gratuit essayé applique les limites
+      if (adminPlanView.value != 'free') return;
+    } else {
+      if (me.isProAt(DateTime.now())) return;
+      final fresh = await reloadProfile();
+      if (fresh != null && fresh.isProAt(DateTime.now())) return;
+      if (await coveredByCompany()) return;
+    }
     final results = await Future.wait([subscriptionSettings(), planUsage()]);
     final s = results[0] as SubscriptionSettings;
     final u = results[1] as PlanUsage;

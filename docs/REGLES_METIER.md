@@ -95,6 +95,14 @@ Réservés au plan Pro (essai Pro compris). En plan Gratuit, ils sont marqués
 - **Badge vérifié** : visible aussi dans **Mon profil pro** et à côté du nom
   de l'activité en haut des groupes et des carnets vus par les clients.
 
+## Mode test de l'administrateur
+
+Dans **Mon plan**, l'administrateur choisit « Voir COTIZI comme » : **Admin**
+(accès illimité), **Gratuit**, **Pro** ou **Business**. L'application se
+comporte alors comme pour un tontinier de ce plan (limites du Gratuit,
+fonctions Pro, entreprise Business). L'Administration reste toujours
+accessible. Le choix est gardé sur le téléphone.
+
 ## Profil pro du tontinier
 
 - **Profil → Mon profil pro** : nom de l'activité, logo, ville, numéro WhatsApp
