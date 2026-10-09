@@ -46,6 +46,10 @@ class _HomeScreenState extends State<HomeScreen> {
   int _index = 0;
   final _keys = List.generate(4, (_) => GlobalKey());
 
+  /// Pages côte à côte : on glisse le doigt pour changer d'onglet (comme
+  /// WhatsApp), ou on touche la barre du bas.
+  final _pager = PageController();
+
   bool get _isMember => _profile.isMember;
 
   /// Onglet de la liste des participations.
@@ -61,11 +65,37 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void dispose() {
     pendingInvite.removeListener(_handleInvite);
+    _pager.dispose();
     super.dispose();
   }
 
+  /// Onglet touché dans la barre (ou ouvert par l'application) : la page
+  /// glisse jusqu'à lui.
   void _select(int index) {
+    if (index == _index) {
+      _reloadPage(index);
+      return;
+    }
+    if (!_pager.hasClients) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_pager.hasClients) _pager.jumpToPage(index);
+      });
+      return;
+    }
+    _pager.animateToPage(
+      index,
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeOutCubic,
+    );
+  }
+
+  /// Page affichée (après un glissement ou un toucher) : rechargée.
+  void _onPageChanged(int index) {
     setState(() => _index = index);
+    _reloadPage(index);
+  }
+
+  void _reloadPage(int index) {
     final state = _keys[index].currentState;
     if (state is Reloadable) state.reload();
   }
@@ -161,13 +191,40 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ];
     return Scaffold(
-      body: IndexedStack(index: _index, children: pages),
+      body: PageView(
+        controller: _pager,
+        onPageChanged: _onPageChanged,
+        children: [for (final p in pages) _KeepAlive(child: p)],
+      ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _index,
         onDestinationSelected: _select,
         destinations: destinations,
       ),
     );
+  }
+}
+
+/// Garde une page en mémoire quand on glisse vers une autre (comme un
+/// onglet de WhatsApp) : elle ne se recharge pas de zéro.
+class _KeepAlive extends StatefulWidget {
+  const _KeepAlive({required this.child});
+
+  final Widget child;
+
+  @override
+  State<_KeepAlive> createState() => _KeepAliveState();
+}
+
+class _KeepAliveState extends State<_KeepAlive>
+    with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+    return widget.child;
   }
 }
 

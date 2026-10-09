@@ -10,38 +10,22 @@ class _Logo extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Column(
-      children: [
-        Container(
-          width: 72,
-          height: 72,
-          decoration: BoxDecoration(
-            color: theme.colorScheme.primary,
-            borderRadius: BorderRadius.circular(20),
-          ),
-          child: Icon(
-            Icons.savings_outlined,
-            size: 40,
-            color: theme.colorScheme.onPrimary,
-          ),
-        ),
-        const SizedBox(height: 12),
-        Text(
-          'COTIZI',
-          style: theme.textTheme.headlineMedium?.copyWith(
-            fontWeight: FontWeight.w800,
-            letterSpacing: 2,
-            color: theme.colorScheme.primary,
+    return Semantics(
+      label: 'COTIZI — Vos tontines en toute sécurité',
+      image: true,
+      excludeSemantics: true,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(24),
+        child: Container(
+          color: const Color(0xFF0E2036),
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Image.asset(
+            'assets/images/logo_cotizi.png',
+            height: 130,
+            fit: BoxFit.contain,
           ),
         ),
-        Text(
-          'Vos tontines, simplement',
-          style: theme.textTheme.bodyMedium?.copyWith(
-            color: theme.colorScheme.onSurfaceVariant,
-          ),
-        ),
-      ],
+      ),
     );
   }
 }

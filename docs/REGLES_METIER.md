@@ -206,6 +206,13 @@ et dans Profil. Chacun choisit Idée, Problème ou Autre, écrit sa suggestion
 dans Administration → « Suggestions reçues », les marque comme lues ou prises
 en compte, répond sur WhatsApp ou les supprime. Personne d'autre ne les voit.
 
+## Navigation
+
+Comme dans WhatsApp, on change d'onglet (Accueil, Mes tontines, Je participe,
+Profil) en **glissant le doigt** vers la gauche ou la droite, ou en touchant la
+barre du bas. Chaque onglet garde sa position et se met à jour quand on y
+revient.
+
 ## Notifications (la cloche)
 
 - La **cloche** en haut de l'accueil montre le nombre de nouvelles
