@@ -76,6 +76,17 @@ service cloud.firestore {
       return me().get('role', 'tontinier') == 'tontinier';
     }
 
+    // Plan Business en cours (fixé par l'administrateur)
+    function isBusiness(u) {
+      return u.get('plan', 'pro') == 'business'
+        && u.get('subscriptionEnd', request.time) > request.time;
+    }
+
+    // Le compte connecté est le patron de l'entreprise où travaille [ownerId]
+    function bossOf(ownerId) {
+      return exists(doc('companies/' + uid() + '/agents/' + ownerId));
+    }
+
     function groupData(groupId) {
       return get(doc('groups/' + groupId)).data;
     }
@@ -312,8 +323,9 @@ service cloud.firestore {
         // L'administrateur prolonge ou arrête l'abonnement d'un tontinier
         || (isAdmin()
           && existing().get('role', 'tontinier') == 'tontinier'
-          && changedOnly(['subscriptionEnd'])
-          && incoming().subscriptionEnd is timestamp);
+          && changedOnly(['subscriptionEnd', 'plan'])
+          && incoming().subscriptionEnd is timestamp
+          && incoming().get('plan', 'pro') in ['pro', 'business']);
     }
 
     // ---------------------------------------------------- Administration
@@ -415,7 +427,9 @@ service cloud.firestore {
       allow read: if signedIn() && (userId == uid() || isAdmin());
       allow create, update: if signedIn() && userId == uid()
         && me().get('role', 'tontinier') == 'tontinier'
-        && incoming().keys().hasOnly(['fullName', 'phone', 'months', 'amount', 'requestedAt'])
+        && incoming().keys().hasOnly(['fullName', 'phone', 'months', 'amount', 'plan',
+            'requestedAt'])
+        && incoming().get('plan', 'pro') in ['pro', 'business']
         && incoming().fullName == me().fullName
         && incoming().phone == me().phone
         && incoming().months in [1, 3, 12]
@@ -495,6 +509,87 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    // ------------------------------------------------------ Plan Business
+
+    // Entreprise de tontine : son patron (plan Business) et son code pour
+    // inviter des tontiniers dans l'équipe.
+    match /companies/{bossId} {
+      allow read: if signedIn();
+      allow create, update: if signedIn() && bossId == uid() && isBusiness(me())
+        && incoming().keys().hasOnly(['name', 'city', 'phone', 'inviteCode', 'updatedAt'])
+        && isText(incoming().name, 2, 60)
+        && incoming().city is string && incoming().city.size() <= 40
+        && incoming().phone is string && incoming().phone.size() <= 30
+        && incoming().inviteCode is string
+        && getAfter(doc('companyCodes/' + incoming().inviteCode)).data.bossId == uid()
+        && incoming().updatedAt == request.time;
+
+      // Agents : tontiniers de l'équipe. Un tontinier rejoint avec le code ;
+      // le patron règle son salaire ou le retire ; l'agent peut partir.
+      match /agents/{agentId} {
+        allow read: if signedIn() && (bossId == uid() || agentId == uid());
+        allow create: if signedIn() && agentId == uid() && agentId != bossId
+          && me().get('role', 'tontinier') == 'tontinier'
+          && incoming().keys().hasOnly(['fullName', 'phone', 'code', 'salaryType',
+              'fixed', 'percent', 'joinedAt'])
+          && incoming().fullName == me().fullName
+          && incoming().phone == me().phone
+          && get(doc('companyCodes/' + incoming().code)).data.bossId == bossId
+          && incoming().salaryType == 'none'
+          && incoming().fixed == 0
+          && incoming().percent == 0
+          && incoming().joinedAt == request.time
+          && !exists(doc('agentOf/' + uid()))
+          && getAfter(doc('agentOf/' + uid())).data.bossId == bossId;
+        allow update: if signedIn() && bossId == uid()
+          && changedOnly(['salaryType', 'fixed', 'percent'])
+          && incoming().salaryType in ['none', 'fixed', 'commission', 'mixed']
+          && incoming().fixed is int
+          && incoming().fixed >= 0 && incoming().fixed <= 10000000
+          && incoming().percent is number
+          && incoming().percent >= 0 && incoming().percent <= 100;
+        allow delete: if signedIn() && (bossId == uid() || agentId == uid());
+      }
+
+      // Salaires payés : un par agent et par mois, lisible par l'agent.
+      match /salaries/{salaryId} {
+        allow read: if signedIn() && (bossId == uid() || existing().agentId == uid());
+        allow create: if signedIn() && bossId == uid()
+          && incoming().keys().hasOnly(['agentId', 'agentName', 'month', 'fixed',
+              'commission', 'amount', 'paidAt'])
+          && exists(doc('companies/' + bossId + '/agents/' + incoming().agentId))
+          && incoming().month is string
+          && incoming().month.matches('^20[0-9]{2}-(0[1-9]|1[0-2])$')
+          && salaryId == incoming().agentId + '_' + incoming().month
+          && isText(incoming().agentName, 2, 60)
+          && incoming().fixed is int && incoming().fixed >= 0
+          && incoming().commission is int && incoming().commission >= 0
+          && incoming().amount == incoming().fixed + incoming().commission
+          && incoming().amount <= 100000000
+          && incoming().paidAt == request.time;
+        allow delete: if signedIn() && bossId == uid();
+      }
+    }
+
+    match /companyCodes/{code} {
+      allow get: if signedIn();
+      allow create: if signedIn() && code.matches('^[A-HJ-NP-Z2-9]{6}$')
+        && incoming().keys().hasOnly(['bossId'])
+        && incoming().bossId == uid()
+        && isBusiness(me());
+      allow delete: if signedIn() && existing().bossId == uid();
+    }
+
+    // Entreprise d'un agent (un tontinier n'est que dans une équipe à la fois)
+    match /agentOf/{agentId} {
+      allow get: if signedIn();
+      allow create: if signedIn() && agentId == uid()
+        && incoming().keys().hasOnly(['bossId', 'joinedAt'])
+        && existsAfter(doc('companies/' + incoming().bossId + '/agents/' + uid()))
+        && incoming().joinedAt == request.time;
+      allow delete: if signedIn() && (agentId == uid() || existing().bossId == uid());
+    }
+
     // ---------------------------------------------------------- Tontines
 
     match /tontines/{tontineId} {
@@ -547,7 +642,8 @@ service cloud.firestore {
 
     match /groups/{groupId} {
       allow read: if signedIn()
-        && (existing().ownerId == uid() || uid() in existing().memberIds);
+        && (existing().ownerId == uid() || uid() in existing().memberIds
+          || bossOf(existing().ownerId));
 
       allow create: if signedIn()
         && incoming().keys().hasOnly(['tontineId', 'tontineName', 'ownerId', 'ownerName',
@@ -693,7 +789,8 @@ service cloud.firestore {
         && isV2(existing()) && existing().status != 'active';
 
       match /members/{memberId} {
-        allow read: if signedIn() && (isGroupOwner(groupId) || isGroupMember(groupId));
+        allow read: if signedIn() && (isGroupOwner(groupId) || isGroupMember(groupId)
+          || bossOf(groupData(groupId).ownerId));
         // Chacun peut vérifier si une place lui est réservée (son numéro)
         allow get: if signedIn() && memberId == managedIdOfMe();
 
@@ -846,7 +943,7 @@ service cloud.firestore {
       match /payments/{paymentId} {
         allow read: if signedIn()
           && (existing().userId == uid() || existing().userId == managedIdOfMe()
-            || isGroupOwner(groupId));
+            || isGroupOwner(groupId) || bossOf(groupData(groupId).ownerId));
 
         // Le participant déclare [count] cotisations (+ pénalités de retard),
         // payées par Mobile Money (capture obligatoire) ou en espèces
@@ -927,7 +1024,8 @@ service cloud.firestore {
       // Remise de la cagnotte n au bénéficiaire (rang n), confirmée par le
       // tontinier puis par le bénéficiaire
       match /payouts/{pot} {
-        allow read: if signedIn() && (isGroupOwner(groupId) || isGroupMember(groupId));
+        allow read: if signedIn() && (isGroupOwner(groupId) || isGroupMember(groupId)
+          || bossOf(groupData(groupId).ownerId));
         allow create: if signedIn() && isGroupOwner(groupId)
           && isStarted(groupData(groupId))
           && incoming().keys().hasOnly(['tour', 'beneficiaryId', 'beneficiaryName', 'amount',
@@ -987,7 +1085,8 @@ service cloud.firestore {
 
     match /carnets/{carnetId} {
       allow read: if signedIn()
-        && (existing().ownerId == uid() || existing().clientId == uid());
+        && (existing().ownerId == uid() || existing().clientId == uid()
+          || bossOf(existing().ownerId));
 
       allow create: if signedIn()
         && incoming().keys().hasOnly(['tontineId', 'tontineName', 'ownerId', 'ownerName',
@@ -1062,7 +1161,8 @@ service cloud.firestore {
 
       match /payments/{paymentId} {
         allow read: if signedIn()
-          && (existing().userId == uid() || carnetData(carnetId).ownerId == uid());
+          && (existing().userId == uid() || carnetData(carnetId).ownerId == uid()
+            || bossOf(carnetData(carnetId).ownerId));
 
         // Le client déclare des cases : Mobile Money (capture) ou espèces
         allow create: if signedIn()

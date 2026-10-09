@@ -11,6 +11,7 @@ import '../settings.dart';
 import '../widgets/common.dart';
 import '../reminders.dart';
 import 'business_screens.dart';
+import 'company_screens.dart';
 import 'pro_screens.dart';
 import 'subscription_screens.dart';
 import 'suggestion_screens.dart';
@@ -256,6 +257,18 @@ class _ProfilePageState extends State<ProfilePage> {
                         trailing: const Icon(Icons.chevron_right),
                         onTap: () => openPro(context, screen),
                       ),
+                    ListTile(
+                      leading: const Icon(Icons.business_center_outlined),
+                      title: const Text('Mon entreprise'),
+                      subtitle: Text(
+                        status.isBusiness
+                            ? 'Votre équipe de tontiniers et leurs salaires'
+                            : 'Rejoindre l\'équipe d\'une entreprise, ou créer '
+                                  'la vôtre (plan Business)',
+                      ),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () => _push(const EnterpriseScreen()),
+                    ),
                     ListTile(
                       leading: const Icon(Icons.workspace_premium_outlined),
                       title: const Text('Mon plan'),

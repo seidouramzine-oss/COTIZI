@@ -10,6 +10,7 @@ import '../invite_link.dart';
 import '../models.dart';
 import '../reports.dart';
 import '../widgets/common.dart';
+import 'pro_screens.dart' show VerifiedBadge;
 import '../widgets/trust.dart';
 import 'group_actions.dart';
 import 'group_form.dart';
@@ -615,7 +616,7 @@ class _GroupScreenState extends State<GroupScreen> {
                         : null,
                   ),
                   const SizedBox(width: 8),
-                  Expanded(
+                  Flexible(
                     child: Text(
                       b.name,
                       style: theme.textTheme.labelLarge?.copyWith(
@@ -624,6 +625,8 @@ class _GroupScreenState extends State<GroupScreen> {
                       ),
                     ),
                   ),
+                  const SizedBox(width: 8),
+                  VerifiedBadge(ownerId: g.ownerId),
                 ],
               ),
               const SizedBox(height: 10),
@@ -650,6 +653,7 @@ class _GroupScreenState extends State<GroupScreen> {
               '${g.tontineName} · Tontinier : ${g.ownerName}',
               style: theme.textTheme.bodySmall,
             ),
+            if (b == null && !isOwner) VerifiedBadge(ownerId: g.ownerId),
             if (!g.isLegacy) ...[
               const SizedBox(height: 10),
               Row(

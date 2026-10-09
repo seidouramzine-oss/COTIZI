@@ -67,6 +67,34 @@ Réservés au plan Pro (essai Pro compris). En plan Gratuit, ils sont marqués
   (profil, note de confiance vue par les clients) **tant que son plan Pro est
   actif**. Seul l'administrateur peut donner ou retirer un badge.
 
+## Plan Business : entreprise de tontine (version 3.2)
+
+- L'administrateur active le plan **Business** (Administration → un
+  tontinier → « Business : ajouter N mois », ou « Paiement reçu : activer
+  Business » sur une demande). Le tontinier le demande dans Mon plan (choix
+  Pro / Business). Le plan Business comprend tout le plan Pro.
+- **Profil → Mon entreprise** :
+  - le patron (plan Business) crée son entreprise (nom, ville, téléphone) et
+    reçoit un **code** à envoyer à ses tontiniers (« Inviter un tontinier ») ;
+    « Nouveau code » rend l'ancien inutilisable ;
+  - un tontinier entre ce code (« Rejoindre l'équipe ») : il devient **agent**.
+    Un tontinier n'est que dans une entreprise à la fois. Un client ne peut
+    pas rejoindre une équipe.
+- Le patron voit, mois par mois, l'**activité de chaque agent** (argent reçu,
+  commissions, clients en cours, clients à jour) et le total de l'équipe :
+  reçu, commissions, salaires et **bénéfice de l'entreprise** (commissions +
+  pénalités − salaires). Il ne voit pas les dépenses personnelles des agents
+  et ne peut rien modifier dans leurs groupes.
+- **Salaire** de chaque agent réglé par le patron : fixe, commission (un % des
+  commissions de l'agent) ou les deux. « Noter le salaire comme payé » crée la
+  **fiche de paie** du mois (une seule par agent et par mois), que l'agent voit
+  dans Mon entreprise.
+- Un agent d'une entreprise au plan Business en cours a **tout le plan Pro**
+  (aucune limite, comptabilité, statistiques). Il peut quitter l'équipe ; le
+  patron peut le retirer. Ses groupes et ses clients restent à lui.
+- **Badge vérifié** : visible aussi dans **Mon profil pro** et à côté du nom
+  de l'activité en haut des groupes et des carnets vus par les clients.
+
 ## Profil pro du tontinier
 
 - **Profil → Mon profil pro** : nom de l'activité, logo, ville, numéro WhatsApp

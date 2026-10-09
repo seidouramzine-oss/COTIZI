@@ -21,6 +21,9 @@ class AccessStatus {
   /// Plan Pro en cours (essai de 30 jours ou abonnement payé).
   bool get isPro => isAdmin || profile.isProAt(now);
 
+  /// Plan Business en cours (comprend le plan Pro).
+  bool get isBusiness => !isAdmin && profile.isBusinessAt(now);
+
   /// Un tontinier crée toujours : en Gratuit, dans les limites du plan.
   bool get canCreate => isAdmin || !profile.isMember;
 
@@ -36,6 +39,8 @@ class AccessStatus {
       ? 'Gratuit'
       : profile.isTrial
       ? 'Essai Pro'
+      : isBusiness
+      ? 'Business'
       : 'Pro';
 
   String get title {
@@ -45,7 +50,11 @@ class AccessStatus {
     final left = d <= 0
         ? 'dernier jour'
         : '$d jour${d > 1 ? 's' : ''} restant${d > 1 ? 's' : ''}';
-    return profile.isTrial ? 'Essai Pro gratuit : $left' : 'Plan Pro : $left';
+    return profile.isTrial
+        ? 'Essai Pro gratuit : $left'
+        : isBusiness
+        ? 'Plan Business : $left'
+        : 'Plan Pro : $left';
   }
 
   String get detail {
@@ -62,6 +71,8 @@ class AccessStatus {
       ? Icons.rocket_launch_outlined
       : profile.isTrial && !isAdmin
       ? Icons.card_giftcard_outlined
+      : isBusiness
+      ? Icons.business_center
       : Icons.workspace_premium;
 
   Color color(ColorScheme scheme) => !isPro
@@ -201,7 +212,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
                 price: settings.monthlyPrice > 0
                     ? '${money(settings.monthlyPrice)} / mois'
                     : 'Prix sur demande',
-                current: status.isPro && !status.isAdmin,
+                current: status.isPro && !status.isBusiness && !status.isAdmin,
                 highlighted: true,
                 icon: Icons.workspace_premium,
                 features: const [
@@ -217,23 +228,28 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
                 price: settings.businessPrice > 0
                     ? '${money(settings.businessPrice)} / mois'
                     : 'Prix sur demande',
-                current: false,
+                current: status.isBusiness,
                 icon: Icons.business_center_outlined,
-                badge: 'Bientôt',
                 features: const [
                   'Pour les entreprises de tontine',
-                  'Une équipe de tontiniers',
-                  'Salaires calculés chaque mois',
-                  'Recrutement de tontiniers Pro',
+                  'Tout le plan Pro, pour vous et votre équipe',
+                  'Votre équipe de tontiniers (agents)',
+                  'Activité de chaque agent, mois par mois',
+                  'Salaires : fixe, commission ou les deux',
+                  'Recrutement de tontiniers Pro (bientôt)',
                 ],
               ),
               if (!status.isAdmin) ...[
                 SectionTitle(
                   status.isPro && !status.profile.isTrial
-                      ? 'Prolonger mon plan Pro'
-                      : 'Passer à Pro',
+                      ? 'Prolonger ou changer de plan'
+                      : 'Passer à Pro ou Business',
                 ),
-                _RenewCard(settings: settings, profile: status.profile),
+                _RenewCard(
+                  settings: settings,
+                  profile: status.profile,
+                  initialPlan: status.isBusiness ? 'business' : 'pro',
+                ),
               ],
             ],
           );
@@ -294,7 +310,6 @@ class _PlanCard extends StatelessWidget {
     required this.icon,
     required this.features,
     this.highlighted = false,
-    this.badge,
   });
 
   final String name;
@@ -303,7 +318,6 @@ class _PlanCard extends StatelessWidget {
   final IconData icon;
   final List<String> features;
   final bool highlighted;
-  final String? badge;
 
   @override
   Widget build(BuildContext context) {
@@ -336,10 +350,7 @@ class _PlanCard extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: 8),
-                if (current)
-                  StatusChip('Votre plan', scheme.primary)
-                else if (badge != null)
-                  StatusChip(badge!, scheme.onSurfaceVariant),
+                if (current) StatusChip('Votre plan', scheme.primary),
                 const Spacer(),
                 Text(
                   price,
@@ -373,10 +384,15 @@ class _PlanCard extends StatelessWidget {
 /// Demande d'abonnement : on choisit la durée, on écrit à COTIZI sur
 /// WhatsApp, on paie par Mobile Money, puis l'équipe active l'abonnement.
 class _RenewCard extends StatefulWidget {
-  const _RenewCard({required this.settings, required this.profile});
+  const _RenewCard({
+    required this.settings,
+    required this.profile,
+    this.initialPlan = 'pro',
+  });
 
   final SubscriptionSettings settings;
   final Profile profile;
+  final String initialPlan;
 
   @override
   State<_RenewCard> createState() => _RenewCardState();
@@ -384,22 +400,30 @@ class _RenewCard extends StatefulWidget {
 
 class _RenewCardState extends State<_RenewCard> {
   int _months = 1;
+  late String _plan = widget.initialPlan;
   late Future<SubscriptionRequest?> _request = Api.myRequest();
   bool _busy = false;
 
-  int get _amount => widget.settings.monthlyPrice * _months;
+  bool get _business => _plan == 'business';
+
+  String get _planName => _business ? 'Business' : 'Pro';
+
+  int get _price =>
+      _business ? widget.settings.businessPrice : widget.settings.monthlyPrice;
+
+  int get _amount => _price * _months;
 
   Future<void> _ask() async {
     final phone = widget.settings.contactPhone;
     setState(() => _busy = true);
     try {
-      await Api.requestSubscription(_months, _amount);
+      await Api.requestSubscription(_months, _amount, plan: _plan);
       if (!mounted) return;
       setState(() => _request = Api.myRequest());
       await openWhatsApp(
         context,
         phone,
-        'Bonjour, je souhaite passer au plan Pro de COTIZI pour $_months mois'
+        'Bonjour, je souhaite le plan $_planName de COTIZI pour $_months mois'
         '${_amount > 0 ? ' (${money(_amount)})' : ''}.\n'
         'Nom : ${widget.profile.fullName}\n'
         'Numéro COTIZI : ${widget.profile.phone}',
@@ -423,6 +447,22 @@ class _RenewCardState extends State<_RenewCard> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Text(
+              'Plan',
+              style: theme.textTheme.titleSmall?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 8),
+            SegmentedButton<String>(
+              segments: const [
+                ButtonSegment(value: 'pro', label: Text('Pro')),
+                ButtonSegment(value: 'business', label: Text('Business')),
+              ],
+              selected: {_plan},
+              onSelectionChanged: (v) => setState(() => _plan = v.first),
+            ),
+            const SizedBox(height: 12),
+            Text(
               'Durée',
               style: theme.textTheme.titleSmall?.copyWith(
                 fontWeight: FontWeight.w700,
@@ -438,7 +478,7 @@ class _RenewCardState extends State<_RenewCard> {
               selected: {_months},
               onSelectionChanged: (v) => setState(() => _months = v.first),
             ),
-            if (settings.monthlyPrice > 0) ...[
+            if (_price > 0) ...[
               const SizedBox(height: 12),
               InfoRow('Montant à payer', money(_amount), bold: true),
             ],
@@ -451,7 +491,11 @@ class _RenewCardState extends State<_RenewCard> {
                     ? 'Payez par Mobile Money au ${settings.paymentPhone}.'
                     : 'Payez par Mobile Money au numéro que nous vous indiquons.',
               ),
-              (3, 'Dès réception du paiement, nous activons votre plan Pro.'),
+              (
+                3,
+                'Dès réception du paiement, nous activons votre plan '
+                    '$_planName.',
+              ),
             ])
               Padding(
                 padding: const EdgeInsets.only(bottom: 8),
@@ -486,7 +530,7 @@ class _RenewCardState extends State<_RenewCard> {
                     icon: Icons.hourglass_top,
                     title: 'Demande envoyée',
                     message:
-                        '${r.months} mois${r.amount > 0 ? ' · ${money(r.amount)}' : ''}, '
+                        'Plan ${r.planLabel}, ${r.months} mois${r.amount > 0 ? ' · ${money(r.amount)}' : ''}, '
                         'le ${dateLong(r.requestedAt)}. Votre abonnement sera '
                         'activé dès réception du paiement.',
                     color: paymentStatusColor(PaymentStatus.pending),
@@ -499,7 +543,7 @@ class _RenewCardState extends State<_RenewCard> {
               FilledButton.icon(
                 onPressed: _busy ? null : _ask,
                 icon: const Icon(Icons.chat_outlined),
-                label: const Text('Demander le plan Pro sur WhatsApp'),
+                label: Text('Demander le plan $_planName sur WhatsApp'),
               ),
               const SizedBox(height: 8),
               OutlinedButton.icon(
@@ -556,13 +600,17 @@ class _AdminScreenState extends State<AdminScreen> {
       message:
           'Avez-vous reçu le paiement de ${r.fullName}'
           '${r.amount > 0 ? ' (${money(r.amount)})' : ''} ? Son abonnement '
-          'sera prolongé de ${r.months} mois.',
+          'Plan ${r.planLabel} pour ${r.months} mois.',
       confirmLabel: 'Activer',
     )) {
       return;
     }
     try {
-      final updated = await Api.extendSubscription(account, r.months);
+      final updated = await Api.extendSubscription(
+        account,
+        r.months,
+        plan: r.plan,
+      );
       await Api.closeSubscriptionRequest(r.userId);
       setState(() {
         _accounts = [for (final x in _accounts) x.id == r.userId ? updated : x];
@@ -623,12 +671,13 @@ class _AdminScreenState extends State<AdminScreen> {
   }
 
   Future<void> _manage(Account a) async {
-    final action = await showModalBottomSheet<int>(
+    final choice = await showModalBottomSheet<(int, String)>(
       context: context,
       showDragHandle: true,
       builder: (_) => _AccountSheet(account: a, status: _status(a)),
     );
-    if (action == null || !mounted) return;
+    if (choice == null || !mounted) return;
+    final (action, plan) = choice;
     if (action == 0 &&
         !await confirm(
           context,
@@ -643,7 +692,7 @@ class _AdminScreenState extends State<AdminScreen> {
     try {
       final updated = action == 0
           ? await Api.stopSubscription(a)
-          : await Api.extendSubscription(a, action);
+          : await Api.extendSubscription(a, action, plan: plan);
       setState(() {
         _accounts = [for (final x in _accounts) x.id == a.id ? updated : x];
       });
@@ -753,7 +802,7 @@ class _AdminScreenState extends State<AdminScreen> {
                       style: const TextStyle(fontWeight: FontWeight.w700),
                     ),
                     Text(
-                      '${r.phone} · ${r.months} mois'
+                      '${r.phone} · ${r.planLabel} · ${r.months} mois'
                       '${r.amount > 0 ? ' · ${money(r.amount)}' : ''} · '
                       '${dateTime(r.requestedAt)}',
                       style: theme.textTheme.bodySmall,
@@ -765,7 +814,8 @@ class _AdminScreenState extends State<AdminScreen> {
                         FilledButton(
                           onPressed: () => _activate(r),
                           child: Text(
-                            'Paiement reçu : activer ${r.months} mois',
+                            'Paiement reçu : activer ${r.planLabel} '
+                            '${r.months} mois',
                           ),
                         ),
                         IconButton(
@@ -870,7 +920,7 @@ class _AdminScreenState extends State<AdminScreen> {
                   ),
                   isThreeLine: true,
                   trailing: const Icon(Icons.chevron_right),
-                  onTap: status.isAdmin ? null : () => _manage(a),
+                  onTap: () => _manage(a),
                 ),
               );
             },
@@ -920,16 +970,22 @@ class _AccountSheet extends StatelessWidget {
             ),
           ),
           const Divider(),
-          for (final months in [1, 3, 12])
-            ListTile(
-              leading: const Icon(Icons.add_circle_outline),
-              title: Text(
-                'Ajouter $months mois',
-                style: const TextStyle(fontWeight: FontWeight.w600),
+          for (final plan in ['pro', 'business'])
+            for (final months in [1, 3, 12])
+              ListTile(
+                leading: Icon(
+                  plan == 'business'
+                      ? Icons.business_center_outlined
+                      : Icons.workspace_premium_outlined,
+                ),
+                title: Text(
+                  '${plan == 'business' ? 'Business' : 'Pro'} : '
+                  'ajouter $months mois',
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+                subtitle: Text('Jusqu\'au ${dateLong(_newEnd(months, plan))}'),
+                onTap: () => Navigator.pop(context, (months, plan)),
               ),
-              subtitle: Text('Jusqu\'au ${dateLong(_newEnd(months))}'),
-              onTap: () => Navigator.pop(context, months),
-            ),
           if (status.canCreate)
             ListTile(
               leading: Icon(Icons.block, color: theme.colorScheme.error),
@@ -937,7 +993,7 @@ class _AccountSheet extends StatelessWidget {
                 'Arrêter l\'abonnement',
                 style: TextStyle(color: theme.colorScheme.error),
               ),
-              onTap: () => Navigator.pop(context, 0),
+              onTap: () => Navigator.pop(context, (0, 'pro')),
             ),
           const SizedBox(height: 8),
         ],
@@ -945,10 +1001,12 @@ class _AccountSheet extends StatelessWidget {
     );
   }
 
-  DateTime _newEnd(int months) {
+  DateTime _newEnd(int months, String plan) {
     final now = DateTime.now();
     final end = account.profile.accessEnd;
-    return addMonths(end != null && end.isAfter(now) ? end : now, months);
+    final keep =
+        end != null && end.isAfter(now) && account.profile.plan == plan;
+    return addMonths(keep ? end : now, months);
   }
 }
 

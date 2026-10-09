@@ -7,6 +7,8 @@ import '../api.dart';
 import '../format.dart';
 import '../models.dart';
 import '../widgets/common.dart';
+import '../pro.dart';
+import 'pro_screens.dart';
 import 'group_screens.dart';
 
 /// Profil pro du tontinier : nom de l'activité, logo, numéros de paiement.
@@ -134,6 +136,8 @@ class _BusinessProfileScreenState extends State<BusinessProfileScreen> {
                 'Ces informations sont vues par vos clients : en haut de vos '
                 'groupes, au moment de payer, sur les reçus et les relevés PDF.',
               ),
+              const SizedBox(height: 12),
+              const _VerificationTile(),
               const SizedBox(height: 16),
               Center(
                 child: GestureDetector(
@@ -394,6 +398,71 @@ class _GainsScreenState extends State<GainsScreen> {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Profil pro vérifié (badge) ou bouton pour le faire vérifier.
+class _VerificationTile extends StatefulWidget {
+  const _VerificationTile();
+
+  @override
+  State<_VerificationTile> createState() => _VerificationTileState();
+}
+
+class _VerificationTileState extends State<_VerificationTile> {
+  late Future<(bool, Verification?)> _data = _load();
+
+  static Future<(bool, Verification?)> _load() async {
+    final r = await Future.wait([
+      ProApi.isVerified(Api.uid),
+      ProApi.myVerification(),
+    ]);
+    return (r[0] as bool, r[1] as Verification?);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    const blue = Color(0xFF1D7FD8);
+    return FutureBuilder<(bool, Verification?)>(
+      future: _data,
+      builder: (context, snap) {
+        final (verified, v) = snap.data ?? (false, null);
+        final pending = v?.pending ?? false;
+        return Card(
+          color: verified ? blue.withValues(alpha: 0.08) : null,
+          child: ListTile(
+            leading: Icon(
+              verified ? Icons.verified : Icons.verified_outlined,
+              color: blue,
+            ),
+            title: Text(
+              verified
+                  ? 'Profil pro vérifié'
+                  : pending
+                  ? 'Vérification en cours'
+                  : 'Faire vérifier mon profil pro',
+              style: const TextStyle(fontWeight: FontWeight.w700),
+            ),
+            subtitle: Text(
+              verified
+                  ? 'Vos clients voient le badge « Vérifié » à côté du nom de '
+                        'votre activité.'
+                  : pending
+                  ? 'COTIZI examine votre pièce d\'identité.'
+                  : 'Badge « Vérifié » visible de vos clients : plus de '
+                        'confiance (plan Pro).',
+            ),
+            trailing: verified ? null : const Icon(Icons.chevron_right),
+            onTap: verified
+                ? null
+                : () async {
+                    await openPro(context, const VerificationScreen());
+                    if (mounted) setState(() => _data = _load());
+                  },
+          ),
+        );
+      },
     );
   }
 }

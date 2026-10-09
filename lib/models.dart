@@ -61,7 +61,11 @@ class Profile {
     this.role = Role.tontinier,
     this.createdAt,
     this.subscriptionEnd,
+    this.plan = 'pro',
   });
+
+  /// Plan payé : « pro » ou « business » (fixé par l'administrateur).
+  final String plan;
 
   /// Essai gratuit d'un nouveau tontinier (même durée dans les règles).
   static const trialDays = 30;
@@ -89,6 +93,10 @@ class Profile {
   /// Plan Pro en cours : essai de 30 jours ou abonnement payé.
   bool isProAt(DateTime now) => !isMember && (accessEnd?.isAfter(now) ?? false);
 
+  /// Plan Business en cours (comprend tout le plan Pro).
+  bool isBusinessAt(DateTime now) =>
+      plan == 'business' && !isTrial && isProAt(now);
+
   /// Jours restants (0 le dernier jour, négatif une fois expiré).
   int daysLeft(DateTime now) {
     final end = accessEnd;
@@ -102,6 +110,7 @@ class Profile {
     role: json['role'] == 'membre' ? Role.membre : Role.tontinier,
     createdAt: _date(json['createdAt']),
     subscriptionEnd: _date(json['subscriptionEnd']),
+    plan: json['plan'] == 'business' ? 'business' : 'pro',
   );
 
   static DateTime? _date(Object? v) => v is Timestamp ? v.toDate() : null;
@@ -112,14 +121,16 @@ class Profile {
     role: role,
     createdAt: createdAt,
     subscriptionEnd: subscriptionEnd,
+    plan: plan,
   );
 
-  Profile withSubscriptionEnd(DateTime end) => Profile(
+  Profile withSubscriptionEnd(DateTime end, {String? plan}) => Profile(
     fullName: fullName,
     phone: phone,
     role: role,
     createdAt: createdAt,
     subscriptionEnd: end,
+    plan: plan ?? this.plan,
   );
 }
 
@@ -202,7 +213,13 @@ class SubscriptionRequest {
     required this.months,
     required this.amount,
     required this.requestedAt,
+    this.plan = 'pro',
   });
+
+  /// « pro » ou « business »
+  final String plan;
+
+  String get planLabel => plan == 'business' ? 'Business' : 'Pro';
 
   final String userId;
   final String fullName;
@@ -220,6 +237,7 @@ class SubscriptionRequest {
       months: _int(json['months']),
       amount: _int(json['amount']),
       requestedAt: _time(json['requestedAt']),
+      plan: json['plan'] == 'business' ? 'business' : 'pro',
     );
   }
 }

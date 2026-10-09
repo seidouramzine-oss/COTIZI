@@ -20,11 +20,16 @@ String _signed(int v) => '${v < 0 ? '− ' : ''}${money(v.abs())}';
 
 /// Ouvre une fonction du plan Pro, ou propose de passer à Pro.
 Future<void> openPro(BuildContext context, Widget screen) async {
-  final results = await Future.wait([Api.reloadProfile(), Api.isAdmin()]);
+  final results = await Future.wait([
+    Api.reloadProfile(),
+    Api.isAdmin(),
+    Api.coveredByCompany(),
+  ]);
   if (!context.mounted) return;
   final profile = results[0] as Profile?;
   final admin = results[1] as bool;
-  if (admin || (profile?.isProAt(DateTime.now()) ?? false)) {
+  final agent = results[2] as bool;
+  if (admin || agent || (profile?.isProAt(DateTime.now()) ?? false)) {
     await Navigator.of(context).push(MaterialPageRoute(builder: (_) => screen));
     return;
   }

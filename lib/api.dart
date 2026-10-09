@@ -153,6 +153,20 @@ class Api {
     return myProfile();
   }
 
+  /// Agent d'une entreprise au plan Business en cours : l'entreprise lui
+  /// donne le plan Pro (aucune limite, comptabilité, statistiques…).
+  static Future<bool> coveredByCompany() async {
+    try {
+      final link = await _db.doc('agentOf/$uid').get();
+      if (!link.exists) return false;
+      final boss = await _db.doc('users/${link['bossId']}').get();
+      return boss.exists &&
+          Profile.fromJson(boss.data()!).isBusinessAt(DateTime.now());
+    } on FirebaseException {
+      return false;
+    }
+  }
+
   /// Administrateur de COTIZI (document admins/{uid} créé dans la console).
   static Future<bool> isAdmin() async {
     if (_admin != null) return _admin!;
@@ -180,6 +194,7 @@ class Api {
     if (me.isProAt(DateTime.now())) return;
     final fresh = await reloadProfile();
     if (fresh != null && fresh.isProAt(DateTime.now())) return;
+    if (await coveredByCompany()) return;
     final results = await Future.wait([subscriptionSettings(), planUsage()]);
     final s = results[0] as SubscriptionSettings;
     final u = results[1] as PlanUsage;
@@ -283,17 +298,25 @@ class Api {
 
   /// Ajoute [months] mois à l'abonnement, à partir de sa fin actuelle si
   /// elle n'est pas encore passée.
-  static Future<Account> extendSubscription(Account a, int months) async {
+  static Future<Account> extendSubscription(
+    Account a,
+    int months, {
+    String plan = 'pro',
+  }) async {
     final now = DateTime.now();
     final current = a.profile.accessEnd;
-    final end = addMonths(
-      current != null && current.isAfter(now) ? current : now,
-      months,
-    );
+    // Changement de plan : la durée part d'aujourd'hui.
+    final keep =
+        current != null && current.isAfter(now) && a.profile.plan == plan;
+    final end = addMonths(keep ? current : now, months);
     await _db.doc('users/${a.id}').update({
       'subscriptionEnd': Timestamp.fromDate(end),
+      'plan': plan,
     });
-    return Account(id: a.id, profile: a.profile.withSubscriptionEnd(end));
+    return Account(
+      id: a.id,
+      profile: a.profile.withSubscriptionEnd(end, plan: plan),
+    );
   }
 
   /// Arrête l'abonnement tout de suite (fin = maintenant).
@@ -325,13 +348,18 @@ class Api {
 
   /// Le tontinier demande un abonnement de [months] mois : la demande
   /// apparaît dans l'Administration, il écrit ensuite à COTIZI sur WhatsApp.
-  static Future<void> requestSubscription(int months, int amount) async {
+  static Future<void> requestSubscription(
+    int months,
+    int amount, {
+    String plan = 'pro',
+  }) async {
     final me = await _requireMe();
     await _db.doc('subscriptionRequests/$uid').set({
       'fullName': me.fullName,
       'phone': me.phone,
       'months': months,
       'amount': amount,
+      'plan': plan,
       'requestedAt': _now,
     });
   }

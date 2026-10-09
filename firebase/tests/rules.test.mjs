@@ -20,6 +20,9 @@ const people = {
   d: { phone: '+22901000004', name: 'David' },
   z: { phone: '+22997000099', name: 'Zoé' },
   e: { phone: '+22997000098', name: 'Emma' },
+  boss: { phone: '+22997000090', name: 'Patron Business' },
+  ag: { phone: '+22997000091', name: 'Agent Koffi' },
+  ag2: { phone: '+22997000092', name: 'Agent Ama' },
 };
 
 let env;
@@ -1504,4 +1507,117 @@ test('version 3.1 : comptabilité (dépenses) et badge vérifié du plan Pro', a
   await t.test('le badge est visible des clients', () => assertSucceeds(db('a').doc('badges/t').get()));
   await t.test('un client supprime le badge : refusé', () => assertFails(db('a').doc('badges/t').delete()));
   await t.test('l\'administrateur retire le badge', () => assertSucceeds(admin.doc('badges/t').delete()));
+});
+
+test('version 3.2 : plan Business, équipe, salaires', async (t) => {
+  const Timestamp = firebase.firestore.Timestamp;
+  const future = Timestamp.fromDate(new Date(Date.now() + 30 * 864e5));
+  await env.withSecurityRulesDisabled(async (ctx) => {
+    const fs = ctx.firestore();
+    for (const id of ['boss', 'ag', 'ag2']) {
+      await fs.doc(`users/${id}`).set({
+        fullName: people[id].name, phone: people[id].phone, role: 'tontinier',
+        createdAt: Timestamp.fromDate(new Date(Date.now() - 90 * 864e5)),
+        ...(id === 'boss' ? { plan: 'business', subscriptionEnd: future } : {}),
+      });
+    }
+    await fs.doc('groups/gag').set({ ownerId: 'ag', memberIds: [], name: 'Groupe agent' });
+    await fs.doc('groups/gag/payments/p1').set({ userId: 'x', amount: 1000, status: 'approved' });
+    await fs.doc('groups/gother').set({ ownerId: 'ag2', memberIds: [], name: 'Autre' });
+    await fs.doc('carnets/cag').set({ ownerId: 'ag', clientId: null, label: 'Carnet agent' });
+  });
+  const boss = db('boss');
+  const ag = db('ag');
+
+  // Admin : plan Business
+  const admin = env.authenticatedContext('adm', { email: '22997000003@phone.cotizi.app' }).firestore();
+  await t.test('l\'administrateur active le plan Business', () =>
+    assertSucceeds(admin.doc('users/ag2').update({ subscriptionEnd: future, plan: 'business' })));
+  await t.test('plan inconnu : refusé', () =>
+    assertFails(admin.doc('users/ag2').update({ subscriptionEnd: future, plan: 'or' })));
+  await t.test('demande du plan Business', () =>
+    assertSucceeds(db('ag2').doc('subscriptionRequests/ag2').set({
+      fullName: people.ag2.name, phone: people.ag2.phone, months: 1, amount: 15000,
+      plan: 'business', requestedAt: now(),
+    })));
+  await t.test('un tontinier se met en Business : refusé', () =>
+    assertFails(ag.doc('users/ag').update({ plan: 'business' })));
+
+  // Entreprise
+  const company = (fs, id, code, fields = {}) => {
+    const b = fs.batch();
+    b.set(fs.doc(`companyCodes/${code}`), { bossId: id });
+    b.set(fs.doc(`companies/${id}`), {
+      name: 'Tontines Express', city: 'Cotonou', phone: '+22997000090',
+      inviteCode: code, updatedAt: now(), ...fields,
+    });
+    return b.commit();
+  };
+  await t.test('sans plan Business : pas d\'entreprise', () => assertFails(company(ag, 'ag', 'AGENT3')));
+  await t.test('le patron Business crée son entreprise', () => assertSucceeds(company(boss, 'boss', 'BXSS22')));
+  await t.test('code pris par un autre : refusé', () =>
+    assertFails(ag.doc('companyCodes/BXSS22').delete()));
+
+  // Agent
+  const join = (fs, id, code, fields = {}) => {
+    const b = fs.batch();
+    b.set(fs.doc(`companies/boss/agents/${id}`), {
+      fullName: people[id].name, phone: people[id].phone, code, salaryType: 'none',
+      fixed: 0, percent: 0, joinedAt: now(), ...fields,
+    });
+    b.set(fs.doc(`agentOf/${id}`), { bossId: 'boss', joinedAt: now() });
+    return b.commit();
+  };
+  await t.test('mauvais code : refusé', () => assertFails(join(ag, 'ag', 'AGENT3')));
+  await t.test('salaire fixé par l\'agent : refusé', () =>
+    assertFails(join(ag, 'ag', 'BXSS22', { fixed: 50000 })));
+  await t.test('un client ne rejoint pas une équipe', () => assertFails(join(db('a'), 'a', 'BXSS22')));
+  await t.test('l\'agent rejoint l\'équipe avec le code', () => assertSucceeds(join(ag, 'ag', 'BXSS22')));
+  await t.test('déjà dans une équipe : refusé', async () => {
+    await assertFails(ag.doc('companies/boss/agents/ag').set({
+      fullName: people.ag.name, phone: people.ag.phone, code: 'BXSS22', salaryType: 'none',
+      fixed: 0, percent: 0, joinedAt: now(),
+    }));
+  });
+
+  // Le patron voit l'activité de son agent, pas celle des autres
+  await t.test('le patron lit les groupes de son agent', () =>
+    assertSucceeds(boss.collection('groups').where('ownerId', '==', 'ag').get()));
+  await t.test('… et leurs paiements', () =>
+    assertSucceeds(boss.collection('groups/gag/payments').where('status', '==', 'approved').get()));
+  await t.test('… et ses carnets', () =>
+    assertSucceeds(boss.collection('carnets').where('ownerId', '==', 'ag').get()));
+  await t.test('groupes d\'un tontinier hors équipe : refusé', () =>
+    assertFails(boss.collection('groups').where('ownerId', '==', 'ag2').get()));
+  await t.test('l\'agent ne lit pas l\'activité du patron', () =>
+    assertFails(ag.collection('groups').where('ownerId', '==', 'boss').get()));
+
+  // Salaire
+  await t.test('le patron règle le salaire (fixe + commission)', () =>
+    assertSucceeds(boss.doc('companies/boss/agents/ag').update({
+      salaryType: 'mixed', fixed: 30000, percent: 20,
+    })));
+  await t.test('l\'agent change son salaire : refusé', () =>
+    assertFails(ag.doc('companies/boss/agents/ag').update({ fixed: 999999 })));
+  const pay = (fs, fields = {}) => fs.doc('companies/boss/salaries/ag_2026-10').set({
+    agentId: 'ag', agentName: people.ag.name, month: '2026-10', fixed: 30000,
+    commission: 2000, amount: 32000, paidAt: now(), ...fields,
+  });
+  await t.test('montant faux : refusé', () => assertFails(pay(boss, { amount: 99999 })));
+  await t.test('l\'agent se paie lui-même : refusé', () => assertFails(pay(ag)));
+  await t.test('le patron paie le salaire du mois', () => assertSucceeds(pay(boss)));
+  await t.test('l\'agent voit sa fiche de paie', () =>
+    assertSucceeds(ag.collection('companies/boss/salaries').where('agentId', '==', 'ag').get()));
+  await t.test('un autre ne voit pas les salaires', () =>
+    assertFails(db('ag2').collection('companies/boss/salaries').where('agentId', '==', 'ag').get()));
+
+  // Départ
+  await t.test('l\'agent quitte l\'équipe', async () => {
+    const b = ag.batch();
+    b.delete(ag.doc('companies/boss/agents/ag'));
+    b.delete(ag.doc('agentOf/ag'));
+    await assertSucceeds(b.commit());
+  });
+  await t.test('après son départ, le patron ne lit plus ses groupes', () =>
+    assertFails(boss.collection('groups').where('ownerId', '==', 'ag').get()));
 });

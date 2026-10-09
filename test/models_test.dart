@@ -4,6 +4,7 @@ import 'package:cotizi/api.dart';
 import 'package:cotizi/format.dart';
 import 'package:cotizi/models.dart';
 import 'package:cotizi/pro.dart';
+import 'package:cotizi/business.dart';
 import 'package:cotizi/reminders.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:intl/date_symbol_data_local.dart';
@@ -757,6 +758,48 @@ void main() {
       expect(s.clients, 2);
       expect(s.watch.length, 2);
       expect(s.regular, isEmpty);
+    });
+  });
+
+  group('Version 3.2 plan Business', () {
+    Agent agent(String type, {int fixed = 0, double percent = 0}) => Agent(
+      id: 'a',
+      fullName: 'Koffi',
+      phone: '+229',
+      salaryType: type,
+      fixed: fixed,
+      percent: percent,
+      joinedAt: DateTime(2026, 9),
+    );
+
+    test('salaire : fixe, commission ou les deux', () {
+      expect(agent('none').salaryFor(10000), (0, 0));
+      expect(agent('fixed', fixed: 30000).salaryFor(10000), (30000, 0));
+      expect(agent('commission', percent: 20).salaryFor(10000), (0, 2000));
+      expect(
+        agent('mixed', fixed: 30000, percent: 12.5).salaryFor(10000),
+        (30000, 1250),
+      );
+      expect(agent('mixed', fixed: 30000, percent: 20).salaryLabel,
+          '30000 F + 20 % des commissions');
+    });
+
+    test('mois et plan Business du profil', () {
+      expect(monthKey(DateTime(2026, 3, 15)), '2026-03');
+      final now = DateTime(2026, 10, 9);
+      final business = Profile(
+        fullName: 'P',
+        phone: '+229',
+        createdAt: DateTime(2026, 1, 1),
+        subscriptionEnd: DateTime(2026, 11, 1),
+        plan: 'business',
+      );
+      expect(business.isBusinessAt(now), isTrue);
+      expect(business.isProAt(now), isTrue);
+      expect(business.isBusinessAt(DateTime(2026, 12)), isFalse);
+      final pro = business.withSubscriptionEnd(DateTime(2026, 11), plan: 'pro');
+      expect(pro.isBusinessAt(now), isFalse);
+      expect(pro.isProAt(now), isTrue);
     });
   });
 }

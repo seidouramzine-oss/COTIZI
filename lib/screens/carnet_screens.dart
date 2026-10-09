@@ -6,6 +6,7 @@ import '../invite_link.dart';
 import '../models.dart';
 import '../reports.dart';
 import '../widgets/common.dart';
+import 'pro_screens.dart' show VerifiedBadge;
 import 'payment_screens.dart';
 
 /// Paiement d'un carnet ouvert par le tontinier (validation) ou par le
@@ -218,9 +219,11 @@ class _CarnetScreenState extends State<CarnetScreen> {
             Text(
               isOwner
                   ? c.tontineName
-                  : '${c.tontineName} · Tontinier : ${c.ownerName}',
+                  : '${c.tontineName} · Tontinier : '
+                        '${_business?.name ?? c.ownerName}',
               style: theme.textTheme.bodySmall,
             ),
+            if (!isOwner) VerifiedBadge(ownerId: c.ownerId),
             const Divider(height: 24),
             if (isOwner)
               InfoRow(

@@ -456,11 +456,16 @@ class ProApi {
   static FieldValue get _now => FieldValue.serverTimestamp();
 
   /// Toutes les opérations du tontinier connecté.
-  static Future<ProData> load() async {
+  static Future<ProData> load({String? ownerId}) async {
+    // Le patron d'une entreprise voit l'activité de ses agents (sans leurs
+    // dépenses personnelles).
+    final owner = ownerId ?? _uid;
+    final mine = owner == _uid;
     final results = await Future.wait([
-      _db.collection('groups').where('ownerId', isEqualTo: _uid).get(),
-      _db.collection('carnets').where('ownerId', isEqualTo: _uid).get(),
-      _db.collection('expenses').where('ownerId', isEqualTo: _uid).get(),
+      _db.collection('groups').where('ownerId', isEqualTo: owner).get(),
+      _db.collection('carnets').where('ownerId', isEqualTo: owner).get(),
+      if (mine)
+        _db.collection('expenses').where('ownerId', isEqualTo: owner).get(),
     ]);
     final groupIds = results[0].docs
         .map(Group.fromDoc)
@@ -468,7 +473,9 @@ class ProApi {
         .map((g) => g.id)
         .toList();
     final carnets = results[1].docs.map(Carnet.fromDoc).toList();
-    final expenses = results[2].docs.map(Expense.fromDoc).toList();
+    final expenses = mine
+        ? results[2].docs.map(Expense.fromDoc).toList()
+        : <Expense>[];
     final groups = await Future.wait(groupIds.map(Api.group));
 
     Future<List<Payment>> approved(String path) async {
