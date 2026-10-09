@@ -1440,3 +1440,68 @@ test('version 2.7 : suggestions pour améliorer COTIZI', async (t) => {
   await t.test('l\'administrateur la supprime', () =>
     assertSucceeds(admin.doc(`suggestions/${ref.id}`).delete()));
 });
+
+test('version 3.1 : comptabilité (dépenses) et badge vérifié du plan Pro', async (t) => {
+  let tProfile;
+  await env.withSecurityRulesDisabled(async (ctx) => {
+    tProfile = (await ctx.firestore().doc('users/t').get()).data();
+  });
+  const expense = (id, fields = {}) => db(id).collection('expenses').add({
+    ownerId: id, label: 'Transport au marché', amount: 1500, category: 'transport',
+    date: firebase.firestore.Timestamp.fromDate(new Date()), createdAt: now(), ...fields,
+  });
+  const exp = await assertSucceeds(expense('t'));
+  await t.test('le tontinier relit sa dépense', () => assertSucceeds(exp.get()));
+  await t.test('dépense lue par un autre : refusé', () =>
+    assertFails(db('a').doc(`expenses/${exp.id}`).get()));
+  await t.test('dépense au nom d\'un autre : refusé', () => assertFails(expense('t', { ownerId: 'a' })));
+  await t.test('montant négatif : refusé', () => assertFails(expense('t', { amount: -5 })));
+  await t.test('catégorie inconnue : refusé', () => assertFails(expense('t', { category: 'luxe' })));
+  await t.test('un client ne note pas de dépense', () => assertFails(expense('a')));
+  await t.test('modifier une dépense : refusé', () => assertFails(exp.update({ amount: 1 })));
+  await t.test('le tontinier supprime sa dépense', () => assertSucceeds(exp.delete()));
+
+  // Badge vérifié
+  const fs = db('t');
+  const photo = (kind, fields = {}) =>
+    fs.doc(`verifications/t/photos/${kind}`).set({ data: 'aGVsbG8=', mime: 'image/jpeg', ...fields });
+  const request = (fields = {}) => fs.doc('verifications/t').set({
+    fullName: tProfile.fullName, phone: tProfile.phone, idType: 'cni',
+    status: 'pending', submittedAt: now(), ...fields,
+  });
+  await t.test('demande sans photos : refusé', () => assertFails(request()));
+  await t.test('photo d\'un type inconnu : refusé', () => assertFails(photo('autre')));
+  await t.test('photo pour un autre : refusé', () =>
+    assertFails(db('a').doc('verifications/t/photos/id').set({ data: 'x', mime: 'image/jpeg' })));
+  await assertSucceeds(photo('id'));
+  await assertSucceeds(photo('selfie'));
+  await t.test('demande déjà « acceptée » par le tontinier : refusé', () =>
+    assertFails(request({ status: 'approved' })));
+  await t.test('demande au nom d\'un autre : refusé', () => assertFails(request({ fullName: 'Faux' })));
+  await t.test('demande complète : acceptée', () => assertSucceeds(request()));
+  await t.test('un autre ne voit pas les photos', () =>
+    assertFails(db('a').doc('verifications/t/photos/id').get()));
+  await t.test('le tontinier se donne le badge : refusé', () =>
+    assertFails(fs.doc('badges/t').set({ fullName: tProfile.fullName, verifiedAt: now() })));
+
+  const admin = env.authenticatedContext('adm', { email: '22997000003@phone.cotizi.app' }).firestore();
+  await t.test('l\'administrateur voit les demandes et les photos', async () => {
+    await assertSucceeds(admin.collection('verifications').where('status', '==', 'pending').get());
+    await assertSucceeds(admin.doc('verifications/t/photos/selfie').get());
+  });
+  await t.test('badge sans demande acceptée : refusé', () =>
+    assertFails(admin.doc('badges/t').set({ fullName: tProfile.fullName, verifiedAt: now() })));
+  await t.test('refus sans raison : refusé', () =>
+    assertFails(admin.doc('verifications/t').update({ status: 'rejected', decidedAt: now() })));
+  await t.test('acceptation : badge donné, photos effacées', async () => {
+    const batch = admin.batch();
+    batch.update(admin.doc('verifications/t'), { status: 'approved', decidedAt: now() });
+    batch.set(admin.doc('badges/t'), { fullName: tProfile.fullName, verifiedAt: now() });
+    batch.delete(admin.doc('verifications/t/photos/id'));
+    batch.delete(admin.doc('verifications/t/photos/selfie'));
+    await assertSucceeds(batch.commit());
+  });
+  await t.test('le badge est visible des clients', () => assertSucceeds(db('a').doc('badges/t').get()));
+  await t.test('un client supprime le badge : refusé', () => assertFails(db('a').doc('badges/t').delete()));
+  await t.test('l\'administrateur retire le badge', () => assertSucceeds(admin.doc('badges/t').delete()));
+});

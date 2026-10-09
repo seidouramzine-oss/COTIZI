@@ -14,6 +14,7 @@ import 'home_screen.dart';
 import 'notifications_screen.dart';
 import 'profile_screens.dart' show HelpScreen;
 import 'business_screens.dart';
+import 'pro_screens.dart';
 import 'subscription_screens.dart';
 import 'tontine_screens.dart';
 import 'suggestion_screens.dart';
@@ -533,7 +534,7 @@ class _OwnerDashboardState extends State<OwnerDashboard> with Reloadable {
     );
   }
 
-  /// Raccourcis : nouvelle tontine, tontines, gains, profil pro.
+  /// Raccourcis : nouvelle tontine, tontines, gains, comptabilité.
   Widget _quickActions() => Row(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
@@ -553,9 +554,9 @@ class _OwnerDashboardState extends State<OwnerDashboard> with Reloadable {
         onTap: () => open(const GainsScreen()),
       ),
       QuickTile(
-        icon: Icons.storefront_outlined,
-        label: 'Profil pro',
-        onTap: () => open(const BusinessProfileScreen()),
+        icon: Icons.account_balance_wallet_outlined,
+        label: 'Comptabilité',
+        onTap: () => openPro(context, const AccountingScreen()),
       ),
     ],
   );

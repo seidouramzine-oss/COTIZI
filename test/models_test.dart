@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:cotizi/api.dart';
 import 'package:cotizi/format.dart';
 import 'package:cotizi/models.dart';
+import 'package:cotizi/pro.dart';
 import 'package:cotizi/reminders.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:intl/date_symbol_data_local.dart';
@@ -634,6 +635,128 @@ void main() {
       });
       expect(custom.freeGroups, 5);
       expect(custom.businessPrice, 15000);
+    });
+  });
+
+  group('Version 3.1 plan Pro', () {
+    Payment pay(String who, int amount, DateTime at, {int penalty = 0}) =>
+        Payment(
+          id: '$who$amount',
+          userId: who,
+          amount: amount,
+          proofId: '',
+          status: PaymentStatus.approved,
+          rejectionReason: null,
+          declaredAt: at,
+          reviewedAt: at,
+          payer: Profile(fullName: who, phone: '+229'),
+          penalty: penalty,
+        );
+    final g = _group(
+      members: 2,
+      contribution: 10000,
+      commissionType: CommissionType.fixed,
+      commissionValue: 1000,
+      members_: [_member('a', pos: 1), _member('b', pos: 2)],
+    );
+    final closedCarnet = Carnet(
+      id: 'c',
+      tontineId: 't',
+      tontineName: 'Carnets',
+      ownerId: 'o',
+      ownerName: 'T',
+      label: 'Carnet 1',
+      caseAmount: 500,
+      caseCount: 31,
+      clientId: 'x',
+      client: const Profile(fullName: 'Xavier', phone: '+229'),
+      inviteCode: 'ABC236',
+      usedCases: 10,
+      approvedCases: 10,
+      status: 'closed',
+      closedAt: DateTime(2026, 10, 20),
+      refundAmount: 4500,
+    );
+    final data = ProData(
+      groups: [g],
+      groupPayments: {
+        'g': [
+          pay('a', 10000, DateTime(2026, 10, 2)),
+          pay('b', 10500, DateTime(2026, 10, 5), penalty: 500),
+          pay('a', 10000, DateTime(2026, 9, 2)),
+        ],
+      },
+      payouts: {
+        'g': [
+          Payout(
+            pot: 1,
+            beneficiaryId: 'a',
+            beneficiaryName: 'a',
+            amount: 19000,
+            paidAt: DateTime(2026, 10, 6),
+          ),
+        ],
+      },
+      carnets: [closedCarnet],
+      carnetPayments: {
+        'c': [
+          Payment(
+            id: 'cp',
+            userId: 'x',
+            amount: 5000,
+            proofId: '',
+            status: PaymentStatus.approved,
+            rejectionReason: null,
+            declaredAt: DateTime(2026, 10, 1),
+            reviewedAt: DateTime(2026, 10, 1),
+            payer: const Profile(fullName: 'Xavier', phone: '+229'),
+            caseCount: 10,
+          ),
+        ],
+      },
+      expenses: [
+        Expense(
+          id: 'e',
+          label: 'Zem',
+          amount: 1500,
+          category: 'transport',
+          date: DateTime(2026, 10, 3),
+        ),
+      ],
+    );
+
+    test('comptabilité du mois : entrées, sorties, bénéfice', () {
+      final a = data.month(DateTime(2026, 10, 15));
+      expect(a.received, 25500);
+      expect(a.penalties, 500);
+      expect(a.paidOut, 19000);
+      expect(a.carnetsPaid, 4500);
+      expect(a.expenses, 1500);
+      expect(a.balance, 25500 - 19000 - 4500 - 1500);
+      expect(a.commissions, 1000 + 500);
+      expect(a.profit, 1500 + 500 - 1500);
+      expect(a.lines.length, 6);
+      expect(a.lines.first.date, DateTime(2026, 10, 20));
+      expect(a.lines.where((l) => l.expenseId == 'e').length, 1);
+    });
+
+    test('mois sans opération et liste des mois', () {
+      expect(data.month(DateTime(2026, 8)).lines, isEmpty);
+      expect(data.months, contains(DateTime(2026, 9)));
+      expect(data.months.first.isAfter(data.months.last), isTrue);
+    });
+
+    test('statistiques : 6 mois, réguliers, total', () {
+      final s = ProStats.of(data, DateTime(2026, 10, 25));
+      expect(s.months.length, 6);
+      expect(s.months.last.month, DateTime(2026, 10));
+      expect(s.totalReceived, 35500);
+      expect(s.totalCommissions, 1500);
+      expect(s.trend, ((25500 - 10000) * 100 / 10000).round());
+      // Groupe commencé en janvier sans paiement validé : tous en retard
+      expect(s.clients, 2);
+      expect(s.watch.length, 2);
+      expect(s.regular, isEmpty);
     });
   });
 }

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../api.dart';
 import '../format.dart';
 import '../models.dart';
+import '../screens/pro_screens.dart' show VerifiedBadge;
 
 /// « Votre argent reste chez vous » : COTIZI ne touche jamais l'argent.
 class MoneySafetyCard extends StatelessWidget {
@@ -206,6 +207,7 @@ class _TrustCardState extends State<TrustCard> {
                               fontWeight: FontWeight.w800,
                             ),
                           ),
+                          VerifiedBadge(ownerId: widget.ownerId),
                           if ((b?.city ?? '').isNotEmpty)
                             Text(b!.city, style: theme.textTheme.bodySmall),
                         ],

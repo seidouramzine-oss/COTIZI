@@ -5,6 +5,7 @@ import '../api.dart';
 import '../format.dart';
 import '../models.dart';
 import '../widgets/common.dart';
+import 'pro_screens.dart';
 import 'suggestion_screens.dart';
 
 /// Plan d'un tontinier (Gratuit, essai Pro, Pro, administrateur), prêt à
@@ -205,9 +206,9 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
                 icon: Icons.workspace_premium,
                 features: const [
                   'Groupes, carnets et clients illimités',
-                  'Comptabilité complète (bientôt)',
-                  'Statistiques avancées (bientôt)',
-                  'Badge vérifié ✔ (bientôt)',
+                  'Comptabilité : entrées, sorties, dépenses, bénéfice',
+                  'Statistiques avancées',
+                  'Badge vérifié ✔',
                   'Accès aux offres d\'emploi des entreprises (bientôt)',
                 ],
               ),
@@ -789,6 +790,22 @@ class _AdminScreenState extends State<AdminScreen> {
               ),
             ),
         ],
+        const SectionTitle('Badges vérifiés'),
+        Card(
+          child: ListTile(
+            leading: const Icon(Icons.verified_outlined),
+            title: const Text('Demandes de badge'),
+            subtitle: const Text(
+              'Vérifier la pièce d\'identité et le selfie des tontiniers Pro',
+            ),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => const VerificationRequestsScreen(),
+              ),
+            ),
+          ),
+        ),
         const SectionTitle('Plans, paiement et assistance'),
         Card(
           child: ListTile(

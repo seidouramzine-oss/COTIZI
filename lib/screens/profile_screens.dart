@@ -11,6 +11,7 @@ import '../settings.dart';
 import '../widgets/common.dart';
 import '../reminders.dart';
 import 'business_screens.dart';
+import 'pro_screens.dart';
 import 'subscription_screens.dart';
 import 'suggestion_screens.dart';
 
@@ -137,6 +138,8 @@ class _ProfilePageState extends State<ProfilePage> {
                       fontWeight: FontWeight.w700,
                     ),
                   ),
+                  if (!_p.isMember)
+                    VerifiedBadge(ownerId: Api.uid, large: true),
                   const SizedBox(height: 4),
                   Text(_p.phone, style: theme.textTheme.bodyMedium),
                   const SizedBox(height: 8),
@@ -218,6 +221,41 @@ class _ProfilePageState extends State<ProfilePage> {
                       trailing: const Icon(Icons.chevron_right),
                       onTap: () => _push(const GainsScreen()),
                     ),
+                    for (final (icon, title, sub, screen) in [
+                      (
+                        Icons.account_balance_wallet_outlined,
+                        'Comptabilité',
+                        'Entrées, sorties, dépenses et bénéfice du mois',
+                        const AccountingScreen(),
+                      ),
+                      (
+                        Icons.bar_chart_rounded,
+                        'Statistiques',
+                        'Évolution, clients réguliers et en retard',
+                        const StatsScreen(),
+                      ),
+                      (
+                        Icons.verified_outlined,
+                        'Badge vérifié',
+                        'Faites vérifier votre identité par COTIZI',
+                        const VerificationScreen(),
+                      ),
+                    ])
+                      ListTile(
+                        leading: Icon(icon),
+                        title: Row(
+                          children: [
+                            Text(title),
+                            if (!status.isPro) ...[
+                              const SizedBox(width: 8),
+                              StatusChip('PRO', scheme.primary),
+                            ],
+                          ],
+                        ),
+                        subtitle: Text(sub),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: () => openPro(context, screen),
+                      ),
                     ListTile(
                       leading: const Icon(Icons.workspace_premium_outlined),
                       title: const Text('Mon plan'),

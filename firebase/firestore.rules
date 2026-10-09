@@ -425,6 +425,76 @@ service cloud.firestore {
       allow delete: if signedIn() && (userId == uid() || isAdmin());
     }
 
+    // --------------------------------------------- Plan Pro : comptabilité
+
+    // Dépenses notées par le tontinier : lui seul les voit.
+    match /expenses/{expenseId} {
+      allow read, delete: if signedIn() && existing().ownerId == uid();
+      allow create: if signedIn()
+        && incoming().keys().hasOnly(['ownerId', 'label', 'amount', 'category',
+            'date', 'createdAt'])
+        && incoming().ownerId == uid()
+        && me().get('role', 'tontinier') == 'tontinier'
+        && isText(incoming().label, 2, 80)
+        && incoming().amount is int
+        && incoming().amount > 0 && incoming().amount <= 100000000
+        && incoming().category in ['transport', 'communication', 'materiel',
+            'personnel', 'autre']
+        && incoming().date is timestamp
+        && incoming().createdAt == request.time;
+    }
+
+    // ------------------------------------------ Plan Pro : badge vérifié
+
+    // Demande de badge : pièce d'identité et selfie, vus seulement par le
+    // tontinier et l'administrateur. Les photos sont effacées après la
+    // décision.
+    match /verifications/{userId} {
+      allow read: if signedIn() && (userId == uid() || isAdmin());
+      allow create, update: if signedIn() && userId == uid()
+        && me().get('role', 'tontinier') == 'tontinier'
+        && incoming().keys().hasOnly(['fullName', 'phone', 'idType', 'status',
+            'submittedAt'])
+        && incoming().fullName == me().fullName
+        && incoming().phone == me().phone
+        && incoming().idType in ['cni', 'passeport', 'permis', 'autre']
+        && incoming().status == 'pending'
+        && incoming().submittedAt == request.time
+        && exists(doc('verifications/' + userId + '/photos/id'))
+        && exists(doc('verifications/' + userId + '/photos/selfie'));
+      // L'administrateur accepte ou refuse (avec une raison)
+      allow update: if isAdmin()
+        && existing().status == 'pending'
+        && changedOnly(['status', 'reason', 'decidedAt'])
+        && incoming().decidedAt == request.time
+        && (incoming().status == 'approved'
+          || (incoming().status == 'rejected' && isText(incoming().reason, 2, 200)));
+      allow delete: if signedIn() && (userId == uid() || isAdmin());
+    }
+
+    match /verifications/{userId}/photos/{kind} {
+      allow read: if signedIn() && (userId == uid() || isAdmin());
+      allow create, update: if signedIn() && userId == uid()
+        && kind in ['id', 'selfie']
+        && incoming().keys().hasOnly(['data', 'mime'])
+        && incoming().data is string
+        && incoming().data.size() <= 900000
+        && incoming().mime in ['image/jpeg', 'image/png', 'image/webp'];
+      allow delete: if signedIn() && (userId == uid() || isAdmin());
+    }
+
+    // Badge vérifié : donné ou retiré par l'administrateur, visible de tous.
+    // L'application ne l'affiche que pendant le plan Pro du tontinier.
+    match /badges/{userId} {
+      allow read: if signedIn();
+      allow create, update: if isAdmin()
+        && incoming().keys().hasOnly(['fullName', 'verifiedAt'])
+        && isText(incoming().fullName, 2, 60)
+        && incoming().verifiedAt == request.time
+        && getAfter(doc('verifications/' + userId)).data.status == 'approved';
+      allow delete: if isAdmin();
+    }
+
     // ---------------------------------------------------------- Tontines
 
     match /tontines/{tontineId} {

@@ -1,12 +1,14 @@
 import 'dart:convert';
 
 import 'package:flutter/services.dart' show rootBundle;
+import 'package:intl/intl.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:share_plus/share_plus.dart';
 
 import 'format.dart';
 import 'models.dart';
+import 'pro.dart';
 
 /// Relevés PDF (participant, bilan du groupe, carnet) à partager.
 
@@ -419,5 +421,54 @@ Future<void> shareCarnetStatement({
     doc,
     'releve-${_slug(carnet.label)}.pdf',
     'Relevé du ${carnet.label}',
+  );
+}
+
+/// Relevé comptable d'un mois (plan Pro).
+Future<void> shareAccounting({
+  required Accounting accounting,
+  required String ownerName,
+  Business? business,
+}) async {
+  final theme = await _loadTheme();
+  final a = accounting;
+  final month = DateFormat('MMMM yyyy', 'fr').format(a.month);
+  final doc = pw.Document(theme: theme)
+    ..addPage(
+      pw.MultiPage(
+        pageFormat: PdfPageFormat.a4,
+        margin: const pw.EdgeInsets.all(32),
+        build: (context) => [
+          _header(business, ownerName, 'Comptabilité de $month'),
+          _info([
+            ('Argent reçu des clients', _m(a.received)),
+            ('dont pénalités', _m(a.penalties)),
+            ('Cagnottes remises', _m(a.paidOut)),
+            ('Carnets remis ou remboursés', _m(a.carnetsPaid)),
+            ('Dépenses', _m(a.expenses)),
+            ('Solde du mois (entrées - sorties)', _m(a.balance)),
+            ('Commissions gagnées', _m(a.commissions)),
+            ('Bénéfice (commissions + pénalités - dépenses)', _m(a.profit)),
+          ]),
+          _section('Opérations (${a.lines.length})'),
+          _table(
+            ['Date', 'Opération', 'Détail', 'Montant'],
+            [
+              for (final l in a.lines)
+                [
+                  DateFormat('d MMM yyyy', 'fr').format(l.date),
+                  l.label,
+                  l.detail,
+                  '${l.amount > 0 ? '+' : '-'} ${_m(l.amount.abs())}',
+                ],
+            ],
+          ),
+        ],
+      ),
+    );
+  await _share(
+    doc,
+    'comptabilite-${DateFormat('yyyy-MM').format(a.month)}.pdf',
+    'Comptabilité de $month',
   );
 }

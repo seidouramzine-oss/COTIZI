@@ -45,6 +45,28 @@ tontines, puis invitent leurs **clients**, qui ne font que participer.
   l'arrête. Il n'a pas besoin de plan.
 - **Les clients n'ont jamais de plan à prendre** : COTIZI est gratuit pour eux.
 
+## Avantages du plan Pro (version 3.1)
+
+Réservés au plan Pro (essai Pro compris). En plan Gratuit, ils sont marqués
+« PRO » et proposent « Passer à Pro ».
+
+- **Comptabilité** (Profil → Comptabilité, ou raccourci de l'accueil) : pour
+  chaque mois, l'argent reçu des clients (dont pénalités), les cagnottes
+  remises, les carnets remis ou remboursés, les **dépenses** notées par le
+  tontinier (transport, crédit, matériel, personnel, autre), le solde du mois,
+  les commissions gagnées et le **bénéfice** (commissions + pénalités −
+  dépenses). Liste des opérations et relevé PDF à partager. Seul le tontinier
+  voit ses dépenses ; il peut les supprimer, pas les modifier.
+- **Statistiques** : argent reçu sur 6 mois (barres) et évolution par rapport
+  au mois précédent, total reçu et commissions depuis le début, clients en
+  cours et part de clients à jour, les plus réguliers et ceux à surveiller.
+- **Badge vérifié** : le tontinier envoie une photo de sa pièce d'identité et
+  un selfie avec la pièce. L'administrateur (Administration → Demandes de
+  badge) donne le badge ou refuse avec une raison ; **les photos sont effacées
+  dès la décision**. Le badge « Vérifié » s'affiche à côté du nom du tontinier
+  (profil, note de confiance vue par les clients) **tant que son plan Pro est
+  actif**. Seul l'administrateur peut donner ou retirer un badge.
+
 ## Profil pro du tontinier
 
 - **Profil → Mon profil pro** : nom de l'activité, logo, ville, numéro WhatsApp
