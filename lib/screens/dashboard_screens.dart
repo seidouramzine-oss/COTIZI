@@ -318,7 +318,11 @@ class _OwnerDashboardState extends State<OwnerDashboard> with Reloadable {
     const SectionTitle('Actions rapides'),
     _quickActions(),
     _guide(o),
-    HelpCard(onTap: () => open(const HelpScreen(isMember: false))),
+    const SizedBox(height: 8),
+    HelpAndSuggestions(
+      onSuggestions: () => open(const SuggestionsScreen()),
+      onHelp: () => open(const HelpScreen(isMember: false)),
+    ),
   ];
 
   List<Widget> _content(OwnerOverview o) {
@@ -450,27 +454,11 @@ class _OwnerDashboardState extends State<OwnerDashboard> with Reloadable {
       // ------------------------------------------------- Confiance
       const SectionTitle('Confiance'),
       TrustCard(ownerId: Api.uid, own: true),
-      Card(
-        child: ListTile(
-          contentPadding: const EdgeInsets.symmetric(
-            horizontal: 16,
-            vertical: 6,
-          ),
-          leading: const CircleAvatar(
-            backgroundColor: Color(0xFFFFF3C4),
-            foregroundColor: Color(0xFF7A5A00),
-            child: Icon(Icons.lightbulb_outline),
-          ),
-          title: const Text(
-            'Suggestions',
-            style: TextStyle(fontWeight: FontWeight.w700),
-          ),
-          subtitle: const Text('Aidez-nous à améliorer COTIZI'),
-          trailing: const Icon(Icons.chevron_right),
-          onTap: () => open(const SuggestionsScreen()),
-        ),
+      const SizedBox(height: 8),
+      HelpAndSuggestions(
+        onSuggestions: () => open(const SuggestionsScreen()),
+        onHelp: () => open(const HelpScreen(isMember: false)),
       ),
-      HelpCard(onTap: () => open(const HelpScreen(isMember: false))),
     ];
   }
 
@@ -555,7 +543,7 @@ class _OwnerDashboardState extends State<OwnerDashboard> with Reloadable {
       ),
       QuickTile(
         icon: Icons.account_balance_wallet_outlined,
-        label: 'Comptabilité',
+        label: 'Compta',
         onTap: () => openPro(context, const AccountingScreen()),
       ),
     ],
@@ -877,8 +865,9 @@ class _MemberDashboardState extends State<MemberDashboard> with Reloadable {
                         buttonIcon: Icons.qr_code_2,
                         onButton: () => open(const JoinScreen()),
                       ),
-                      HelpCard(
-                        onTap: () => open(const HelpScreen(isMember: true)),
+                      HelpAndSuggestions(
+                        onSuggestions: () => open(const SuggestionsScreen()),
+                        onHelp: () => open(const HelpScreen(isMember: true)),
                       ),
                     ]
                   : [header, ..._content(o)],
@@ -1048,7 +1037,11 @@ class _MemberDashboardState extends State<MemberDashboard> with Reloadable {
       ),
       const SizedBox(height: 12),
       const MoneySafetyCard(isMember: true),
-      HelpCard(onTap: () => open(const HelpScreen(isMember: true))),
+      const SizedBox(height: 8),
+      HelpAndSuggestions(
+        onSuggestions: () => open(const SuggestionsScreen()),
+        onHelp: () => open(const HelpScreen(isMember: true)),
+      ),
     ];
   }
 

@@ -60,37 +60,6 @@ class MoneySafetyCard extends StatelessWidget {
   }
 }
 
-/// « Besoin d'aide ? » : ouvre l'aide et l'assistance.
-class HelpCard extends StatelessWidget {
-  const HelpCard({super.key, required this.onTap});
-
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Card(
-      child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-        leading: CircleAvatar(
-          backgroundColor: theme.colorScheme.secondaryContainer,
-          foregroundColor: theme.colorScheme.onSecondaryContainer,
-          child: const Icon(Icons.support_agent),
-        ),
-        title: const Text(
-          'Besoin d\'aide ?',
-          style: TextStyle(fontWeight: FontWeight.w700),
-        ),
-        subtitle: const Text(
-          'Explications pas à pas et assistance COTIZI sur WhatsApp.',
-        ),
-        trailing: const Icon(Icons.chevron_right),
-        onTap: onTap,
-      ),
-    );
-  }
-}
-
 /// Niveau affiché d'après la note de confiance.
 (String, IconData, Color) trustLevel(TrustStats t) {
   if (t.isNew) {

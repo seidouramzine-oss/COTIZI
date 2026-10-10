@@ -527,3 +527,109 @@ class QuickTile extends StatelessWidget {
     );
   }
 }
+
+/// Deux grandes tuiles côte à côte en bas de l'accueil : « Suggestions » et
+/// « Besoin d'aide ? ».
+class HelpAndSuggestions extends StatelessWidget {
+  const HelpAndSuggestions({
+    super.key,
+    required this.onSuggestions,
+    required this.onHelp,
+  });
+
+  final VoidCallback onSuggestions;
+  final VoidCallback onHelp;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: IntrinsicHeight(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(
+              child: _BigTile(
+                icon: Icons.lightbulb_outline,
+                iconColor: Theme.of(context).colorScheme.primary,
+                title: 'Suggestions',
+                text: 'Aidez-nous à améliorer COTIZI',
+                onTap: onSuggestions,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _BigTile(
+                icon: Icons.support_agent,
+                iconColor: const Color(0xFF25D366),
+                title: 'Besoin d\'aide ?',
+                text: 'Assistance COTIZI sur WhatsApp',
+                onTap: onHelp,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _BigTile extends StatelessWidget {
+  const _BigTile({
+    required this.icon,
+    required this.iconColor,
+    required this.title,
+    required this.text,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final Color iconColor;
+  final String title;
+  final String text;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return Semantics(
+      button: true,
+      label: '$title. $text',
+      excludeSemantics: true,
+      onTap: onTap,
+      child: Material(
+        color: scheme.surfaceContainerHighest.withValues(alpha: 0.6),
+        borderRadius: BorderRadius.circular(26),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(26),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 22, 16, 22),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(icon, size: 40, color: iconColor),
+                const SizedBox(height: 18),
+                Text(
+                  title,
+                  style: theme.textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  text,
+                  style: theme.textTheme.bodyLarge?.copyWith(
+                    color: scheme.onSurfaceVariant,
+                    height: 1.25,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
