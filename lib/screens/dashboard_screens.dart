@@ -9,6 +9,7 @@ import '../widgets/common.dart';
 import '../widgets/home_cards.dart';
 import '../widgets/trust.dart';
 import 'carnet_screens.dart';
+import 'confidence_screens.dart';
 import 'group_screens.dart';
 import 'home_screen.dart';
 import 'notifications_screen.dart';
@@ -102,7 +103,7 @@ class _OwnerDashboardState extends State<OwnerDashboard> with Reloadable {
 
   static const _hideKey = 'chiffres_masques';
 
-  String _m(int amount) => _hideAmounts ? '••••• FCFA' : money(amount);
+  String _m(int amount) => _hideAmounts ? '••••• $currency' : money(amount);
 
   Future<void> _toggleAmounts() async {
     setState(() => _hideAmounts = !_hideAmounts);
@@ -277,6 +278,25 @@ class _OwnerDashboardState extends State<OwnerDashboard> with Reloadable {
     }
     if (o.pending.isEmpty) return const SizedBox.shrink();
     final n = o.pending.length;
+    // Paiements qui attendent depuis plus de 48 h : le client peut le
+    // signaler à COTIZI.
+    final old = o.pending
+        .where(
+          (r) => DateTime.now().difference(r.payment.declaredAt).inHours >= 48,
+        )
+        .length;
+    if (old > 0) {
+      return ResumeCard(
+        icon: Icons.warning_amber_rounded,
+        title:
+            '$old paiement${old > 1 ? 's' : ''} en attente depuis plus de 48 h',
+        subtitle:
+            'Validez ou refusez vite : un client qui attend peut signaler un '
+            'problème à COTIZI.',
+        color: paymentStatusColor(PaymentStatus.rejected),
+        onTap: () => _review(o.pending.first),
+      );
+    }
     return ResumeCard(
       icon: Icons.receipt_long,
       title: '$n paiement${n > 1 ? 's' : ''} à valider',
@@ -905,7 +925,31 @@ class _MemberDashboardState extends State<MemberDashboard> with Reloadable {
         ))
           (s.group, p),
     ];
+    // Mes paiements pas encore validés après 48 h
+    final stale = waiting
+        .where((w) => DateTime.now().difference(w.$2.declaredAt).inHours >= 48)
+        .toList();
     return [
+      if (stale.isNotEmpty)
+        StatusCard(
+          icon: Icons.warning_amber_rounded,
+          color: bad,
+          title:
+              'Paiement non validé depuis '
+              '${DateTime.now().difference(stale.first.$2.declaredAt).inDays} jours',
+          message:
+              '${stale.first.$1.name} : votre tontinier n\'a toujours pas '
+              'validé votre paiement de ${money(stale.first.$2.amount)}. '
+              'Appuyez ici pour signaler le problème à COTIZI.',
+          onTap: () => open(
+            DisputeFormScreen(
+              ownerId: stale.first.$1.ownerId,
+              ownerName: stale.first.$1.ownerName,
+              where: stale.first.$1.name,
+              groupId: stale.first.$1.id,
+            ),
+          ),
+        ),
       // ------------------------------------------- Cagnottes à confirmer
       for (final s in o.groups.where((s) => s.payoutToConfirm != null))
         StatusCard(

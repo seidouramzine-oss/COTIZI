@@ -10,6 +10,7 @@ import '../invite_link.dart';
 import '../models.dart';
 import '../reports.dart';
 import '../widgets/common.dart';
+import 'confidence_screens.dart';
 import 'pro_screens.dart' show VerifiedBadge;
 import '../widgets/trust.dart';
 import 'group_actions.dart';
@@ -570,6 +571,8 @@ class _GroupScreenState extends State<GroupScreen> {
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
               children: [
                 _header(g, d.business, isOwner),
+                if (!g.isLegacy && g.status != GroupStatus.recruiting)
+                  AnnouncementsCard(group: g, isOwner: isOwner),
                 if (g.isLegacy) ...[
                   _legacyNotice(),
                   ..._membersSection(g, isOwner: false),
@@ -584,6 +587,21 @@ class _GroupScreenState extends State<GroupScreen> {
                 if (!isOwner && !g.isLegacy) ...[
                   const SectionTitle('Votre tontinier'),
                   TrustCard(ownerId: g.ownerId, ownerName: g.ownerName),
+                  const SizedBox(height: 4),
+                  OutlinedButton.icon(
+                    onPressed: () => Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => DisputeFormScreen(
+                          ownerId: g.ownerId,
+                          ownerName: ownerLabel(g, d.business),
+                          where: g.name,
+                          groupId: g.id,
+                        ),
+                      ),
+                    ),
+                    icon: const Icon(Icons.flag_outlined),
+                    label: const Text('Signaler un problème'),
+                  ),
                 ],
               ],
             );

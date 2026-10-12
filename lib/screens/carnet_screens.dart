@@ -6,6 +6,7 @@ import '../invite_link.dart';
 import '../models.dart';
 import '../reports.dart';
 import '../widgets/common.dart';
+import 'confidence_screens.dart';
 import 'pro_screens.dart' show VerifiedBadge;
 import 'payment_screens.dart';
 
@@ -177,6 +178,44 @@ class _CarnetScreenState extends State<CarnetScreen> {
                     onPressed: () => _statement(c, payments),
                     icon: const Icon(Icons.picture_as_pdf_outlined),
                     label: const Text('Relevé PDF du carnet'),
+                  ),
+                ],
+                if (!isOwner && c.clientId != null) ...[
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: () => Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => ReviewsScreen(
+                                ownerId: c.ownerId,
+                                ownerName: _business?.name ?? c.ownerName,
+                              ),
+                            ),
+                          ),
+                          icon: const Icon(Icons.star_outline),
+                          label: const Text('Avis'),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: () => Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => DisputeFormScreen(
+                                ownerId: c.ownerId,
+                                ownerName: _business?.name ?? c.ownerName,
+                                where: c.label,
+                                carnetId: c.id,
+                              ),
+                            ),
+                          ),
+                          icon: const Icon(Icons.flag_outlined),
+                          label: const Text('Un problème ?'),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
                 const SectionTitle('Cases'),

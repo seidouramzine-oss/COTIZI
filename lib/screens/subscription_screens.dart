@@ -5,6 +5,7 @@ import '../format.dart';
 import '../models.dart';
 import '../settings.dart';
 import '../widgets/common.dart';
+import 'confidence_screens.dart';
 import 'pro_screens.dart';
 import 'suggestion_screens.dart';
 
@@ -417,7 +418,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
                     _PlanCard(
                       title: _planTitle(plan),
                       price: plan == 'free'
-                          ? '0 FCFA'
+                          ? '0 $currency'
                           : _monthly(s, plan) > 0
                           ? money(_amount(s, plan))
                           : 'Prix sur demande',
@@ -1098,6 +1099,21 @@ class _AdminScreenState extends State<AdminScreen> {
             ),
           ),
         ),
+        Card(
+          child: ListTile(
+            leading: const Icon(Icons.gavel_outlined),
+            title: const Text('Médiation des litiges'),
+            subtitle: const Text(
+              'Lire les signalements des clients et trancher',
+            ),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => const DisputesScreen(admin: true),
+              ),
+            ),
+          ),
+        ),
         const SectionTitle('Plans, paiement et assistance'),
         Card(
           child: ListTile(
@@ -1313,18 +1329,18 @@ class _SettingsDialogState extends State<_SettingsDialog> {
             TextField(
               controller: _price,
               keyboardType: TextInputType.number,
-              decoration: const InputDecoration(
+              decoration: InputDecoration(
                 labelText: 'Prix du plan Pro par mois',
-                suffixText: 'FCFA',
+                suffixText: currency,
               ),
             ),
             const SizedBox(height: 12),
             TextField(
               controller: _business,
               keyboardType: TextInputType.number,
-              decoration: const InputDecoration(
+              decoration: InputDecoration(
                 labelText: 'Prix du plan Business par mois',
-                suffixText: 'FCFA',
+                suffixText: currency,
               ),
             ),
             const SizedBox(height: 16),

@@ -838,9 +838,9 @@ class _SalaryDialogState extends State<_SalaryDialog> {
                 controller: _fixed,
                 keyboardType: TextInputType.number,
                 inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                decoration: const InputDecoration(
+                decoration: InputDecoration(
                   labelText: 'Salaire fixe par mois',
-                  suffixText: 'FCFA',
+                  suffixText: currency,
                 ),
               ),
             if (withPercent) ...[

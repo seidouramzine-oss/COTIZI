@@ -428,9 +428,9 @@ class _CreateCarnetDialogState extends State<_CreateCarnetDialog> {
               controller: _amount,
               keyboardType: TextInputType.number,
               inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-              decoration: const InputDecoration(
+              decoration: InputDecoration(
                 labelText: 'Montant par case',
-                suffixText: 'FCFA',
+                suffixText: currency,
               ),
               onChanged: (_) => setState(() {}),
               validator: (v) => (parseAmount(v ?? '') ?? 0) <= 0

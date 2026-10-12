@@ -3,11 +3,19 @@ import 'package:intl/intl.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 import 'api.dart';
+import 'countries.dart';
 import 'models.dart';
 
 final _money = NumberFormat.decimalPattern('fr');
 
-String money(num amount) => '${_money.format(amount)} FCFA';
+/// Pays de l'utilisateur connecté (d'après son numéro).
+Country? userCountry;
+
+/// Monnaie affichée après les montants (FCFA, GNF, ₦…). COTIZI ne touche
+/// jamais l'argent : c'est seulement l'affichage.
+String currency = 'FCFA';
+
+String money(num amount) => '${_money.format(amount)} $currency';
 
 String dateLong(DateTime d) => DateFormat('d MMMM yyyy', 'fr').format(d);
 
@@ -83,15 +91,9 @@ String methodLabel(PaymentMethod m) => switch (m) {
 String periodLabel(DateTime from, DateTime to) =>
     'du ${dateShort(from)} au ${dateShort(to)}';
 
-/// Opérateurs Mobile Money proposés pour les numéros de paiement.
-const mobileOperators = [
-  'MTN MoMo',
-  'Moov Money',
-  'Celtiis Cash',
-  'Wave',
-  'Orange Money',
-  'Autre',
-];
+/// Opérateurs de paiement proposés pour les numéros de paiement : ceux du
+/// pays de l'utilisateur.
+List<String> get mobileOperators => operatorsFor(userCountry);
 
 String paymentStatusLabel(PaymentStatus s) => switch (s) {
   PaymentStatus.pending => 'En attente',
@@ -127,22 +129,8 @@ Color paymentStatusColor(PaymentStatus s) => switch (s) {
 };
 
 /// Indicatifs proposés à l'inscription et à la connexion.
-const dialCodes = <(String, String)>[
-  ('+229', 'Bénin'),
-  ('+228', 'Togo'),
-  ('+225', 'Côte d\'Ivoire'),
-  ('+226', 'Burkina Faso'),
-  ('+227', 'Niger'),
-  ('+223', 'Mali'),
-  ('+221', 'Sénégal'),
-  ('+224', 'Guinée'),
-  ('+237', 'Cameroun'),
-  ('+241', 'Gabon'),
-  ('+242', 'Congo'),
-  ('+243', 'RD Congo'),
-  ('+234', 'Nigeria'),
-  ('+233', 'Ghana'),
-  ('+33', 'France'),
+final dialCodes = <(String, String)>[
+  for (final c in countries) (c.dial, c.name),
 ];
 
 /// Numéro au format international (+229...). Les espaces et tirets sont

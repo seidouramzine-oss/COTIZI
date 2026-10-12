@@ -427,9 +427,9 @@ class _ExpenseDialogState extends State<_ExpenseDialog> {
               controller: _amount,
               keyboardType: TextInputType.number,
               inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-              decoration: const InputDecoration(
+              decoration: InputDecoration(
                 labelText: 'Montant',
-                suffixText: 'FCFA',
+                suffixText: currency,
               ),
             ),
             const SizedBox(height: 12),

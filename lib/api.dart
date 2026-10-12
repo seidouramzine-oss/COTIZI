@@ -418,6 +418,23 @@ class Api {
     } catch (_) {}
   }
 
+  /// Prévient un client ou son tontinier (cloche), au mieux.
+  static Future<void> notify({
+    required String? to,
+    required String type,
+    required String title,
+    required String body,
+    String? groupId,
+    String? carnetId,
+  }) => _notify(
+    to: to,
+    type: type,
+    title: title,
+    body: body,
+    groupId: groupId,
+    carnetId: carnetId,
+  );
+
   /// Mes notifications, les plus récentes d'abord.
   static Future<List<AppNotification>> notifications({int limit = 50}) async {
     final snap = await _db

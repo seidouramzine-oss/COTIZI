@@ -205,17 +205,15 @@ class _BusinessProfileScreenState extends State<BusinessProfileScreen> {
                           children: [
                             Expanded(
                               child: DropdownButtonFormField<String>(
-                                initialValue:
-                                    mobileOperators.contains(
-                                      _accounts[i].operator,
-                                    )
-                                    ? _accounts[i].operator
-                                    : mobileOperators.last,
+                                initialValue: _accounts[i].operator,
                                 decoration: const InputDecoration(
                                   labelText: 'Opérateur',
                                 ),
                                 items: [
-                                  for (final o in mobileOperators)
+                                  for (final o in {
+                                    ...mobileOperators,
+                                    _accounts[i].operator,
+                                  })
                                     DropdownMenuItem(value: o, child: Text(o)),
                                 ],
                                 onChanged: (v) => _accounts[i].operator =

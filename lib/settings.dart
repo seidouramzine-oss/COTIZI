@@ -1,10 +1,36 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'countries.dart';
+import 'format.dart';
+
 /// Préférences de l'appareil (thème).
 final themeMode = ValueNotifier<ThemeMode>(ThemeMode.system);
 
 const _themeKey = 'theme_mode';
+
+const _currencyKey = 'currency';
+
+/// Pays et monnaie de l'utilisateur, d'après son numéro ; la monnaie peut
+/// être changée dans Profil → Monnaie (diaspora, frontaliers…).
+Future<void> applyCountryOf(String phone) async {
+  userCountry = countryOfPhone(phone);
+  String? saved;
+  try {
+    saved = (await SharedPreferences.getInstance()).getString(_currencyKey);
+  } catch (_) {}
+  currency = saved ?? userCountry?.currency ?? 'FCFA';
+}
+
+Future<void> setCurrency(String value) async {
+  currency = value;
+  try {
+    await (await SharedPreferences.getInstance()).setString(
+      _currencyKey,
+      value,
+    );
+  } catch (_) {}
+}
 
 /// Mode test de l'administrateur : voir COTIZI comme un tontinier au plan
 /// « free », « pro » ou « business » (« admin » : accès illimité).

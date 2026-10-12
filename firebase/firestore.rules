@@ -653,6 +653,110 @@ service cloud.firestore {
       allow delete: if signedIn() && existing().userId == uid();
     }
 
+    // ------------------------------------------- Confiance : avis et litiges
+
+    // Avis d'un client sur son tontinier (une note de 1 à 5 par client) :
+    // seulement après une cagnotte reçue et confirmée, ou un carnet clôturé.
+    match /reviews/{reviewId} {
+      allow read: if signedIn();
+      allow create, update: if signedIn()
+        && reviewId == incoming().ownerId + '_' + uid()
+        && incoming().keys().hasOnly(['ownerId', 'reviewerId', 'reviewerName', 'stars',
+            'comment', 'source', 'at'])
+        && incoming().reviewerId == uid()
+        && incoming().ownerId != uid()
+        && incoming().reviewerName == me().fullName
+        && incoming().stars is int
+        && incoming().stars >= 1 && incoming().stars <= 5
+        && incoming().comment is string && incoming().comment.size() <= 300
+        && incoming().at == request.time
+        && incoming().source is string
+        && (
+          // Cagnotte reçue et confirmée par ce client
+          (incoming().source.split('/').size() == 4
+            && incoming().source.split('/')[0] == 'groups'
+            && incoming().source.split('/')[2] == 'payouts'
+            && groupData(incoming().source.split('/')[1]).ownerId == incoming().ownerId
+            && get(doc(incoming().source)).data.beneficiaryId == uid()
+            && get(doc(incoming().source)).data.get('receivedAt', null) != null)
+          // Carnet de ce client, clôturé
+          || (incoming().source.split('/').size() == 2
+            && incoming().source.split('/')[0] == 'carnets'
+            && carnetData(incoming().source.split('/')[1]).ownerId == incoming().ownerId
+            && carnetData(incoming().source.split('/')[1]).get('clientId', null) == uid()
+            && carnetData(incoming().source.split('/')[1]).get('status', 'active') == 'closed')
+        );
+      allow delete: if signedIn() && (existing().reviewerId == uid() || isAdmin());
+    }
+
+    // Litige ouvert par un client contre son tontinier. Le résumé (motif,
+    // état) est visible de tous pour la confiance ; les messages ne sont vus
+    // que par le client, le tontinier et l'administrateur (médiation).
+    function linkedClient(ownerId, groupId, carnetId) {
+      return (groupId is string
+          && groupData(groupId).ownerId == ownerId
+          && uid() in groupData(groupId).memberIds)
+        || (carnetId is string
+          && carnetData(carnetId).ownerId == ownerId
+          && carnetData(carnetId).get('clientId', null) == uid());
+    }
+
+    function disputeParty(disputeId) {
+      let d = get(doc('disputes/' + disputeId)).data;
+      return d.clientId == uid() || d.ownerId == uid() || isAdmin();
+    }
+
+    match /disputes/{disputeId} {
+      allow read: if signedIn();
+      allow create: if signedIn()
+        && incoming().keys().hasOnly(['ownerId', 'ownerName', 'clientId', 'clientName',
+            'groupId', 'carnetId', 'where', 'reason', 'status', 'createdAt', 'updatedAt'])
+        && incoming().clientId == uid()
+        && incoming().clientName == me().fullName
+        && incoming().ownerId != uid()
+        && isText(incoming().ownerName, 1, 80)
+        && isText(incoming().where, 1, 80)
+        && incoming().reason in ['payment_not_validated', 'payout_not_received',
+            'wrong_amount', 'other']
+        && incoming().status == 'open'
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && linkedClient(incoming().ownerId, incoming().get('groupId', null),
+            incoming().get('carnetId', null))
+        && existsAfter(doc('disputes/' + disputeId + '/messages/first'));
+      allow update: if signedIn()
+        && changedOnly(['status', 'updatedAt'])
+        && incoming().updatedAt == request.time
+        && (
+          // Le tontinier répond (le client est prévenu)
+          (existing().ownerId == uid() && existing().status == 'open'
+            && incoming().status == 'answered')
+          // Le client est satisfait ou relance
+          || (existing().clientId == uid()
+            && incoming().status in ['resolved', 'open'])
+          // L'administrateur tranche
+          || (isAdmin() && incoming().status in ['resolved', 'rejected', 'open'])
+        );
+
+      match /messages/{messageId} {
+        allow read: if signedIn() && disputeParty(disputeId);
+        allow create: if signedIn()
+          && incoming().keys().hasOnly(['authorId', 'authorName', 'role', 'text', 'at'])
+          && incoming().authorId == uid()
+          && incoming().authorName == me().fullName
+          && isText(incoming().text, 2, 1000)
+          && incoming().at == request.time
+          && (
+            (messageId == 'first' && incoming().role == 'client'
+              && getAfter(doc('disputes/' + disputeId)).data.clientId == uid())
+            || (messageId != 'first' && disputeParty(disputeId)
+              && incoming().role == (isAdmin() ? 'admin'
+                : get(doc('disputes/' + disputeId)).data.ownerId == uid() ? 'owner'
+                : 'client'))
+          );
+      }
+    }
+
     // ---------------------------------------------------------- Tontines
 
     match /tontines/{tontineId} {
@@ -1119,6 +1223,17 @@ service cloud.firestore {
               && (existing().problem != null
                 || trustMoved(groupData(groupId).ownerId, 'payoutsDisputed',
                   'groups/' + groupId + '/payouts/' + pot))));
+      }
+
+      // Annonces du tontinier à son groupe (réunion, changement de date…)
+      match /announcements/{announcementId} {
+        allow read: if signedIn() && (isGroupOwner(groupId) || isGroupMember(groupId));
+        allow create: if signedIn() && isGroupOwner(groupId)
+          && incoming().keys().hasOnly(['text', 'authorName', 'at'])
+          && isText(incoming().text, 2, 500)
+          && incoming().authorName == me().fullName
+          && incoming().at == request.time;
+        allow delete: if signedIn() && isGroupOwner(groupId);
       }
 
       // Journal du groupe (non modifiable). Le tontinier voit tout ; un

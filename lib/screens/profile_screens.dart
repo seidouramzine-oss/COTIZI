@@ -7,11 +7,13 @@ import '../api.dart';
 import '../format.dart';
 import '../invite_link.dart';
 import '../models.dart';
+import '../countries.dart';
 import '../settings.dart';
 import '../widgets/common.dart';
 import '../reminders.dart';
 import 'business_screens.dart';
 import 'company_screens.dart';
+import 'confidence_screens.dart';
 import 'recruit_screens.dart';
 import 'pro_screens.dart';
 import 'subscription_screens.dart';
@@ -67,6 +69,34 @@ class _ProfilePageState extends State<ProfilePage> {
       if (mounted) showInfo(context, 'Nom mis à jour');
     } catch (e) {
       if (mounted) showError(context, e);
+    }
+  }
+
+  /// Monnaie affichée (par défaut celle du pays du numéro).
+  Future<void> _chooseCurrency() async {
+    final value = await showDialog<String>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: const Text('Monnaie affichée'),
+        children: [
+          for (final c in currencies)
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(context, c),
+              child: Row(
+                children: [
+                  Expanded(child: Text(c)),
+                  if (c == currency) const Icon(Icons.check),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+    if (value == null || !mounted) return;
+    await setCurrency(value);
+    if (mounted) {
+      setState(() {});
+      showInfo(context, 'Montants affichés en $value');
     }
   }
 
@@ -361,6 +391,25 @@ class _ProfilePageState extends State<ProfilePage> {
                   trailing: const Icon(Icons.chevron_right),
                   onTap: _chooseTheme,
                 ),
+              ),
+              ListTile(
+                leading: const Icon(Icons.public),
+                title: const Text('Pays et monnaie'),
+                subtitle: Text(
+                  '${userCountry?.name ?? 'Pays inconnu'} · montants en '
+                  '$currency',
+                ),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: _chooseCurrency,
+              ),
+              ListTile(
+                leading: const Icon(Icons.flag_outlined),
+                title: const Text('Litiges'),
+                subtitle: const Text(
+                  'Problèmes signalés et réponses (médiation COTIZI)',
+                ),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => _push(const DisputesScreen()),
               ),
               ListTile(
                 leading: const Icon(Icons.help_outline),

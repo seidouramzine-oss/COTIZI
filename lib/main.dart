@@ -99,17 +99,24 @@ class _ProfileGate extends StatefulWidget {
 }
 
 class _ProfileGateState extends State<_ProfileGate> {
-  late Future<Profile?> _profile = Api.myProfile();
+  late Future<Profile?> _profile = _load();
+
+  /// Profil, puis pays et monnaie d'après le numéro.
+  static Future<Profile?> _load() async {
+    final p = await Api.myProfile();
+    if (p != null) await applyCountryOf(p.phone);
+    return p;
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: FutureView<Profile?>(
         future: _profile,
-        onRetry: () => setState(() => _profile = Api.myProfile()),
+        onRetry: () => setState(() => _profile = _load()),
         builder: (context, profile) => profile == null
             ? CompleteProfileScreen(
-                onDone: () => setState(() => _profile = Api.myProfile()),
+                onDone: () => setState(() => _profile = _load()),
               )
             : HomeScreen(profile: profile),
       ),

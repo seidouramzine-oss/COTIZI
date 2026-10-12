@@ -242,9 +242,9 @@ class _GroupFormScreenState extends State<GroupFormScreen> {
       controller: _amount,
       keyboardType: TextInputType.number,
       inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-      decoration: const InputDecoration(
+      decoration: InputDecoration(
         labelText: 'Montant d\'une cotisation',
-        suffixText: 'FCFA',
+        suffixText: currency,
       ),
       validator: (v) => (parseAmount(v ?? '') ?? 0) <= 0
           ? 'Indiquez le montant de la cotisation'
@@ -402,7 +402,7 @@ class _GroupFormScreenState extends State<GroupFormScreen> {
       keyboardType: const TextInputType.numberWithOptions(decimal: true),
       decoration: InputDecoration(
         labelText: 'Commission sur chaque cagnotte',
-        suffixText: _commissionType == CommissionType.percent ? '%' : 'FCFA',
+        suffixText: _commissionType == CommissionType.percent ? '%' : currency,
         helperText: 'Retenue sur la cagnotte remise au bénéficiaire',
       ),
       validator: (_) {
@@ -447,7 +447,7 @@ class _GroupFormScreenState extends State<GroupFormScreen> {
           labelText: _penaltyType == PenaltyType.percent
               ? 'Pénalité (% du montant dû)'
               : 'Pénalité par cotisation en retard',
-          suffixText: _penaltyType == PenaltyType.percent ? '%' : 'FCFA',
+          suffixText: _penaltyType == PenaltyType.percent ? '%' : currency,
           helperText:
               _penaltyType == PenaltyType.percent &&
                   _contribution > 0 &&

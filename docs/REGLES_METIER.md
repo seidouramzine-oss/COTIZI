@@ -95,6 +95,40 @@ Réservés au plan Pro (essai Pro compris). En plan Gratuit, ils sont marqués
 - **Badge vérifié** : visible aussi dans **Mon profil pro** et à côté du nom
   de l'activité en haut des groupes et des carnets vus par les clients.
 
+## Tous les pays africains (version 3.4)
+
+- **Plus de 45 pays** à l'inscription (toute l'Afrique et la diaspora) :
+  l'indicatif choisi donne le **pays** et la **monnaie affichée** (FCFA, GNF,
+  ₦, GH₵, KSh, FC, DH…). COTIZI ne touche jamais l'argent : la monnaie ne sert
+  qu'à l'affichage. Profil → **Pays et monnaie** permet de changer la monnaie
+  (diaspora, frontaliers).
+- Les **opérateurs Mobile Money** proposés dans le profil pro sont ceux du
+  pays (MTN, Orange, Moov, Wave, Celtiis, T-Money, M-Pesa, Airtel…), plus
+  « Autre ». Un opérateur déjà enregistré reste affiché.
+
+## Avis, litiges, annonces (version 3.4)
+
+- **Avis des clients** (1 à 5 étoiles + commentaire) : seulement un client qui
+  a **reçu et confirmé sa cagnotte** ou dont le **carnet est clôturé** peut
+  noter son tontinier (vérifié par le serveur : pas de faux avis). Un avis par
+  client, modifiable. La moyenne et le nombre d'avis s'affichent sur la note
+  de confiance ; « Avis » ouvre la liste.
+- **Litiges** : un client signale un problème à son tontinier (« Signaler un
+  problème » dans le groupe, « Un problème ? » dans le carnet) : paiement non
+  validé, cagnotte non reçue, montant incorrect, autre. Le tontinier est
+  prévenu et répond (état « Le tontinier a répondu »). Le client peut dire
+  « Le problème est réglé » ou rouvrir. L'**administrateur** lit tout dans
+  Administration → **Médiation des litiges** et tranche (« réglé » ou « non
+  fondé »). Les messages ne sont vus que par le client, le tontinier et
+  l'administrateur ; le nombre de litiges en cours apparaît sur la note de
+  confiance. Profil → **Litiges** pour suivre les siens.
+- **Alerte 48 h** : un paiement déclaré non validé depuis 48 h s'affiche en
+  rouge chez le tontinier ; le client voit « Paiement non validé depuis N
+  jours » et peut signaler le problème en un geste.
+- **Annonces** : le tontinier publie une annonce dans un groupe démarré
+  (réunion, changement de date…). Tous les participants la voient en haut du
+  groupe et la reçoivent dans la cloche.
+
 ## Espace recrutement (version 3.3)
 
 - **Profil → Espace recrutement** : les offres d'emploi des entreprises de

@@ -1686,3 +1686,79 @@ test('version 3.3 : recrutement réservé aux tontiniers Pro', async (t) => {
       userId: 'ag', fullName: people.ag.name, phone: people.ag.phone, message: '', status: 'sent', createdAt: now(),
     })));
 });
+
+test('version 3.4 : avis des clients, litiges et médiation, annonces', async (t) => {
+  const Timestamp = firebase.firestore.Timestamp;
+  await env.withSecurityRulesDisabled(async (ctx) => {
+    const fs = ctx.firestore();
+    await fs.doc('groups/grev').set({ ownerId: 't', ownerName: 'Tontinier', memberIds: ['a', 'b'], name: 'Groupe avis' });
+    await fs.doc('groups/grev/payouts/1').set({ beneficiaryId: 'a', amount: 100, receivedAt: Timestamp.now() });
+    await fs.doc('groups/grev/payouts/2').set({ beneficiaryId: 'b', amount: 100, receivedAt: null });
+    await fs.doc('carnets/crev').set({ ownerId: 't', clientId: 'c', status: 'closed', label: 'Carnet' });
+    await fs.doc('carnets/copen').set({ ownerId: 't', clientId: 'd', status: 'active', label: 'Carnet 2' });
+  });
+  const names = async (id) => {
+    let n; await env.withSecurityRulesDisabled(async (ctx) => { n = (await ctx.firestore().doc(`users/${id}`).get()).data()?.fullName; });
+    return n;
+  };
+  const review = async (id, source, fields = {}) => db(id).doc(`reviews/t_${id}`).set({
+    ownerId: 't', reviewerId: id, reviewerName: await names(id), stars: 5,
+    comment: 'Très sérieux', source, at: now(), ...fields,
+  });
+  await t.test('avis après cagnotte confirmée', () => assertSucceeds(review('a', 'groups/grev/payouts/1')));
+  await t.test('avis sans confirmation de réception : refusé', () => assertFails(review('b', 'groups/grev/payouts/2')));
+  await t.test('avis avec la cagnotte d\'un autre : refusé', () => assertFails(review('b', 'groups/grev/payouts/1')));
+  await t.test('avis après carnet clôturé', () => assertSucceeds(review('c', 'carnets/crev')));
+  await t.test('carnet pas encore clôturé : refusé', () => assertFails(review('d', 'carnets/copen')));
+  await t.test('6 étoiles : refusé', () => assertFails(review('a', 'groups/grev/payouts/1', { stars: 6 })));
+  await t.test('le tontinier se note lui-même : refusé', async () =>
+    assertFails(db('t').doc('reviews/t_t').set({ ownerId: 't', reviewerId: 't', reviewerName: await names('t'),
+      stars: 5, comment: '', source: 'carnets/crev', at: now() })));
+  await t.test('les avis sont visibles de tous', () =>
+    assertSucceeds(db('e').collection('reviews').where('ownerId', '==', 't').get()));
+
+  // Litiges
+  const open = async (id, fields = {}, first = true) => {
+    const fs = db(id);
+    const ref = fs.collection('disputes').doc();
+    const b = fs.batch();
+    b.set(ref, { ownerId: 't', ownerName: 'Tontinier', clientId: id, clientName: await names(id),
+      groupId: 'grev', carnetId: null, where: 'Groupe avis', reason: 'payout_not_received',
+      status: 'open', createdAt: now(), updatedAt: now(), ...fields });
+    if (first) b.set(ref.collection('messages').doc('first'), { authorId: id, authorName: await names(id), role: 'client', text: 'Je n\'ai pas reçu la cagnotte', at: now() });
+    await b.commit();
+    return ref;
+  };
+  await t.test('litige sans message : refusé', () => assertFails(open('a', {}, false)));
+  await t.test('litige par quelqu\'un hors du groupe : refusé', () => assertFails(open('e')));
+  await t.test('litige déjà « résolu » à la création : refusé', () => assertFails(open('a', { status: 'resolved' })));
+  let ref;
+  await t.test('le client ouvre un litige', async () => { ref = await open('a'); });
+  await t.test('le résumé est visible de tous', () => assertSucceeds(db('e').doc(`disputes/${ref.id}`).get()));
+  await t.test('les messages ne sont pas visibles des autres', () =>
+    assertFails(db('e').collection(`disputes/${ref.id}/messages`).get()));
+  await t.test('le tontinier lit les messages et répond', async () => {
+    const tf = db('t');
+    await assertSucceeds(tf.collection(`disputes/${ref.id}/messages`).get());
+    const b = tf.batch();
+    b.set(tf.collection(`disputes/${ref.id}/messages`).doc(), { authorId: 't', authorName: await names('t'), role: 'owner', text: 'Je vous ai payé hier', at: now() });
+    b.update(tf.doc(`disputes/${ref.id}`), { status: 'answered', updatedAt: now() });
+    await assertSucceeds(b.commit());
+  });
+  await t.test('le tontinier clôt le litige lui-même : refusé', () =>
+    assertFails(db('t').doc(`disputes/${ref.id}`).update({ status: 'resolved', updatedAt: now() })));
+  await t.test('le tontinier se fait passer pour l\'admin : refusé', async () =>
+    assertFails(db('t').collection(`disputes/${ref.id}/messages`).add({ authorId: 't', authorName: await names('t'), role: 'admin', text: 'Classé', at: now() })));
+  const admin = env.authenticatedContext('adm', { email: '22997000003@phone.cotizi.app' }).firestore();
+  await t.test('l\'administrateur lit et tranche', async () => {
+    await assertSucceeds(admin.collection(`disputes/${ref.id}/messages`).get());
+    await assertSucceeds(admin.doc(`disputes/${ref.id}`).update({ status: 'resolved', updatedAt: now() }));
+  });
+
+  // Annonces
+  const announce = async (id) => db(id).collection('groups/grev/announcements').add({ text: 'Réunion samedi 10 h', authorName: await names(id), at: now() });
+  await t.test('le tontinier publie une annonce', () => assertSucceeds(announce('t')));
+  await t.test('un membre ne publie pas d\'annonce', () => assertFails(announce('a')));
+  await t.test('les membres lisent les annonces', () => assertSucceeds(db('a').collection('groups/grev/announcements').get()));
+  await t.test('un inconnu ne lit pas les annonces', () => assertFails(db('e').collection('groups/grev/announcements').get()));
+});

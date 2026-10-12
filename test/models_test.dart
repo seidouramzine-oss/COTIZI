@@ -5,6 +5,8 @@ import 'package:cotizi/format.dart';
 import 'package:cotizi/models.dart';
 import 'package:cotizi/pro.dart';
 import 'package:cotizi/business.dart';
+import 'package:cotizi/confidence.dart';
+import 'package:cotizi/countries.dart';
 import 'package:cotizi/reminders.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:intl/date_symbol_data_local.dart';
@@ -800,6 +802,34 @@ void main() {
       final pro = business.withSubscriptionEnd(DateTime(2026, 11), plan: 'pro');
       expect(pro.isBusinessAt(now), isFalse);
       expect(pro.isProAt(now), isTrue);
+    });
+  });
+
+  group('Version 3.4 pays et confiance', () {
+    test('pays et monnaie d\'après le numéro', () {
+      expect(countryOfPhone('+22997000000')?.name, 'Bénin');
+      expect(countryOfPhone('+22997000000')?.currency, 'FCFA');
+      expect(countryOfPhone('+2348012345678')?.currency, '₦');
+      expect(countryOfPhone('+254712345678')?.name, 'Kenya');
+      expect(countryOfPhone('+33612345678')?.currency, '€');
+      expect(countryOfPhone('+999')?.name, isNull);
+      expect(operatorsFor(countryOfPhone('+221770000000')), contains('Wave'));
+      expect(operatorsFor(null).last, 'Autre');
+      expect(currencies.toSet().length, currencies.length);
+    });
+
+    test('moyenne des avis', () {
+      Review r(int s) => Review(
+        ownerId: 'o',
+        reviewerId: 'r$s',
+        reviewerName: 'R',
+        stars: s,
+        comment: '',
+        at: DateTime(2026),
+      );
+      expect(const ReviewSummary([]).average, 0);
+      expect(ReviewSummary([r(5), r(4), r(3)]).average, 4);
+      expect(ReviewSummary([r(5), r(4)]).count, 2);
     });
   });
 }

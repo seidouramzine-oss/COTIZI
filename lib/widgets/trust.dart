@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import '../api.dart';
 import '../format.dart';
 import '../models.dart';
+import '../confidence.dart';
+import '../screens/confidence_screens.dart' show ReviewsScreen, Stars;
 import '../screens/pro_screens.dart' show VerifiedBadge;
 
 /// « Votre argent reste chez vous » : COTIZI ne touche jamais l'argent.
@@ -114,6 +116,12 @@ class _TrustCardState extends State<TrustCard> {
     Api.business(widget.ownerId),
   ]).then((r) => (r[0] as TrustStats, r[1] as Business?));
 
+  // Avis des clients et litiges : chargés à part (ne bloquent pas la note)
+  late final Future<(ReviewSummary, List<Dispute>)> _extra = Future.wait([
+    ConfidenceApi.reviews(widget.ownerId),
+    ConfidenceApi.disputesAbout(widget.ownerId),
+  ]).then((r) => (r[0] as ReviewSummary, r[1] as List<Dispute>));
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -218,6 +226,83 @@ class _TrustCardState extends State<TrustCard> {
                       ),
                     ],
                   ),
+                FutureBuilder<(ReviewSummary, List<Dispute>)>(
+                  future: _extra,
+                  builder: (context, snap) {
+                    if (!snap.hasData) return const SizedBox.shrink();
+                    final (reviews, disputes) = snap.data!;
+                    final open = disputes.where((d) => d.isOpen).length;
+                    final settled = disputes
+                        .where((d) => d.status == 'resolved')
+                        .length;
+                    return Padding(
+                      padding: const EdgeInsets.only(top: 12),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          InkWell(
+                            onTap: () => Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => ReviewsScreen(
+                                  ownerId: widget.ownerId,
+                                  ownerName: name,
+                                ),
+                              ),
+                            ),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 4),
+                              child: Row(
+                                children: [
+                                  Stars(reviews.average, size: 20),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      reviews.count == 0
+                                          ? 'Pas encore d\'avis de clients'
+                                          : '${reviews.average.toStringAsFixed(1)} · '
+                                                '${reviews.count} avis de clients',
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ),
+                                  const Icon(Icons.chevron_right, size: 20),
+                                ],
+                              ),
+                            ),
+                          ),
+                          Row(
+                            children: [
+                              Icon(
+                                open > 0
+                                    ? Icons.flag
+                                    : Icons.verified_user_outlined,
+                                size: 18,
+                                color: open > 0
+                                    ? paymentStatusColor(PaymentStatus.pending)
+                                    : paymentStatusColor(
+                                        PaymentStatus.approved,
+                                      ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  open > 0
+                                      ? '$open litige${open > 1 ? 's' : ''} en cours'
+                                            '${settled > 0 ? ' · $settled réglé${settled > 1 ? 's' : ''}' : ''}'
+                                      : disputes.isEmpty
+                                      ? 'Aucun litige signalé'
+                                      : 'Aucun litige en cours · '
+                                            '${disputes.length} terminé${disputes.length > 1 ? 's' : ''}',
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
                 const SizedBox(height: 10),
                 Row(
                   children: [
